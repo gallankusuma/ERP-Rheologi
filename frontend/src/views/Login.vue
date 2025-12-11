@@ -1,26 +1,64 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 overflow-hidden relative">
-    <!-- Decorative background elements -->
-    <div class="absolute top-0 left-0 w-96 h-96 bg-green-200 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-    <div class="absolute bottom-0 right-0 w-96 h-96 bg-teal-200 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse animation-delay-2000"></div>
-    <div class="absolute top-1/2 left-1/3 w-72 h-72 bg-emerald-100 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse animation-delay-4000"></div>
+  <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-cyan-50 via-emerald-50 to-blue-50 overflow-hidden relative">
+    <!-- Animated background video/animation -->
+    <div class="absolute inset-0 overflow-hidden">
+      <!-- Animated futuristic cartoon background -->
+      <svg class="absolute inset-0 w-full h-full" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+        <!-- Animated flowing particles -->
+        <g class="animated-particles">
+          <!-- Fiber strands animation -->
+          <path d="M 0 100 Q 300 50, 600 100 T 1200 100" stroke="rgba(6, 182, 212, 0.15)" stroke-width="3" fill="none" class="animate-flow-1"/>
+          <path d="M 0 300 Q 300 250, 600 300 T 1200 300" stroke="rgba(16, 185, 129, 0.15)" stroke-width="3" fill="none" class="animate-flow-2"/>
+          <path d="M 0 500 Q 300 450, 600 500 T 1200 500" stroke="rgba(6, 182, 212, 0.1)" stroke-width="3" fill="none" class="animate-flow-3"/>
+          <path d="M 0 700 Q 300 650, 600 700 T 1200 700" stroke="rgba(16, 185, 129, 0.1)" stroke-width="3" fill="none" class="animate-flow-4"/>
+        </g>
 
-    <!-- Leaf decorations -->
-    <div class="absolute top-10 left-10 text-6xl opacity-10 animate-bounce">🌿</div>
-    <div class="absolute top-32 right-20 text-5xl opacity-10 animate-bounce animation-delay-1000">🍃</div>
-    <div class="absolute bottom-32 left-20 text-5xl opacity-10 animate-bounce animation-delay-2000">🌱</div>
-    <div class="absolute bottom-10 right-10 text-6xl opacity-10 animate-bounce animation-delay-3000">🌾</div>
+        <!-- Floating cartoon elements -->
+        <g class="floating-elements">
+          <!-- Cartoon water droplets -->
+          <circle cx="100" cy="150" r="30" fill="rgba(6, 182, 212, 0.2)" class="animate-float-1"/>
+          <circle cx="200" cy="600" r="25" fill="rgba(6, 182, 212, 0.15)" class="animate-float-2"/>
+          <circle cx="1100" cy="300" r="35" fill="rgba(6, 182, 212, 0.18)" class="animate-float-3"/>
+          
+          <!-- Cartoon fiber bundles -->
+          <g class="animate-float-4">
+            <circle cx="900" cy="200" r="20" fill="rgba(16, 185, 129, 0.2)"/>
+            <circle cx="920" cy="190" r="18" fill="rgba(16, 185, 129, 0.15)"/>
+            <circle cx="880" cy="210" r="18" fill="rgba(16, 185, 129, 0.15)"/>
+          </g>
 
-    <div class="max-w-md w-full mx-4">
+          <!-- Cartoon stars/nodes -->
+          <g class="animate-pulse-slow">
+            <circle cx="300" cy="250" r="8" fill="rgba(6, 182, 212, 0.3)"/>
+            <circle cx="800" cy="550" r="8" fill="rgba(6, 182, 212, 0.3)"/>
+            <circle cx="500" cy="150" r="6" fill="rgba(16, 185, 129, 0.25)"/>
+            <circle cx="1000" cy="700" r="6" fill="rgba(16, 185, 129, 0.25)"/>
+          </g>
+        </g>
+      </svg>
+    </div>
+
+    <!-- Decorative colored overlays -->
+    <div class="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-cyan-300 to-blue-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style="animation-delay: 0s;"></div>
+    <div class="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-tl from-emerald-300 to-cyan-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style="animation-delay: 2s;"></div>
+    <div class="absolute top-1/2 left-1/3 w-72 h-72 bg-gradient-to-r from-blue-200 to-emerald-200 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse" style="animation-delay: 4s;"></div>
+
+    <!-- Cartoon floating elements -->
+    <div class="absolute top-10 left-10 text-6xl opacity-10 animate-bounce">💧</div>
+    <div class="absolute top-32 right-20 text-5xl opacity-10 animate-bounce animation-delay-1000">🌊</div>
+    <div class="absolute bottom-32 left-20 text-5xl opacity-10 animate-bounce animation-delay-2000">✨</div>
+    <div class="absolute bottom-10 right-10 text-6xl opacity-10 animate-bounce animation-delay-3000">🧬</div>
+
+    <div class="max-w-md w-full mx-4 relative z-10">
       <!-- Login Card -->
-      <div v-if="!showRegister" class="bg-white/95 backdrop-blur-sm shadow-2xl rounded-3xl p-8 border border-green-100 transition-all duration-500 transform">
+      <div v-if="!showRegister" class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-cyan-200 transition-all duration-500 transform hover:shadow-cyan-200/50 hover:shadow-2xl">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <div class="text-5xl mb-3 animate-pulse">🌿</div>
-          <h1 class="text-3xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent mb-2">
-            VortexMfg
+          <div class="text-5xl mb-3 animate-pulse">💧</div>
+          <h1 class="text-4xl font-bold bg-gradient-to-r from-cyan-600 via-emerald-600 to-blue-600 bg-clip-text text-transparent mb-2 font-black">
+            FiberFlow
           </h1>
-          <p class="text-emerald-600 text-sm font-medium">Sustainable Manufacturing Intelligence</p>
+          <p class="text-cyan-600 text-sm font-semibold">Advanced Fiber Technology Manufacturing</p>
         </div>
 
         <!-- Error Message -->
@@ -38,7 +76,7 @@
               id="email"
               required
               placeholder="you@example.com"
-              class="w-full px-4 py-3 border-2 border-green-100 rounded-xl bg-green-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-all"
+              class="w-full px-4 py-3 border-2 border-cyan-200 rounded-xl bg-cyan-50/50 focus:outline-none focus:border-cyan-500 focus:bg-white focus:ring-2 focus:ring-cyan-300 transition-all"
             />
           </div>
 
@@ -50,23 +88,23 @@
               id="password"
               required
               placeholder="••••••••"
-              class="w-full px-4 py-3 border-2 border-green-100 rounded-xl bg-green-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-all"
+              class="w-full px-4 py-3 border-2 border-cyan-200 rounded-xl bg-cyan-50/50 focus:outline-none focus:border-cyan-500 focus:bg-white focus:ring-2 focus:ring-cyan-300 transition-all"
             />
           </div>
 
           <!-- Remember & Forgot Password -->
           <div class="flex items-center justify-between text-sm">
             <label class="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" class="w-4 h-4 text-emerald-600 rounded border-green-300 focus:ring-emerald-500">
+              <input type="checkbox" class="w-4 h-4 text-cyan-600 rounded border-cyan-300 focus:ring-cyan-500">
               <span class="text-gray-600">Remember me</span>
             </label>
-            <a href="#" class="text-emerald-600 hover:text-emerald-700 font-medium">Forgot password?</a>
+            <a href="#" class="text-cyan-600 hover:text-cyan-700 font-medium">Forgot password?</a>
           </div>
 
           <button
             type="submit"
             :disabled="loading"
-            class="w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white py-3 px-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105"
+            class="w-full bg-gradient-to-r from-cyan-600 via-emerald-600 to-blue-600 text-white py-3 px-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 text-lg"
           >
             <span v-if="!loading">Sign In</span>
             <span v-else class="flex items-center justify-center">
@@ -81,29 +119,29 @@
 
         <!-- Divider -->
         <div class="my-6 flex items-center gap-4">
-          <div class="flex-1 h-px bg-green-200"></div>
+          <div class="flex-1 h-px bg-cyan-200"></div>
           <span class="text-gray-500 text-sm">New here?</span>
-          <div class="flex-1 h-px bg-green-200"></div>
+          <div class="flex-1 h-px bg-cyan-200"></div>
         </div>
 
         <!-- Register Toggle -->
         <button
           @click="showRegister = true"
-          class="w-full py-3 px-4 rounded-xl font-semibold border-2 border-emerald-200 text-emerald-600 hover:bg-emerald-50 transition-all duration-200"
+          class="w-full py-3 px-4 rounded-xl font-semibold border-2 border-cyan-300 text-cyan-600 hover:bg-cyan-50 transition-all duration-200"
         >
           Create Account
         </button>
       </div>
 
       <!-- Register Card -->
-      <div v-else class="bg-white/95 backdrop-blur-sm shadow-2xl rounded-3xl p-8 border border-green-100 transition-all duration-500 transform">
+      <div v-else class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-emerald-200 transition-all duration-500 transform hover:shadow-emerald-200/50 hover:shadow-2xl">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <div class="text-5xl mb-3 animate-pulse">🌱</div>
-          <h2 class="text-3xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent mb-2">
-            Join VortexMfg
+          <div class="text-5xl mb-3 animate-pulse">🧬</div>
+          <h2 class="text-4xl font-bold bg-gradient-to-r from-emerald-600 via-cyan-600 to-blue-600 bg-clip-text text-transparent mb-2 font-black">
+            Join FiberFlow
           </h2>
-          <p class="text-emerald-600 text-sm font-medium">Start your sustainable manufacturing journey</p>
+          <p class="text-emerald-600 text-sm font-semibold">Start your advanced fiber journey</p>
         </div>
 
         <!-- Error Message -->
@@ -121,7 +159,7 @@
               id="reg-name"
               required
               placeholder="John Doe"
-              class="w-full px-4 py-3 border-2 border-green-100 rounded-xl bg-green-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-all"
+              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
             />
           </div>
 
@@ -133,7 +171,7 @@
               id="reg-email"
               required
               placeholder="you@example.com"
-              class="w-full px-4 py-3 border-2 border-green-100 rounded-xl bg-green-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-all"
+              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
             />
           </div>
 
@@ -146,7 +184,7 @@
               required
               minlength="6"
               placeholder="Min. 6 characters"
-              class="w-full px-4 py-3 border-2 border-green-100 rounded-xl bg-green-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-all"
+              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
             />
           </div>
 
@@ -159,20 +197,20 @@
               required
               minlength="6"
               placeholder="Confirm password"
-              class="w-full px-4 py-3 border-2 border-green-100 rounded-xl bg-green-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-all"
+              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
             />
           </div>
 
           <!-- Terms checkbox -->
           <label class="flex items-start space-x-3 cursor-pointer">
-            <input v-model="registerForm.agreedToTerms" type="checkbox" class="w-5 h-5 text-emerald-600 rounded border-green-300 focus:ring-emerald-500 mt-0.5">
+            <input v-model="registerForm.agreedToTerms" type="checkbox" class="w-5 h-5 text-emerald-600 rounded border-emerald-300 focus:ring-emerald-500 mt-0.5">
             <span class="text-sm text-gray-600">I agree to the <a href="#" class="text-emerald-600 hover:underline font-medium">Terms of Service</a> and <a href="#" class="text-emerald-600 hover:underline font-medium">Privacy Policy</a></span>
           </label>
 
           <button
             type="submit"
             :disabled="loading || !registerForm.agreedToTerms"
-            class="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 px-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-green-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105"
+            class="w-full bg-gradient-to-r from-emerald-600 via-cyan-600 to-blue-600 text-white py-3 px-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-emerald-400/50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 text-lg"
           >
             <span v-if="!loading">Create Account</span>
             <span v-else class="flex items-center justify-center">
@@ -187,15 +225,15 @@
 
         <!-- Divider -->
         <div class="my-6 flex items-center gap-4">
-          <div class="flex-1 h-px bg-green-200"></div>
+          <div class="flex-1 h-px bg-emerald-200"></div>
           <span class="text-gray-500 text-sm">Already have account?</span>
-          <div class="flex-1 h-px bg-green-200"></div>
+          <div class="flex-1 h-px bg-emerald-200"></div>
         </div>
 
         <!-- Back to Login -->
         <button
           @click="showRegister = false"
-          class="w-full py-3 px-4 rounded-xl font-semibold border-2 border-emerald-200 text-emerald-600 hover:bg-emerald-50 transition-all duration-200"
+          class="w-full py-3 px-4 rounded-xl font-semibold border-2 border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-all duration-200"
         >
           Back to Sign In
         </button>
@@ -268,13 +306,22 @@ const handleRegister = async () => {
 
 <style scoped>
 @keyframes pulse-slow {
-  0%, 100% { opacity: 0.2; }
-  50% { opacity: 0.3; }
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.25; }
 }
 
 @keyframes float {
   0%, 100% { transform: translateY(0px); }
   50% { transform: translateY(-20px); }
+}
+
+@keyframes flow-wave {
+  0% { stroke-dashoffset: 1000; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .animation-delay-2000 {
@@ -290,6 +337,48 @@ const handleRegister = async () => {
 }
 
 .animation-delay-3000 {
+  animation-delay: 3s;
+}
+
+.animate-flow-1 {
+  animation: flow-wave 6s linear infinite;
+  stroke-dasharray: 1000;
+}
+
+.animate-flow-2 {
+  animation: flow-wave 8s linear infinite;
+  stroke-dasharray: 1000;
+  animation-delay: 2s;
+}
+
+.animate-flow-3 {
+  animation: flow-wave 7s linear infinite;
+  stroke-dasharray: 1000;
+  animation-delay: 4s;
+}
+
+.animate-flow-4 {
+  animation: flow-wave 9s linear infinite;
+  stroke-dasharray: 1000;
+  animation-delay: 6s;
+}
+
+.animate-float-1 {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-float-2 {
+  animation: float 7s ease-in-out infinite;
+  animation-delay: 1s;
+}
+
+.animate-float-3 {
+  animation: float 8s ease-in-out infinite;
+  animation-delay: 2s;
+}
+
+.animate-float-4 {
+  animation: float 9s ease-in-out infinite;
   animation-delay: 3s;
 }
 </style>
