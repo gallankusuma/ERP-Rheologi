@@ -82,11 +82,14 @@ router.post(
       // Hash password
       const hashedPassword = await hashPassword(password);
 
-      // Insert user
+      // Get default role for new users (Officer)
+      const defaultRole = db.prepare('SELECT id FROM roles WHERE code = ?').get('OFFICER') as { id: number } | undefined;
+
+      // Insert user with default role and user_level
       const stmt = db.prepare(
-        'INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)'
+        'INSERT INTO users (email, password, name, role_id, user_level, is_active) VALUES (?, ?, ?, ?, ?, 1)'
       );
-      const result = stmt.run(email, hashedPassword, name, 'user');
+      const result = stmt.run(email, hashedPassword, name, defaultRole?.id || null, 1);
 
       // Generate token
       const token = generateToken(result.lastInsertRowid as number);
