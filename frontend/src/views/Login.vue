@@ -76,13 +76,19 @@
             <defs>
               <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#14B8A6;stop-opacity:1" />
                 <stop offset="100%" style="stop-color:#0891B2;stop-opacity:1" />
               </linearGradient>
+              <linearGradient id="logoGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#0891B2;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#06B6D4;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#14B8A6;stop-opacity:1" />
+              </linearGradient>
             </defs>
-            <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" stroke="url(#logoGradient)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.9"/>
-            <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" stroke="#1F2937" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.85"/>
-            <circle cx="100" cy="100" r="12" fill="url(#logoGradient)" opacity="0.7"/>
-            <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
+            <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" stroke="url(#logoGradient)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.95"/>
+            <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" stroke="url(#logoGrad2)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.9"/>
+            <circle cx="100" cy="100" r="12" fill="url(#logoGradient)" opacity="0.8"/>
+            <circle cx="100" cy="100" r="8" fill="#06B6D4" opacity="0.95"/>
           </svg>
           <h1 class="text-3xl font-black bg-gradient-to-r from-cyan-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h1>
           <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Advanced Hydro-Fiber Manufacturing</p>
@@ -168,13 +174,19 @@
             <defs>
               <linearGradient id="logoGradient2" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#14B8A6;stop-opacity:1" />
                 <stop offset="100%" style="stop-color:#0891B2;stop-opacity:1" />
               </linearGradient>
+              <linearGradient id="logoGrad2-alt" x1="100%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#0891B2;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#14B8A6;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#06B6D4;stop-opacity:1" />
+              </linearGradient>
             </defs>
-            <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" stroke="url(#logoGradient2)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.9"/>
-            <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" stroke="#059669" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.85"/>
-            <circle cx="100" cy="100" r="12" fill="url(#logoGradient2)" opacity="0.7"/>
-            <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
+            <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" stroke="url(#logoGradient2)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.95"/>
+            <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" stroke="url(#logoGrad2-alt)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.9"/>
+            <circle cx="100" cy="100" r="12" fill="url(#logoGradient2)" opacity="0.8"/>
+            <circle cx="100" cy="100" r="8" fill="#06B6D4" opacity="0.95"/>
           </svg>
           <h2 class="text-3xl font-black bg-gradient-to-r from-emerald-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h2>
           <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Join the Hydro-Fiber Revolution</p>

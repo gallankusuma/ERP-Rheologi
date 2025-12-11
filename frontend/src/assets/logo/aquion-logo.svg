@@ -1,11 +1,21 @@
 <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="waterFlow" x1="0%" y1="0%" x2="100%" y2="100%">
+    <!-- Aqua Flow Gradient - Cyan to Turquoise to Aqua -->
+    <linearGradient id="aquaFlow" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#14B8A6;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#0891B2;stop-opacity:1" />
     </linearGradient>
+    
+    <!-- Secondary Aqua Flow for X accent -->
+    <linearGradient id="aquaFlowSecondary" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0891B2;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#06B6D4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#14B8A6;stop-opacity:1" />
+    </linearGradient>
+    
     <filter id="glow">
-      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
       <feMerge>
         <feMergeNode in="coloredBlur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -14,47 +24,52 @@
   </defs>
   
   <!-- Background circle subtle -->
-  <circle cx="100" cy="100" r="95" fill="none" stroke="#E5E7EB" stroke-width="0.5" opacity="0.3"/>
+  <circle cx="100" cy="100" r="95" fill="none" stroke="#E0F2FE" stroke-width="1" opacity="0.5"/>
   
-  <!-- Modern X Design with water flow -->
-  <!-- Left diagonal line with water wave pattern -->
+  <!-- Modern X Design with Aqua Flow -->
   <g filter="url(#glow)">
-    <!-- Top-left to bottom-right diagonal -->
+    <!-- Top-left to bottom-right diagonal with aqua flow -->
     <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" 
-          stroke="url(#waterFlow)" 
-          stroke-width="8" 
+          stroke="url(#aquaFlow)" 
+          stroke-width="9" 
+          fill="none" 
+          stroke-linecap="round"
+          opacity="0.95"/>
+    
+    <!-- Bottom-left to top-right diagonal with secondary aqua flow -->
+    <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" 
+          stroke="url(#aquaFlowSecondary)" 
+          stroke-width="9" 
           fill="none" 
           stroke-linecap="round"
           opacity="0.9"/>
-    
-    <!-- Bottom-left to top-right diagonal -->
-    <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" 
-          stroke="#1F2937" 
-          stroke-width="8" 
-          fill="none" 
-          stroke-linecap="round"
-          opacity="0.85"/>
   </g>
   
-  <!-- Central circle accent -->
-  <circle cx="100" cy="100" r="12" fill="url(#waterFlow)" opacity="0.7"/>
-  <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
+  <!-- Central circle accent with aqua -->
+  <circle cx="100" cy="100" r="14" fill="url(#aquaFlow)" opacity="0.8"/>
+  <circle cx="100" cy="100" r="10" fill="#06B6D4" opacity="0.95"/>
+  <circle cx="100" cy="100" r="5" fill="#FFFFFF" opacity="0.3"/>
   
-  <!-- Subtle water droplet elements on corners -->
-  <g opacity="0.4">
-    <!-- Top-left water drop -->
-    <path d="M 55 55 Q 52 58, 52 62 Q 52 66, 55 68" 
-          stroke="#06B6D4" 
-          stroke-width="1.5" 
-          fill="none"/>
+  <!-- Subtle aqua water droplet elements -->
+  <g opacity="0.5" filter="url(#glow)">
+    <!-- Top-left water accent -->
+    <path d="M 55 55 Q 52 60, 52 65 Q 52 68, 55 70" 
+          stroke="url(#aquaFlow)" 
+          stroke-width="2" 
+          fill="none"
+          stroke-linecap="round"/>
     
-    <!-- Bottom-right water drop -->
-    <path d="M 145 145 Q 148 142, 148 138 Q 148 134, 145 132" 
-          stroke="#06B6D4" 
-          stroke-width="1.5" 
-          fill="none"/>
+    <!-- Bottom-right water accent -->
+    <path d="M 145 145 Q 148 140, 148 135 Q 148 132, 145 130" 
+          stroke="url(#aquaFlowSecondary)" 
+          stroke-width="2" 
+          fill="none"
+          stroke-linecap="round"/>
   </g>
   
-  <!-- Top accent line (fiber element) -->
-  <line x1="100" y1="15" x2="100" y2="25" stroke="url(#waterFlow)" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+  <!-- Top accent line (fiber element) with aqua flow -->
+  <line x1="100" y1="15" x2="100" y2="28" stroke="url(#aquaFlow)" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+  
+  <!-- Bottom accent line for balance -->
+  <line x1="100" y1="172" x2="100" y2="185" stroke="url(#aquaFlowSecondary)" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
 </svg>
