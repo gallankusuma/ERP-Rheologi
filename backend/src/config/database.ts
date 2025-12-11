@@ -70,6 +70,8 @@ export function initializeDatabase() {
       name TEXT NOT NULL,
       module TEXT,
       action TEXT,
+      description TEXT,
+      active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )

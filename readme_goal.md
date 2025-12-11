@@ -1199,7 +1199,7 @@ TABLE VIEW:
     +--------------------------------------------------------------+
 |                   GOODS RECEIPT (GRN)                        |
 +--------------------------------------------------------------+
-| PO Number:     [ Select PO ▼ ]                              |
+| PO Number:     [ Select PO ▼ ]                              | 
 | Vendor:        [ auto-filled ]                               |
 | Receipt Date:  [ YYYY-MM-DD ]                                |
 | Reference Doc: [ Upload File ]                               |
