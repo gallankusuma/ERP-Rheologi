@@ -9,8 +9,36 @@
           <h1 class="text-lg font-bold bg-gradient-to-r from-cyan-600 to-emerald-600 bg-clip-text text-transparent">FiberFlow</h1>
         </div>
         <div class="flex items-center gap-2">
-          <button class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded">Users</button>
-          <button class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded">Logout</button>
+          <div class="relative">
+            <button 
+              @click="showUserMenu = !showUserMenu"
+              class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-all flex items-center gap-2"
+            >
+              👤 {{ authStore.user?.name || 'User' }}
+            </button>
+            
+            <!-- User Dropdown Menu -->
+            <div v-if="showUserMenu" class="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+              <button
+                @click="goToProfile"
+                class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-b border-gray-100"
+              >
+                👤 My Profile
+              </button>
+              <button
+                @click="goToSettings"
+                class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 border-b border-gray-100"
+              >
+                ⚙️ Settings
+              </button>
+              <button
+                @click="handleLogout"
+                class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                🚪 Logout
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -72,9 +100,13 @@
 import { ref, onMounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { RouterView } from 'vue-router';
+import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
 const route = useRoute();
+const authStore = useAuthStore();
+
+const showUserMenu = ref(false);
 
 interface MenuItem {
   id: string;
@@ -217,6 +249,32 @@ watch(() => selectedMainMenu.value, () => {
     selectedSubmenu.value = firstSubmenu.id;
     router.push(firstSubmenu.route);
   }
+});
+
+// User menu functions
+const handleLogout = () => {
+  authStore.logout();
+  showUserMenu.value = false;
+  router.push('/login');
+};
+
+const goToProfile = () => {
+  showUserMenu.value = false;
+  // TODO: Navigate to profile page when created
+  console.log('Go to profile');
+};
+
+const goToSettings = () => {
+  showUserMenu.value = false;
+  // TODO: Navigate to settings page when created
+  console.log('Go to settings');
+};
+
+// Close menu when clicking outside
+onMounted(() => {
+  document.addEventListener('click', () => {
+    showUserMenu.value = false;
+  });
 });
 </script>
 
