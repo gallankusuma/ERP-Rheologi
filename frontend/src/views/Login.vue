@@ -4,35 +4,48 @@
     <div class="absolute inset-0 overflow-hidden">
       <!-- Animated futuristic cartoon background -->
       <svg class="absolute inset-0 w-full h-full" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-        <!-- Animated flowing particles -->
+        <!-- Animated flowing particles - ACCELERATION TRAILS -->
         <g class="animated-particles">
-          <!-- Fiber strands animation -->
-          <path d="M 0 100 Q 300 50, 600 100 T 1200 100" stroke="rgba(6, 182, 212, 0.15)" stroke-width="3" fill="none" class="animate-flow-1"/>
-          <path d="M 0 300 Q 300 250, 600 300 T 1200 300" stroke="rgba(16, 185, 129, 0.15)" stroke-width="3" fill="none" class="animate-flow-2"/>
-          <path d="M 0 500 Q 300 450, 600 500 T 1200 500" stroke="rgba(6, 182, 212, 0.1)" stroke-width="3" fill="none" class="animate-flow-3"/>
+          <!-- Speed lines/acceleration trails -->
+          <path d="M 0 100 Q 300 50, 600 100 T 1200 100" stroke="rgba(6, 182, 212, 0.2)" stroke-width="4" fill="none" class="animate-flow-1"/>
+          <path d="M 0 150 Q 300 120, 600 150 T 1200 150" stroke="rgba(6, 182, 212, 0.15)" stroke-width="3" fill="none" class="animate-flow-2-fast"/>
+          <path d="M 0 300 Q 300 250, 600 300 T 1200 300" stroke="rgba(16, 185, 129, 0.18)" stroke-width="4" fill="none" class="animate-flow-3"/>
+          <path d="M 0 350 Q 300 330, 600 350 T 1200 350" stroke="rgba(16, 185, 129, 0.12)" stroke-width="3" fill="none" class="animate-flow-4-fast"/>
+          <path d="M 0 500 Q 300 450, 600 500 T 1200 500" stroke="rgba(6, 182, 212, 0.1)" stroke-width="4" fill="none" class="animate-flow-1"/>
           <path d="M 0 700 Q 300 650, 600 700 T 1200 700" stroke="rgba(16, 185, 129, 0.1)" stroke-width="3" fill="none" class="animate-flow-4"/>
         </g>
 
-        <!-- Floating cartoon elements -->
+        <!-- Floating cartoon elements - ACCELERATED MOTION -->
         <g class="floating-elements">
-          <!-- Cartoon water droplets -->
-          <circle cx="100" cy="150" r="30" fill="rgba(6, 182, 212, 0.2)" class="animate-float-1"/>
-          <circle cx="200" cy="600" r="25" fill="rgba(6, 182, 212, 0.15)" class="animate-float-2"/>
-          <circle cx="1100" cy="300" r="35" fill="rgba(6, 182, 212, 0.18)" class="animate-float-3"/>
+          <!-- Lightning bolts for acceleration -->
+          <g class="animate-float-lightning">
+            <path d="M 150 100 L 160 130 L 140 135 L 170 170" stroke="rgba(6, 182, 212, 0.3)" stroke-width="2" fill="none"/>
+          </g>
           
-          <!-- Cartoon fiber bundles -->
-          <g class="animate-float-4">
-            <circle cx="900" cy="200" r="20" fill="rgba(16, 185, 129, 0.2)"/>
-            <circle cx="920" cy="190" r="18" fill="rgba(16, 185, 129, 0.15)"/>
-            <circle cx="880" cy="210" r="18" fill="rgba(16, 185, 129, 0.15)"/>
+          <!-- Speed circles/nodes -->
+          <circle cx="100" cy="150" r="30" fill="rgba(6, 182, 212, 0.25)" class="animate-float-1"/>
+          <circle cx="200" cy="600" r="25" fill="rgba(6, 182, 212, 0.2)" class="animate-float-2"/>
+          <circle cx="1100" cy="300" r="35" fill="rgba(6, 182, 212, 0.22)" class="animate-float-3"/>
+          
+          <!-- Fiber bundles in motion -->
+          <g class="animate-float-4-speed">
+            <circle cx="900" cy="200" r="20" fill="rgba(16, 185, 129, 0.25)"/>
+            <circle cx="920" cy="190" r="18" fill="rgba(16, 185, 129, 0.2)"/>
+            <circle cx="880" cy="210" r="18" fill="rgba(16, 185, 129, 0.2)"/>
           </g>
 
-          <!-- Cartoon stars/nodes -->
-          <g class="animate-pulse-slow">
-            <circle cx="300" cy="250" r="8" fill="rgba(6, 182, 212, 0.3)"/>
-            <circle cx="800" cy="550" r="8" fill="rgba(6, 182, 212, 0.3)"/>
-            <circle cx="500" cy="150" r="6" fill="rgba(16, 185, 129, 0.25)"/>
-            <circle cx="1000" cy="700" r="6" fill="rgba(16, 185, 129, 0.25)"/>
+          <!-- Accelerating nodes/stars -->
+          <g class="animate-pulse-fast">
+            <circle cx="300" cy="250" r="8" fill="rgba(6, 182, 212, 0.4)"/>
+            <circle cx="800" cy="550" r="8" fill="rgba(6, 182, 212, 0.35)"/>
+            <circle cx="500" cy="150" r="6" fill="rgba(16, 185, 129, 0.35)"/>
+            <circle cx="1000" cy="700" r="6" fill="rgba(16, 185, 129, 0.3)"/>
+          </g>
+
+          <!-- Speed arrows/acceleration indicators -->
+          <g class="animate-float-arrows" opacity="0.2">
+            <path d="M 400 400 L 450 400" stroke="rgba(6, 182, 212, 0.5)" stroke-width="3"/>
+            <path d="M 440 395 L 450 400 L 440 405" stroke="rgba(6, 182, 212, 0.5)" stroke-width="3" fill="none"/>
           </g>
         </g>
       </svg>
@@ -43,22 +56,22 @@
     <div class="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-tl from-emerald-300 to-cyan-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style="animation-delay: 2s;"></div>
     <div class="absolute top-1/2 left-1/3 w-72 h-72 bg-gradient-to-r from-blue-200 to-emerald-200 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse" style="animation-delay: 4s;"></div>
 
-    <!-- Cartoon floating elements -->
-    <div class="absolute top-10 left-10 text-6xl opacity-10 animate-bounce">💧</div>
-    <div class="absolute top-32 right-20 text-5xl opacity-10 animate-bounce animation-delay-1000">🌊</div>
-    <div class="absolute bottom-32 left-20 text-5xl opacity-10 animate-bounce animation-delay-2000">✨</div>
-    <div class="absolute bottom-10 right-10 text-6xl opacity-10 animate-bounce animation-delay-3000">🧬</div>
+    <!-- Acceleration themed decorations -->
+    <div class="absolute top-10 left-10 text-6xl opacity-10 animate-bounce">⚡</div>
+    <div class="absolute top-32 right-20 text-5xl opacity-10 animate-bounce animation-delay-1000">�</div>
+    <div class="absolute bottom-32 left-20 text-5xl opacity-10 animate-bounce animation-delay-2000">🌊</div>
+    <div class="absolute bottom-10 right-10 text-6xl opacity-10 animate-bounce animation-delay-3000">✨</div>
 
     <div class="max-w-md w-full mx-4 relative z-10">
       <!-- Login Card -->
       <div v-if="!showRegister" class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-cyan-200 transition-all duration-500 transform hover:shadow-cyan-200/50 hover:shadow-2xl">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <div class="text-5xl mb-3 animate-pulse">💧</div>
-          <h1 class="text-4xl font-bold bg-gradient-to-r from-cyan-600 via-emerald-600 to-blue-600 bg-clip-text text-transparent mb-2 font-black">
-            FiberFlow
+          <div class="text-6xl mb-3 animate-pulse">⚡💧</div>
+          <h1 class="text-4xl font-black bg-gradient-to-r from-cyan-600 via-blue-600 to-emerald-600 bg-clip-text text-transparent mb-2 tracking-tight">
+            AcceSelerate
           </h1>
-          <p class="text-cyan-600 text-sm font-semibold">Advanced Fiber Technology Manufacturing</p>
+          <p class="text-cyan-600 text-sm font-bold uppercase tracking-widest">Accelerated Fiber Technology Manufacturing</p>
         </div>
 
         <!-- Error Message -->
@@ -137,11 +150,11 @@
       <div v-else class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-emerald-200 transition-all duration-500 transform hover:shadow-emerald-200/50 hover:shadow-2xl">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <div class="text-5xl mb-3 animate-pulse">🧬</div>
-          <h2 class="text-4xl font-bold bg-gradient-to-r from-emerald-600 via-cyan-600 to-blue-600 bg-clip-text text-transparent mb-2 font-black">
-            Join FiberFlow
+          <div class="text-6xl mb-3 animate-pulse">🌊⚡</div>
+          <h2 class="text-4xl font-black bg-gradient-to-r from-emerald-600 via-cyan-600 to-blue-600 bg-clip-text text-transparent mb-2 tracking-tight">
+            Join AcceSelerate
           </h2>
-          <p class="text-emerald-600 text-sm font-semibold">Start your advanced fiber journey</p>
+          <p class="text-emerald-600 text-sm font-bold uppercase tracking-widest">Launch Your Hydro-Fiber Future</p>
         </div>
 
         <!-- Error Message -->
@@ -310,9 +323,27 @@ const handleRegister = async () => {
   50% { opacity: 0.25; }
 }
 
+@keyframes pulse-fast {
+  0%, 100% { opacity: 0.2; }
+  25% { opacity: 0.4; }
+  50% { opacity: 0.35; }
+  75% { opacity: 0.25; }
+}
+
 @keyframes float {
   0%, 100% { transform: translateY(0px); }
   50% { transform: translateY(-20px); }
+}
+
+@keyframes float-lightning {
+  0%, 100% { transform: translate(0, 0); opacity: 0.3; }
+  50% { transform: translate(5px, 10px); opacity: 0.5; }
+}
+
+@keyframes float-arrows {
+  0% { transform: translateX(-30px); opacity: 0.1; }
+  50% { transform: translateX(30px); opacity: 0.3; }
+  100% { transform: translateX(80px); opacity: 0; }
 }
 
 @keyframes flow-wave {
@@ -320,8 +351,17 @@ const handleRegister = async () => {
   100% { stroke-dashoffset: 0; }
 }
 
+@keyframes flow-wave-fast {
+  0% { stroke-dashoffset: 1000; }
+  100% { stroke-dashoffset: 0; }
+}
+
 .animate-pulse-slow {
   animation: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-pulse-fast {
+  animation: pulse-fast 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .animation-delay-2000 {
@@ -351,6 +391,12 @@ const handleRegister = async () => {
   animation-delay: 2s;
 }
 
+.animate-flow-2-fast {
+  animation: flow-wave-fast 4s linear infinite;
+  stroke-dasharray: 1000;
+  animation-delay: 1s;
+}
+
 .animate-flow-3 {
   animation: flow-wave 7s linear infinite;
   stroke-dasharray: 1000;
@@ -361,6 +407,12 @@ const handleRegister = async () => {
   animation: flow-wave 9s linear infinite;
   stroke-dasharray: 1000;
   animation-delay: 6s;
+}
+
+.animate-flow-4-fast {
+  animation: flow-wave 5s linear infinite;
+  stroke-dasharray: 1000;
+  animation-delay: 3s;
 }
 
 .animate-float-1 {
@@ -380,5 +432,18 @@ const handleRegister = async () => {
 .animate-float-4 {
   animation: float 9s ease-in-out infinite;
   animation-delay: 3s;
+}
+
+.animate-float-4-speed {
+  animation: float 5s ease-in-out infinite;
+  animation-delay: 2s;
+}
+
+.animate-float-lightning {
+  animation: float-lightning 3s ease-in-out infinite;
+}
+
+.animate-float-arrows {
+  animation: float-arrows 2s ease-in infinite;
 }
 </style>
