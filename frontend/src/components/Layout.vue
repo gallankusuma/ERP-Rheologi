@@ -3,10 +3,9 @@
     <!-- Header Navbar Horizontal -->
     <header class="bg-white border-b border-gray-200 shadow-sm">
       <div class="flex items-center justify-between px-6 py-3">
-        <div class="flex items-center gap-4">
-          <img src="@/assets/rheologi-logo1.svg" alt="AcceSelerate" class="h-10 w-auto">
-          <span class="text-gray-400">|</span>
-          <h1 class="text-lg font-black bg-gradient-to-r from-cyan-600 to-emerald-600 bg-clip-text text-transparent tracking-tight">AcceSelerate ⚡</h1>
+        <div class="flex items-center gap-3">
+          <img src="@/assets/logo/aquion-logo.svg" alt="AQUION" class="h-12 w-12 drop-shadow-sm">
+          <h1 class="text-2xl font-black bg-gradient-to-r from-cyan-600 to-gray-900 bg-clip-text text-transparent tracking-tighter">AQUION</h1>
         </div>
         <div class="flex items-center gap-2">
           <div class="relative" @click.stop>

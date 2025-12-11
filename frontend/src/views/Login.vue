@@ -2,52 +2,57 @@
   <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-cyan-50 via-emerald-50 to-blue-50 overflow-hidden relative">
     <!-- Animated background video/animation -->
     <div class="absolute inset-0 overflow-hidden">
-      <!-- Animated futuristic cartoon background -->
+      <!-- SVG Background with elegant patterns -->
       <svg class="absolute inset-0 w-full h-full" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-        <!-- Animated flowing particles - ACCELERATION TRAILS -->
+        <defs>
+          <linearGradient id="flowGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:0.15" />
+            <stop offset="100%" style="stop-color:#0891B2;stop-opacity:0.05" />
+          </linearGradient>
+          <linearGradient id="flowGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" style="stop-color:#059669;stop-opacity:0.15" />
+            <stop offset="100%" style="stop-color:#047857;stop-opacity:0.05" />
+          </linearGradient>
+        </defs>
+        
+        <!-- Flowing lines animation -->
         <g class="animated-particles">
-          <!-- Speed lines/acceleration trails -->
-          <path d="M 0 100 Q 300 50, 600 100 T 1200 100" stroke="rgba(6, 182, 212, 0.2)" stroke-width="4" fill="none" class="animate-flow-1"/>
-          <path d="M 0 150 Q 300 120, 600 150 T 1200 150" stroke="rgba(6, 182, 212, 0.15)" stroke-width="3" fill="none" class="animate-flow-2-fast"/>
-          <path d="M 0 300 Q 300 250, 600 300 T 1200 300" stroke="rgba(16, 185, 129, 0.18)" stroke-width="4" fill="none" class="animate-flow-3"/>
-          <path d="M 0 350 Q 300 330, 600 350 T 1200 350" stroke="rgba(16, 185, 129, 0.12)" stroke-width="3" fill="none" class="animate-flow-4-fast"/>
-          <path d="M 0 500 Q 300 450, 600 500 T 1200 500" stroke="rgba(6, 182, 212, 0.1)" stroke-width="4" fill="none" class="animate-flow-1"/>
-          <path d="M 0 700 Q 300 650, 600 700 T 1200 700" stroke="rgba(16, 185, 129, 0.1)" stroke-width="3" fill="none" class="animate-flow-4"/>
+          <path d="M 0 100 Q 300 50, 600 100 T 1200 100" stroke="url(#flowGrad1)" stroke-width="4" fill="none" class="animate-flow-1"/>
+          <path d="M 0 300 Q 300 250, 600 300 T 1200 300" stroke="url(#flowGrad2)" stroke-width="4" fill="none" class="animate-flow-3"/>
+          <path d="M 0 500 Q 300 450, 600 500 T 1200 500" stroke="url(#flowGrad1)" stroke-width="4" fill="none" class="animate-flow-1"/>
+          <path d="M 0 700 Q 300 650, 600 700 T 1200 700" stroke="url(#flowGrad2)" stroke-width="4" fill="none" class="animate-flow-4"/>
         </g>
 
-        <!-- Floating cartoon elements - ACCELERATED MOTION -->
-        <g class="floating-elements">
-          <!-- Lightning bolts for acceleration -->
-          <g class="animate-float-lightning">
-            <path d="M 150 100 L 160 130 L 140 135 L 170 170" stroke="rgba(6, 182, 212, 0.3)" stroke-width="2" fill="none"/>
-          </g>
-          
-          <!-- Speed circles/nodes -->
-          <circle cx="100" cy="150" r="30" fill="rgba(6, 182, 212, 0.25)" class="animate-float-1"/>
-          <circle cx="200" cy="600" r="25" fill="rgba(6, 182, 212, 0.2)" class="animate-float-2"/>
-          <circle cx="1100" cy="300" r="35" fill="rgba(6, 182, 212, 0.22)" class="animate-float-3"/>
-          
-          <!-- Fiber bundles in motion -->
-          <g class="animate-float-4-speed">
-            <circle cx="900" cy="200" r="20" fill="rgba(16, 185, 129, 0.25)"/>
-            <circle cx="920" cy="190" r="18" fill="rgba(16, 185, 129, 0.2)"/>
-            <circle cx="880" cy="210" r="18" fill="rgba(16, 185, 129, 0.2)"/>
-          </g>
-
-          <!-- Accelerating nodes/stars -->
-          <g class="animate-pulse-fast">
-            <circle cx="300" cy="250" r="8" fill="rgba(6, 182, 212, 0.4)"/>
-            <circle cx="800" cy="550" r="8" fill="rgba(6, 182, 212, 0.35)"/>
-            <circle cx="500" cy="150" r="6" fill="rgba(16, 185, 129, 0.35)"/>
-            <circle cx="1000" cy="700" r="6" fill="rgba(16, 185, 129, 0.3)"/>
-          </g>
-
-          <!-- Speed arrows/acceleration indicators -->
-          <g class="animate-float-arrows" opacity="0.2">
-            <path d="M 400 400 L 450 400" stroke="rgba(6, 182, 212, 0.5)" stroke-width="3"/>
-            <path d="M 440 395 L 450 400 L 440 405" stroke="rgba(6, 182, 212, 0.5)" stroke-width="3" fill="none"/>
-          </g>
+        <!-- Geometric accent circles -->
+        <g class="floating-elements" opacity="0.1">
+          <circle cx="100" cy="150" r="60" fill="none" stroke="#06B6D4" stroke-width="1" class="animate-float-1"/>
+          <circle cx="200" cy="600" r="50" fill="none" stroke="#06B6D4" stroke-width="1" class="animate-float-2"/>
+          <circle cx="1100" cy="300" r="70" fill="none" stroke="#059669" stroke-width="1" class="animate-float-3"/>
+          <circle cx="900" cy="200" r="55" fill="none" stroke="#059669" stroke-width="1" class="animate-float-4"/>
         </g>
+
+        <!-- X pattern elements (AQUION inspired) -->
+        <g opacity="0.08" class="animate-pulse-slow">
+          <path d="M 150 100 L 250 200" stroke="#06B6D4" stroke-width="2"/>
+          <path d="M 250 100 L 150 200" stroke="#06B6D4" stroke-width="2"/>
+          
+          <path d="M 1050 600 L 1150 700" stroke="#059669" stroke-width="2"/>
+          <path d="M 1150 600 L 1050 700" stroke="#059669" stroke-width="2"/>
+          
+          <path d="M 550 200 L 650 300" stroke="#06B6D4" stroke-width="1.5"/>
+          <path d="M 650 200 L 550 300" stroke="#06B6D4" stroke-width="1.5"/>
+        </g>
+
+        <!-- Subtle accent dots -->
+        <g opacity="0.15" class="animate-pulse">
+          <circle cx="300" cy="250" r="6" fill="#06B6D4"/>
+          <circle cx="800" cy="550" r="6" fill="#06B6D4"/>
+          <circle cx="500" cy="150" r="4" fill="#059669"/>
+          <circle cx="1000" cy="700" r="4" fill="#059669"/>
+          <circle cx="200" cy="400" r="5" fill="#06B6D4"/>
+          <circle cx="950" cy="350" r="5" fill="#059669"/>
+        </g>
+      </svg>
       </svg>
     </div>
 
@@ -67,11 +72,20 @@
       <div v-if="!showRegister" class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-cyan-200 transition-all duration-500 transform hover:shadow-cyan-200/50 hover:shadow-2xl">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <div class="text-6xl mb-3 animate-pulse">⚡💧</div>
-          <h1 class="text-4xl font-black bg-gradient-to-r from-cyan-600 via-blue-600 to-emerald-600 bg-clip-text text-transparent mb-2 tracking-tight">
-            AcceSelerate
-          </h1>
-          <p class="text-cyan-600 text-sm font-bold uppercase tracking-widest">Accelerated Fiber Technology Manufacturing</p>
+          <svg class="w-16 h-16 mx-auto mb-3" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#0891B2;stop-opacity:1" />
+              </linearGradient>
+            </defs>
+            <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" stroke="url(#logoGradient)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.9"/>
+            <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" stroke="#1F2937" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.85"/>
+            <circle cx="100" cy="100" r="12" fill="url(#logoGradient)" opacity="0.7"/>
+            <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
+          </svg>
+          <h1 class="text-3xl font-black bg-gradient-to-r from-cyan-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">AQUION</h1>
+          <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Advanced Hydro-Fiber Manufacturing</p>
         </div>
 
         <!-- Error Message -->
@@ -147,14 +161,23 @@
       </div>
 
       <!-- Register Card -->
-      <div v-else class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-emerald-200 transition-all duration-500 transform hover:shadow-emerald-200/50 hover:shadow-2xl">
+      <div v-else class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-emerald-200 transition-all duration-500 transform hover:shadow-emerald-200/50 hover:shadow-2xl max-w-sm w-full">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <div class="text-6xl mb-3 animate-pulse">🌊⚡</div>
-          <h2 class="text-4xl font-black bg-gradient-to-r from-emerald-600 via-cyan-600 to-blue-600 bg-clip-text text-transparent mb-2 tracking-tight">
-            Join AcceSelerate
-          </h2>
-          <p class="text-emerald-600 text-sm font-bold uppercase tracking-widest">Launch Your Hydro-Fiber Future</p>
+          <svg class="w-16 h-16 mx-auto mb-3" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="logoGradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#0891B2;stop-opacity:1" />
+              </linearGradient>
+            </defs>
+            <path d="M 60 60 Q 80 75, 100 85 Q 120 95, 140 140" stroke="url(#logoGradient2)" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.9"/>
+            <path d="M 60 140 Q 80 125, 100 115 Q 120 105, 140 60" stroke="#059669" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.85"/>
+            <circle cx="100" cy="100" r="12" fill="url(#logoGradient2)" opacity="0.7"/>
+            <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
+          </svg>
+          <h2 class="text-3xl font-black bg-gradient-to-r from-emerald-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">AQUION</h2>
+          <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Join the Hydro-Fiber Revolution</p>
         </div>
 
         <!-- Error Message -->
