@@ -71,8 +71,8 @@
       <div v-if="!showRegister" class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-cyan-200 transition-all duration-500 transform hover:shadow-cyan-200/50 hover:shadow-2xl">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <img src="@/assets/logo/xlerate-logo.svg" alt="X Lerate" class="w-16 h-16 mx-auto mb-3">
-          <h1 class="text-3xl font-black bg-gradient-to-r from-cyan-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h1>
+          <img src="@/assets/logo/Red and Black Modern X Studio Logo.svg" alt="X Lerate" class="w-16 h-16 mx-auto mb-3">
+          <h1 class="text-3xl font-black bg-gradient-to-r from-red-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h1>
           <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Advanced Hydro-Fiber Manufacturing</p>
         </div>
 
@@ -152,8 +152,8 @@
       <div v-else class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-emerald-200 transition-all duration-500 transform hover:shadow-emerald-200/50 hover:shadow-2xl max-w-sm w-full">
         <!-- Logo & Title -->
         <div class="text-center mb-8">
-          <img src="@/assets/logo/xlerate-logo.svg" alt="X Lerate" class="w-16 h-16 mx-auto mb-3">
-          <h2 class="text-3xl font-black bg-gradient-to-r from-emerald-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h2>
+          <img src="@/assets/logo/Red and Black Modern X Studio Logo.svg" alt="X Lerate" class="w-16 h-16 mx-auto mb-3">
+          <h2 class="text-3xl font-black bg-gradient-to-r from-red-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h2>
           <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Join the Hydro-Fiber Revolution</p>
         </div>
 
