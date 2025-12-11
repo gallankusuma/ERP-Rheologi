@@ -19,6 +19,7 @@ import categoryRoutes from './routes/category.routes';
 import productTypeRoutes from './routes/product-type.routes';
 import departmentRoutes from './routes/department.routes';
 import roleRoutes from './routes/role.routes';
+import permissionsRoutes from './routes/permissions.routes';
 
 dotenv.config();
 
@@ -55,6 +56,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/product-types', productTypeRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/roles', roleRoutes);
+app.use('/api/permissions', permissionsRoutes);
 
 // Error handling
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

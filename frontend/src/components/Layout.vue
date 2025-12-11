@@ -174,6 +174,16 @@ const mainMenus: MenuItem[] = [
       { id: 'customers', label: 'Customers', route: '/data-master/customers' },
     ]
   },
+  {
+    id: 'admin',
+    label: 'Administration',
+    icon: '👥',
+    submenus: [
+      { id: 'users', label: 'Users', route: '/users' },
+      { id: 'departments', label: 'Departments', route: '/departments' },
+      { id: 'roles', label: 'Roles', route: '/roles' },
+    ]
+  },
 ];
 
 const getSubmenus = (): Submenu[] => {
