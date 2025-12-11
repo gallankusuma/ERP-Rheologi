@@ -53,7 +53,6 @@
           <circle cx="950" cy="350" r="5" fill="#059669"/>
         </g>
       </svg>
-      </svg>
     </div>
 
     <!-- Decorative colored overlays -->
