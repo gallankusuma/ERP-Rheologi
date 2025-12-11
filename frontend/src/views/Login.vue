@@ -84,7 +84,7 @@
             <circle cx="100" cy="100" r="12" fill="url(#logoGradient)" opacity="0.7"/>
             <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
           </svg>
-          <h1 class="text-3xl font-black bg-gradient-to-r from-cyan-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">AQUION</h1>
+          <h1 class="text-3xl font-black bg-gradient-to-r from-cyan-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h1>
           <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Advanced Hydro-Fiber Manufacturing</p>
         </div>
 
@@ -176,7 +176,7 @@
             <circle cx="100" cy="100" r="12" fill="url(#logoGradient2)" opacity="0.7"/>
             <circle cx="100" cy="100" r="8" fill="#06B6D4"/>
           </svg>
-          <h2 class="text-3xl font-black bg-gradient-to-r from-emerald-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">AQUION</h2>
+          <h2 class="text-3xl font-black bg-gradient-to-r from-emerald-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h2>
           <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Join the Hydro-Fiber Revolution</p>
         </div>
 
