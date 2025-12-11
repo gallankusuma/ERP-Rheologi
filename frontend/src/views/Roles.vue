@@ -140,16 +140,22 @@
           <h3 class="text-lg font-semibold text-gray-900">Role Permissions</h3>
           <p class="text-sm text-gray-600">Select permissions for this role</p>
           
-          <div class="grid grid-cols-2 gap-4 max-h-60 overflow-y-auto border border-gray-200 p-4 rounded-lg">
-            <label v-for="perm in availablePermissions" :key="perm.id" class="flex items-center space-x-2 cursor-pointer">
+          <div v-if="availablePermissions.length > 0" class="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto border border-gray-200 p-4 rounded-lg bg-gray-50">
+            <label v-for="perm in availablePermissions" :key="perm.id" class="flex items-start space-x-3 cursor-pointer hover:bg-white p-2 rounded transition">
               <input
                 type="checkbox"
                 :checked="selectedPermissions.includes(perm.id)"
                 @change="(e) => togglePermission(perm.id, (e.target as any).checked)"
-                class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 mt-0.5 flex-shrink-0"
               />
-              <span class="text-sm text-gray-700">{{ perm.name }}</span>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-700">{{ perm.name }}</p>
+                <p class="text-xs text-gray-500">{{ perm.module }} - {{ perm.action }}</p>
+              </div>
             </label>
+          </div>
+          <div v-else class="border border-gray-200 p-4 rounded-lg text-center text-gray-500">
+            <p class="text-sm">No permissions available</p>
           </div>
         </div>
 
@@ -207,6 +213,18 @@ const fetchPermissions = async () => {
   }
 };
 
+const fetchRolePermissions = async (roleId: number) => {
+  try {
+    const response = await api.get(`/roles/${roleId}`);
+    if (response.data.data.permissions) {
+      selectedPermissions.value = response.data.data.permissions.map((p: any) => p.id);
+    }
+  } catch (error) {
+    console.error('Error fetching role permissions:', error);
+    selectedPermissions.value = [];
+  }
+};
+
 const openCreateModal = () => {
   isEditing.value = false;
   editingId.value = null;
@@ -227,7 +245,9 @@ const openEditModal = (role: any) => {
   form.description = role.description || '';
   form.level = role.level;
   form.active = role.active;
-  selectedPermissions.value = [];
+  
+  // Load existing permissions for this role
+  fetchRolePermissions(role.id);
   showModal.value = true;
 };
 
