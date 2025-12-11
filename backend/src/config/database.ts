@@ -575,19 +575,58 @@ function seedDefaults() {
   const permCount = db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number };
   if (!permCount || permCount.cnt === 0) {
     const permissions = [
+      // Users Module
       { code: 'user_create', name: 'Create User', module: 'users', action: 'create' },
       { code: 'user_read', name: 'View Users', module: 'users', action: 'read' },
       { code: 'user_update', name: 'Update User', module: 'users', action: 'update' },
       { code: 'user_delete', name: 'Delete User', module: 'users', action: 'delete' },
+      // Products Module
       { code: 'product_create', name: 'Create Product', module: 'products', action: 'create' },
       { code: 'product_read', name: 'View Products', module: 'products', action: 'read' },
       { code: 'product_update', name: 'Update Product', module: 'products', action: 'update' },
       { code: 'product_delete', name: 'Delete Product', module: 'products', action: 'delete' },
+      { code: 'bom_create', name: 'Create BOM', module: 'products', action: 'create_bom' },
+      { code: 'bom_read', name: 'View BOM', module: 'products', action: 'read_bom' },
+      { code: 'bom_update', name: 'Update BOM', module: 'products', action: 'update_bom' },
+      { code: 'bom_delete', name: 'Delete BOM', module: 'products', action: 'delete_bom' },
+      // Inventory Module
+      { code: 'inventory_view', name: 'View Inventory', module: 'inventory', action: 'read' },
       { code: 'inventory_manage', name: 'Manage Inventory', module: 'inventory', action: 'manage' },
+      { code: 'warehouse_manage', name: 'Manage Warehouses', module: 'inventory', action: 'manage_warehouse' },
+      // Procurement Module
+      { code: 'procurement_create', name: 'Create Purchase Request', module: 'procurement', action: 'create' },
+      { code: 'procurement_read', name: 'View Procurement', module: 'procurement', action: 'read' },
       { code: 'procurement_manage', name: 'Manage Procurement', module: 'procurement', action: 'manage' },
-      { code: 'sales_manage', name: 'Manage Sales', module: 'sales', action: 'manage' },
-      { code: 'quality_manage', name: 'Manage Quality', module: 'quality', action: 'manage' },
+      // Production Module
+      { code: 'workorder_create', name: 'Create Work Order', module: 'production', action: 'create_workorder' },
+      { code: 'workorder_read', name: 'View Work Orders', module: 'production', action: 'read_workorder' },
+      { code: 'workorder_manage', name: 'Manage Work Orders', module: 'production', action: 'manage_workorder' },
+      { code: 'batch_create', name: 'Create Batch', module: 'production', action: 'create_batch' },
+      { code: 'batch_read', name: 'View Batches', module: 'production', action: 'read_batch' },
+      { code: 'batch_manage', name: 'Manage Batches', module: 'production', action: 'manage_batch' },
+      // Quality Module
+      { code: 'quality_view', name: 'View Quality Tests', module: 'quality', action: 'read' },
+      { code: 'quality_manage', name: 'Manage Quality Tests', module: 'quality', action: 'manage' },
+      // Sales Module
+      { code: 'sales_create', name: 'Create Sales Order', module: 'sales', action: 'create' },
+      { code: 'sales_read', name: 'View Sales Orders', module: 'sales', action: 'read' },
+      { code: 'sales_manage', name: 'Manage Sales Orders', module: 'sales', action: 'manage' },
+      // Finance Module
+      { code: 'finance_view_cogs', name: 'View COGS Tracking', module: 'finance', action: 'read_cogs' },
+      { code: 'finance_manage_cogs', name: 'Manage COGS Tracking', module: 'finance', action: 'manage_cogs' },
+      { code: 'finance_view_profit', name: 'View Profitability', module: 'finance', action: 'read_profit' },
+      { code: 'finance_manage_profit', name: 'Manage Profitability', module: 'finance', action: 'manage_profit' },
+      { code: 'finance_view_summary', name: 'View Monthly Summary', module: 'finance', action: 'read_summary' },
+      { code: 'finance_manage_summary', name: 'Manage Monthly Summary', module: 'finance', action: 'manage_summary' },
+      // Reports Module
       { code: 'report_view', name: 'View Reports', module: 'reports', action: 'read' },
+      { code: 'report_export', name: 'Export Reports', module: 'reports', action: 'export' },
+      // Data Master Module
+      { code: 'datamaster_manage', name: 'Manage Data Master', module: 'datamaster', action: 'manage' },
+      // Administration Module
+      { code: 'admin_manage_roles', name: 'Manage Roles', module: 'administration', action: 'manage_roles' },
+      { code: 'admin_manage_departments', name: 'Manage Departments', module: 'administration', action: 'manage_departments' },
+      { code: 'admin_manage_permissions', name: 'Manage Permissions', module: 'administration', action: 'manage_permissions' },
     ];
     const stmt = db.prepare('INSERT INTO permissions (code, name, module, action) VALUES (?, ?, ?, ?)');
     const insertMany = db.transaction((rows: typeof permissions) => {
