@@ -9,9 +9,9 @@
           <h1 class="text-lg font-bold bg-gradient-to-r from-cyan-600 to-emerald-600 bg-clip-text text-transparent">FiberFlow</h1>
         </div>
         <div class="flex items-center gap-2">
-          <div class="relative">
+          <div class="relative" @click.stop>
             <button 
-              @click="showUserMenu = !showUserMenu"
+              @click.stop="showUserMenu = !showUserMenu"
               class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-all flex items-center gap-2"
             >
               👤 {{ authStore.user?.name || 'User' }}
@@ -272,9 +272,19 @@ const goToSettings = () => {
 
 // Close menu when clicking outside
 onMounted(() => {
-  document.addEventListener('click', () => {
-    showUserMenu.value = false;
-  });
+  const closeMenu = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    const userMenuEl = document.querySelector('.relative');
+    if (userMenuEl && !userMenuEl.contains(target)) {
+      showUserMenu.value = false;
+    }
+  };
+  
+  document.addEventListener('click', closeMenu);
+  
+  return () => {
+    document.removeEventListener('click', closeMenu);
+  };
 });
 </script>
 
