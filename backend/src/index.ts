@@ -17,6 +17,8 @@ import qualityRoutes from './routes/quality.routes';
 import batchRoutes from './routes/batch.routes';
 import categoryRoutes from './routes/category.routes';
 import productTypeRoutes from './routes/product-type.routes';
+import departmentRoutes from './routes/department.routes';
+import roleRoutes from './routes/role.routes';
 
 dotenv.config();
 
@@ -51,6 +53,8 @@ app.use('/api/quality', qualityRoutes);
 app.use('/api/batches', batchRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/product-types', productTypeRoutes);
+app.use('/api/departments', departmentRoutes);
+app.use('/api/roles', roleRoutes);
 
 // Error handling
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
