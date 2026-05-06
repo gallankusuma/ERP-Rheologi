@@ -378,6 +378,31 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/EstimatorHSP.vue'),
     meta: { requiresAuth: true, title: 'Estimator - HSP' },
   },
+  // R&D Module
+  {
+    path: '/rnd/projects',
+    name: 'RnDProjects',
+    component: () => import('../views/RnDProjects.vue'),
+    meta: { requiresAuth: true, title: 'R&D Projects' },
+  },
+  {
+    path: '/rnd/formulations',
+    name: 'RnDFormulation',
+    component: () => import('../views/RnDFormulation.vue'),
+    meta: { requiresAuth: true, title: 'R&D Formulations' },
+  },
+  {
+    path: '/rnd/lab-testing',
+    name: 'RnDLabTesting',
+    component: () => import('../views/RnDLabTesting.vue'),
+    meta: { requiresAuth: true, title: 'R&D Lab Testing' },
+  },
+  {
+    path: '/rnd/stability',
+    name: 'RnDStability',
+    component: () => import('../views/RnDStability.vue'),
+    meta: { requiresAuth: true, title: 'R&D Stability Studies' },
+  },
   {
     path: '/sales-orders',
     name: 'SalesOrdersReal',

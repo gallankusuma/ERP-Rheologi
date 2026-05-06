@@ -41,6 +41,7 @@ import importRoutes from './routes/import.routes';
 import approvalRoutes from './routes/approval.routes';
 import reportsRoutes from './routes/reports.routes';
 import aiRoutes from './routes/ai.routes';
+import rndRoutes from './routes/rnd.routes';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
@@ -90,6 +91,7 @@ app.use('/api/import', importRoutes);
 app.use('/api/approval', approvalRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/rnd', rndRoutes);
 import { projectRoutes } from './routes/project.routes';
 
 // ... (other imports)
