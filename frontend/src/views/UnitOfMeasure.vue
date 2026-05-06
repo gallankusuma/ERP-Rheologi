@@ -5,6 +5,12 @@
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold text-gray-900">Units of Measure</h2>
           <button
+          @click="handleExport"
+          class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+        >
+          📥 Export
+        </button>
+        <button
             @click="openAddModal"
             class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
           >
@@ -12,22 +18,36 @@
           </button>
         </div>
 
-        <div class="bg-white shadow overflow-hidden sm:rounded-md">
+        <div v-if="loading" class="text-center py-8 text-gray-500">Loading...</div>
+
+        <div v-if="selectedIds.length > 0" class="flex items-center gap-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4">
+          <span class="text-sm font-medium text-red-700">{{ selectedIds.length }} item(s) selected</span>
+          <button @click="bulkDelete" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm">🗑️ Delete Selected</button>
+          <button @click="selectedIds = []" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm">Cancel</button>
+        </div>
+
+        <div v-else class="bg-white shadow overflow-hidden sm:rounded-md">
           <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
               <tr>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th class="px-4 py-3 w-10">
+                  <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="w-4 h-4 rounded border-gray-300 text-blue-600" />
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('code')">Code <span class="text-gray-400">{{ sortIcon('code') }}</span></th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('name')">Name <span class="text-gray-400">{{ sortIcon('name') }}</span></th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('category')">Type <span class="text-gray-400">{{ sortIcon('category') }}</span></th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('active')">Status <span class="text-gray-400">{{ sortIcon('active') }}</span></th>
                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-for="unit in units" :key="unit.id">
+              <tr v-for="unit in sortedData" :key="unit.id" :class="{ 'bg-blue-50': selectedIds.includes(unit.id) }">
+                <td class="px-4 py-4">
+                  <input type="checkbox" :value="unit.id" v-model="selectedIds" class="w-4 h-4 rounded border-gray-300 text-blue-600" />
+                </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ unit.code }}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ unit.name }}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ unit.type || '-' }}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ unit.category || '-' }}</td>
                 <td class="px-6 py-4 whitespace-nowrap">
                   <span :class="unit.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
                     {{ unit.active ? 'Active' : 'Inactive' }}
@@ -73,12 +93,12 @@
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
             <select
-              v-model="form.type"
+              v-model="form.category"
               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500"
             >
-              <option value="">Select Type</option>
+              <option value="">Select Category</option>
               <option value="Weight">Weight</option>
               <option value="Volume">Volume</option>
               <option value="Length">Length</option>
@@ -103,9 +123,10 @@
           </button>
           <button
             @click="saveUnit"
-            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            :disabled="saving"
+            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
-            {{ editingId ? 'Update' : 'Add' }}
+            {{ saving ? 'Saving...' : (editingId ? 'Update' : 'Add') }}
           </button>
         </div>
       </div>
@@ -114,66 +135,118 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { exportToCSV } from '../utils/export';
+import { ref, computed, onMounted } from 'vue';
+import { api } from '../lib/api';
+import { useTableSort } from '../composables/useTableSort';
 
 interface Unit {
   id: number;
   code: string;
   name: string;
-  type?: string;
+  category?: string;
   active: boolean;
 }
 
 const units = ref<Unit[]>([]);
 const showModal = ref(false);
 const editingId = ref<number | null>(null);
-const form = ref({ code: '', name: '', type: '', active: true });
+const loading = ref(false);
+const saving = ref(false);
+const form = ref({ code: '', name: '', category: '', active: true });
+const selectedIds = ref<number[]>([]);
+
+const isAllSelected = computed(() => units.value.length > 0 && units.value.every((u: any) => selectedIds.value.includes(u.id)));
+const toggleSelectAll = () => { if (isAllSelected.value) { selectedIds.value = []; } else { selectedIds.value = units.value.map((u: any) => u.id); } };
+const bulkDelete = async () => {
+  if (!confirm(`Delete ${selectedIds.value.length} units?`)) return;
+  for (const id of selectedIds.value) { await deleteUnit(id); }
+  selectedIds.value = [];
+};
+
+const { toggleSort, sortIcon, sortedData } = useTableSort(units);
+
+const fetchUnits = async () => {
+  loading.value = true;
+  try {
+    const res = await api.get('/units');
+    units.value = (res.data.data || []).map((u: any) => ({
+      ...u,
+      active: u.active === 1 || u.active === true,
+    }));
+  } catch (error) {
+    console.error('Error fetching units:', error);
+  } finally {
+    loading.value = false;
+  }
+};
 
 const openAddModal = () => {
   editingId.value = null;
-  form.value = { code: '', name: '', type: '', active: true };
+  form.value = { code: '', name: '', category: '', active: true };
   showModal.value = true;
 };
 
 const editUnit = (unit: Unit) => {
   editingId.value = unit.id;
-  form.value = { ...unit };
+  form.value = {
+    code: unit.code,
+    name: unit.name,
+    category: unit.category || '',
+    active: unit.active
+  };
   showModal.value = true;
 };
 
-const saveUnit = () => {
+const saveUnit = async () => {
   if (!form.value.code.trim() || !form.value.name.trim()) {
     alert('Code and Name are required');
     return;
   }
 
-  if (editingId.value) {
-    const index = units.value.findIndex(u => u.id === editingId.value);
-    if (index !== -1) {
-      units.value[index] = { id: editingId.value, ...form.value };
-    }
-  } else {
-    const newId = Math.max(...units.value.map(u => u.id), 0) + 1;
-    units.value.push({ id: newId, ...form.value });
-  }
+  saving.value = true;
+  try {
+    const payload = {
+      code: form.value.code,
+      name: form.value.name,
+      category: form.value.category || null,
+      active: form.value.active,
+    };
 
-  showModal.value = false;
+    if (editingId.value) {
+      await api.put(`/units/${editingId.value}`, payload);
+    } else {
+      await api.post('/units', payload);
+    }
+
+    showModal.value = false;
+    await fetchUnits();
+  } catch (error: any) {
+    console.error('Error saving unit:', error);
+    alert(error.response?.data?.error || 'Failed to save unit');
+  } finally {
+    saving.value = false;
+  }
 };
 
-const deleteUnit = (id: number) => {
-  if (confirm('Are you sure?')) {
-    units.value = units.value.filter(u => u.id !== id);
+const deleteUnit = async (id: number) => {
+  if (confirm('Are you sure you want to delete this unit?')) {
+    try {
+      await api.delete(`/units/${id}`);
+      await fetchUnits();
+    } catch (error) {
+      console.error('Error deleting unit:', error);
+      alert('Failed to delete unit');
+    }
   }
 };
 
 onMounted(() => {
-  // Sample data
-  units.value = [
-    { id: 1, code: 'PCS', name: 'Piece', type: 'Count', active: true },
-    { id: 2, code: 'KG', name: 'Kilogram', type: 'Weight', active: true },
-    { id: 3, code: 'L', name: 'Liter', type: 'Volume', active: true },
-    { id: 4, code: 'M', name: 'Meter', type: 'Length', active: true },
-    { id: 5, code: 'BOX', name: 'Box', type: 'Count', active: true },
-  ];
+  fetchUnits();
 });
+
+function handleExport() {
+  exportToCSV(units.value, 'UnitOfMeasure_Export');
+}
+
 </script>

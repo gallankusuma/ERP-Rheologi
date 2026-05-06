@@ -20,19 +20,31 @@
           {{ store.error }}
         </div>
 
+        <div v-if="selectedIds.length > 0" class="flex items-center gap-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4">
+          <span class="text-sm font-medium text-red-700">{{ selectedIds.length }} item(s) selected</span>
+          <button @click="bulkDelete" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm">🗑️ Delete Selected</button>
+          <button @click="selectedIds = []" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm">Cancel</button>
+        </div>
+
         <div v-else class="bg-white shadow overflow-hidden sm:rounded-md">
           <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
               <tr>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th class="px-4 py-3 w-10">
+                  <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="w-4 h-4 rounded border-gray-300 text-blue-600" />
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('code')">Code <span class="text-gray-400">{{ sortIcon('code') }}</span></th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('name')">Name <span class="text-gray-400">{{ sortIcon('name') }}</span></th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('description')">Description <span class="text-gray-400">{{ sortIcon('description') }}</span></th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" @click="toggleSort('active')">Status <span class="text-gray-400">{{ sortIcon('active') }}</span></th>
                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-for="type in store.types" :key="type.id">
+              <tr v-for="type in sortedData" :key="type.id" :class="{ 'bg-blue-50': selectedIds.includes(type.id) }">
+                <td class="px-4 py-4">
+                  <input type="checkbox" :value="type.id" v-model="selectedIds" class="w-4 h-4 rounded border-gray-300 text-blue-600" />
+                </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ type.code }}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ type.name }}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ type.description || '-' }}</td>
@@ -116,8 +128,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useProductTypeStore } from '../stores/product-types';
+import { useTableSort } from '../composables/useTableSort';
 
 interface ProductType {
   id: number;
@@ -131,6 +144,18 @@ const store = useProductTypeStore();
 const showModal = ref(false);
 const editingId = ref<number | null>(null);
 const form = ref({ code: '', name: '', description: '', active: true });
+const selectedIds = ref<number[]>([]);
+
+const isAllSelected = computed(() => store.types.length > 0 && store.types.every((t: any) => selectedIds.value.includes(t.id)));
+const toggleSelectAll = () => { if (isAllSelected.value) { selectedIds.value = []; } else { selectedIds.value = store.types.map((t: any) => t.id); } };
+
+const typesRef = computed(() => store.types as any[]);
+const { toggleSort, sortIcon, sortedData } = useTableSort(typesRef);
+const bulkDelete = async () => {
+  if (!confirm(`Delete ${selectedIds.value.length} product types?`)) return;
+  for (const id of selectedIds.value) { await store.deleteProductType(id); }
+  selectedIds.value = [];
+};
 
 const openAddModal = () => {
   editingId.value = null;
@@ -140,7 +165,12 @@ const openAddModal = () => {
 
 const editProductType = (type: ProductType) => {
   editingId.value = type.id;
-  form.value = { ...type };
+  form.value = {
+    code: type.code,
+    name: type.name,
+    description: type.description || '',
+    active: type.active
+  };
   showModal.value = true;
 };
 

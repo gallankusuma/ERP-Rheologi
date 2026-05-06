@@ -42,6 +42,7 @@ export interface StockHealth {
 export const useWarehouseStore = defineStore('warehouse', {
   state: () => ({
     warehouses: [] as any[],
+    warehouse_locations: [] as any[],
     stockMovements: [] as any[],
     locations: [] as WarehouseLocation[],
     currentLocation: null as WarehouseLocation | null,
@@ -65,14 +66,19 @@ export const useWarehouseStore = defineStore('warehouse', {
       }
     },
 
-    async fetchStockMovements() {
+    async fetchWarehouseLocations() {
       this.loading = true;
       this.error = null;
       try {
-        const res = await api.get('/warehouses/stock-movements');
-        this.stockMovements = res.data.data;
+        const res = await api.get('/warehouses/locations');
+        this.warehouse_locations = res.data.data;
+        // Add computed fields for display
+        this.warehouse_locations = this.warehouse_locations.map((loc: any) => ({
+          ...loc,
+          warehouse_name: this.warehouses.find(w => w.id === loc.warehouse_id)?.name || ''
+        }));
       } catch (error: any) {
-        this.error = error.response?.data?.error || 'Failed to fetch stock movements';
+        this.error = error.response?.data?.error || 'Failed to fetch warehouse locations';
       } finally {
         this.loading = false;
       }
@@ -196,10 +202,35 @@ export const useWarehouseStore = defineStore('warehouse', {
       }
     },
 
-    async createWarehouse(payload: { code: string; name: string; address?: string }) {
+    async createWarehouse(payload: { code: string; name: string; address?: string | null; contact_person?: string | null; is_active?: boolean }) {
       const res = await api.post('/warehouses', payload);
       await this.fetchWarehouses();
       return res.data;
+    },
+
+    async updateWarehouse(id: number, payload: { code: string; name: string; address?: string | null; contact_person?: string | null; is_active?: boolean }) {
+      const res = await api.put(`/warehouses/${id}`, payload);
+      await this.fetchWarehouses();
+      return res.data;
+    },
+
+    async deleteWarehouse(id: number) {
+      const res = await api.delete(`/warehouses/${id}`);
+      await this.fetchWarehouses();
+      return res.data;
+    },
+
+    async fetchStockMovements() {
+      this.loading = true;
+      this.error = null;
+      try {
+        const res = await api.get('/warehouses/stock-movements');
+        this.stockMovements = res.data.data;
+      } catch (error: any) {
+        this.error = error.response?.data?.error || 'Failed to fetch stock movements';
+      } finally {
+        this.loading = false;
+      }
     },
 
     async createStockMovement(payload: {

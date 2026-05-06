@@ -44,10 +44,35 @@ export const useDepartmentStore = defineStore('department', {
     async createDepartment(deptData: { code: string; name: string; description?: string }) {
       try {
         const response = await api.post('/departments', deptData);
-        await this.fetchDepartments();
+        console.log('✅ Department created:', response.data);
+        
+        // Get the created department data
+        const newDept = response.data?.data || {
+          ...deptData,
+          id: undefined,
+          active: true,
+        };
+        
+        // Try to refresh the list
+        try {
+          await this.fetchDepartments();
+        } catch (fetchError) {
+          console.warn('⚠️ Failed to refresh departments list after creation, adding to local state');
+          // Fallback: add the new department to the local list
+          this.departments.push({
+            id: newDept.id || Date.now(),
+            code: newDept.code,
+            name: newDept.name,
+            description: newDept.description || null,
+            active: newDept.active !== false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          } as Department);
+        }
         return response.data;
       } catch (error: any) {
-        this.error = error.response?.data?.error || 'Failed to create department';
+        this.error = error.response?.data?.error || error.message || 'Failed to create department';
+        console.error('❌ Create error:', this.error);
         throw error;
       }
     },

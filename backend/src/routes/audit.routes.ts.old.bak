@@ -1,0 +1,272 @@
+import express, { Request, Response } from 'express';
+import db from '../config/database';
+import { authMiddleware } from '../middleware/auth';
+
+const router = express.Router();
+
+// Helper functions
+const dbGet = (sql: string, params: any[] = []): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+};
+
+const dbAll = (sql: string, params: any[] = []): Promise<any[]> => {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows || []);
+    });
+  });
+};
+
+const dbRun = (sql: string, params: any[] = []): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function(err) {
+      if (err) reject(err);
+      else resolve({ lastID: this.lastID });
+    });
+  });
+};
+
+// ===== AUDIT LOG ENDPOINTS =====
+
+router.get('/', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = (page - 1) * limit;
+
+    const logs = db
+      .prepare(
+        `SELECT al.*, u.username
+         FROM audit_log al
+         LEFT JOIN users u ON al.user_id = u.id
+         ORDER BY al.created_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(limit, offset);
+
+    const totalCount = (db
+      .prepare('SELECT COUNT(*) as count FROM audit_log')
+      .get() as { count: number }).count;
+
+    res.json({
+      data: logs,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching audit logs:', error);
+    res.status(500).json({ error: 'Failed to fetch audit logs' });
+  }
+});
+
+router.get('/entity/:entityType/:entityId', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const { entityType, entityId } = req.params;
+
+    const logs = db
+      .prepare(
+        `SELECT al.*, u.username
+         FROM audit_log al
+         LEFT JOIN users u ON al.user_id = u.id
+         WHERE al.entity_type = ? AND al.entity_id = ?
+         ORDER BY al.created_at DESC`
+      )
+      .all(entityType, entityId);
+
+    res.json({ data: logs });
+  } catch (error) {
+    console.error('Error fetching entity audit logs:', error);
+    res.status(500).json({ error: 'Failed to fetch entity audit logs' });
+  }
+});
+
+router.post('/', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const {
+      user_id,
+      action,
+      entity_type,
+      entity_id,
+      old_values,
+      new_values,
+      metadata,
+    } = req.body;
+
+    if (!user_id || !action) {
+      return res
+        .status(400)
+        .json({ error: 'user_id and action are required' });
+    }
+
+    const result = db
+      .prepare(
+        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, old_values, new_values, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        user_id,
+        action,
+        entity_type || null,
+        entity_id || null,
+        old_values ? JSON.stringify(old_values) : null,
+        new_values ? JSON.stringify(new_values) : null,
+        metadata ? JSON.stringify(metadata) : null
+      );
+
+    res.status(201).json({
+      message: 'Audit log created',
+      data: { id: result.lastInsertRowid },
+    });
+  } catch (error) {
+    console.error('Error creating audit log:', error);
+    res.status(500).json({ error: 'Failed to create audit log' });
+  }
+});
+
+// ===== AUDIT ACTIONS ENDPOINTS =====
+
+router.get('/actions', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const actions = db
+      .prepare(
+        `SELECT DISTINCT action FROM audit_log
+         ORDER BY action ASC`
+      )
+      .all();
+    res.json({ data: actions });
+  } catch (error) {
+    console.error('Error fetching audit actions:', error);
+    res.status(500).json({ error: 'Failed to fetch audit actions' });
+  }
+});
+
+router.get('/user/:userId', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = (page - 1) * limit;
+
+    const logs = db
+      .prepare(
+        `SELECT al.*, u.username
+         FROM audit_log al
+         LEFT JOIN users u ON al.user_id = u.id
+         WHERE al.user_id = ?
+         ORDER BY al.created_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(req.params.userId, limit, offset);
+
+    const totalCount = (db
+      .prepare('SELECT COUNT(*) as count FROM audit_log WHERE user_id = ?')
+      .get(req.params.userId) as { count: number }).count;
+
+    res.json({
+      data: logs,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching user audit logs:', error);
+    res.status(500).json({ error: 'Failed to fetch user audit logs' });
+  }
+});
+
+router.post('/search', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const {
+      action,
+      entity_type,
+      user_id,
+      start_date,
+      end_date,
+      page = 1,
+      limit = 50,
+    } = req.body;
+
+    let query = 'SELECT al.*, u.username FROM audit_log al LEFT JOIN users u ON al.user_id = u.id WHERE 1=1';
+    const params: any[] = [];
+
+    if (action) {
+      query += ' AND al.action = ?';
+      params.push(action);
+    }
+    if (entity_type) {
+      query += ' AND al.entity_type = ?';
+      params.push(entity_type);
+    }
+    if (user_id) {
+      query += ' AND al.user_id = ?';
+      params.push(user_id);
+    }
+    if (start_date) {
+      query += ' AND al.created_at >= ?';
+      params.push(start_date);
+    }
+    if (end_date) {
+      query += ' AND al.created_at <= ?';
+      params.push(end_date);
+    }
+
+    const offset = (page - 1) * limit;
+    query += ' ORDER BY al.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const logs = db.prepare(query).all(...params);
+
+    // Get total count
+    let countQuery = 'SELECT COUNT(*) as count FROM audit_log WHERE 1=1';
+    const countParams: any[] = [];
+    if (action) {
+      countQuery += ' AND action = ?';
+      countParams.push(action);
+    }
+    if (entity_type) {
+      countQuery += ' AND entity_type = ?';
+      countParams.push(entity_type);
+    }
+    if (user_id) {
+      countQuery += ' AND user_id = ?';
+      countParams.push(user_id);
+    }
+    if (start_date) {
+      countQuery += ' AND created_at >= ?';
+      countParams.push(start_date);
+    }
+    if (end_date) {
+      countQuery += ' AND created_at <= ?';
+      countParams.push(end_date);
+    }
+
+    const totalCount = (db.prepare(countQuery).get(...countParams) as { count: number }).count;
+
+    res.json({
+      data: logs,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    console.error('Error searching audit logs:', error);
+    res.status(500).json({ error: 'Failed to search audit logs' });
+  }
+});
+
+export default router;

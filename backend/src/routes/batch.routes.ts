@@ -1,20 +1,20 @@
 import { Router, Request, Response } from 'express';
-import db from '../config/database';
+import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
 // GET /api/batches - Get all batches with product info
-router.get('/', authMiddleware, (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { status, qc_status, product_id } = req.query;
     
     let query = `
       SELECT b.*, p.name as product_name, p.sku, 
-             wl.code as location_code
+             w.name as warehouse_name
       FROM batches b
       JOIN products p ON b.product_id = p.id
-      LEFT JOIN warehouse_locations wl ON b.location_id = wl.id
+      LEFT JOIN warehouses w ON b.warehouse_id = w.id
       WHERE 1=1
     `;
     
@@ -26,7 +26,7 @@ router.get('/', authMiddleware, (req: Request, res: Response) => {
     }
     
     if (qc_status) {
-      query += ` AND b.qc_status = ?`;
+      query += ` AND b.status = ?`;
       params.push(qc_status);
     }
     
@@ -35,10 +35,9 @@ router.get('/', authMiddleware, (req: Request, res: Response) => {
       params.push(product_id);
     }
     
-    query += ` ORDER BY b.mfg_date DESC, b.batch_number DESC`;
+    query += ` ORDER BY b.manufacture_date DESC, b.batch_number DESC`;
     
-    const stmt = db.prepare(query);
-    const batches = stmt.all(...params);
+    const batches = await dbAll(query, params);
     
     res.json({ data: batches });
   } catch (error) {
@@ -48,33 +47,31 @@ router.get('/', authMiddleware, (req: Request, res: Response) => {
 });
 
 // GET /api/batches/:id - Get batch details with QC results
-router.get('/:id', authMiddleware, (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const batchStmt = db.prepare(`
+    const batch = await dbGet(`
       SELECT b.*, p.name as product_name, p.sku,
-             wl.code as location_code
+             w.name as warehouse_name
       FROM batches b
       JOIN products p ON b.product_id = p.id
-      LEFT JOIN warehouse_locations wl ON b.location_id = wl.id
+      LEFT JOIN warehouses w ON b.warehouse_id = w.id
       WHERE b.id = ?
-    `);
-    const batch = batchStmt.get(req.params.id);
+    `, [req.params.id]);
     
     if (!batch) {
       return res.status(404).json({ error: 'Batch not found' });
     }
     
     // Get QC results for this batch
-    const qcStmt = db.prepare(`
+    const qcResults = await dbAll(`
       SELECT qr.*, qt.name as test_name,
-             u1.name as tested_by_name
+             u1.full_name as tested_by_name
       FROM qc_results qr
       JOIN qc_tests qt ON qr.test_id = qt.id
       LEFT JOIN users u1 ON qr.tester_id = u1.id
       WHERE qr.batch_id = ?
       ORDER BY qr.tested_at DESC
-    `);
-    const qcResults = qcStmt.all(req.params.id);
+    `, [req.params.id]);
     
     res.json({ 
       data: { 
@@ -89,11 +86,11 @@ router.get('/:id', authMiddleware, (req: Request, res: Response) => {
 });
 
 // POST /api/batches - Create new batch
-router.post('/', authMiddleware, (req: Request, res: Response) => {
+router.post('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { 
-      batch_number, product_id, work_order_id, quantity, uom,
-      mfg_date, exp_date, location_id, status 
+      batch_number, product_id, quantity,
+      mfg_date, exp_date, warehouse_id, status 
     } = req.body;
 
     if (!batch_number || !product_id || !quantity || !mfg_date) {
@@ -102,30 +99,25 @@ router.post('/', authMiddleware, (req: Request, res: Response) => {
       });
     }
 
-    const stmt = db.prepare(`
+    const result = await dbRun(`
       INSERT INTO batches (
-        batch_number, product_id, work_order_id, quantity, uom,
-        mfg_date, exp_date, location_id, status, qc_status
+        batch_number, product_id, quantity,
+        manufacture_date, expiry_date, warehouse_id, status
       ) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const result = stmt.run(
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
       batch_number, 
       product_id, 
-      work_order_id || null,
       quantity,
-      uom || 'KG',
       mfg_date, 
       exp_date || null,
-      location_id || null,
-      status || 'open',
-      'pending'
-    );
+      warehouse_id || null,
+      status || 'ACTIVE'
+    ]);
 
     res.status(201).json({
       message: 'Batch created successfully',
-      data: { id: result.lastInsertRowid, batch_number, product_id },
+      data: { id: result.insertId, batch_number, product_id },
     });
   } catch (error) {
     console.error('Error creating batch:', error);
@@ -134,26 +126,23 @@ router.post('/', authMiddleware, (req: Request, res: Response) => {
 });
 
 // PUT /api/batches/:id - Update batch
-router.put('/:id', authMiddleware, (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { 
-      quantity, uom, mfg_date, exp_date, location_id, 
-      status, qc_status 
+      quantity, mfg_date, exp_date, warehouse_id, 
+      status 
     } = req.body;
 
-    const stmt = db.prepare(`
+    await dbRun(`
       UPDATE batches 
-      SET quantity = ?, uom = ?, mfg_date = ?, exp_date = ?, 
-          location_id = ?, status = ?, qc_status = ?,
-          updated_at = CURRENT_TIMESTAMP 
+      SET quantity = ?, manufacture_date = ?, expiry_date = ?, 
+          warehouse_id = ?, status = ?
       WHERE id = ?
-    `);
-    
-    stmt.run(
-      quantity, uom, mfg_date, exp_date, 
-      location_id, status, qc_status,
+    `, [
+      quantity, mfg_date, exp_date, 
+      warehouse_id, status,
       req.params.id
-    );
+    ]);
 
     res.json({ message: 'Batch updated successfully' });
   } catch (error) {
@@ -163,13 +152,12 @@ router.put('/:id', authMiddleware, (req: Request, res: Response) => {
 });
 
 // POST /api/batches/:id/release - Release batch for use (after QC approval)
-router.post('/:id/release', authMiddleware, (req: Request, res: Response) => {
+router.post('/:id/release', authMiddleware, async (req: Request, res: Response) => {
   try {
     // Check if batch has passed QC
-    const batchStmt = db.prepare(`
+    const batch = await dbGet(`
       SELECT * FROM batches WHERE id = ?
-    `);
-    const batch = batchStmt.get(req.params.id);
+    `, [req.params.id]);
     
     if (!batch) {
       return res.status(404).json({ error: 'Batch not found' });
@@ -181,14 +169,12 @@ router.post('/:id/release', authMiddleware, (req: Request, res: Response) => {
       });
     }
     
-    const updateStmt = db.prepare(`
+    await dbRun(`
       UPDATE batches 
       SET status = 'released', updated_at = CURRENT_TIMESTAMP 
       WHERE id = ?
-    `);
+    `, [req.params.id]);
     
-    updateStmt.run(req.params.id);
-
     res.json({ message: 'Batch released successfully' });
   } catch (error) {
     console.error('Error releasing batch:', error);
@@ -197,25 +183,23 @@ router.post('/:id/release', authMiddleware, (req: Request, res: Response) => {
 });
 
 // GET /api/batches/expiring/soon - Get batches expiring soon (FEFO alert)
-router.get('/expiring/soon', authMiddleware, (req: Request, res: Response) => {
+router.get('/expiring/soon', authMiddleware, async (req: Request, res: Response) => {
   try {
     const daysAhead = parseInt(req.query.days as string) || 30;
     
-    const stmt = db.prepare(`
+    const batches = await dbAll(`
       SELECT b.*, p.name as product_name, p.sku,
              wl.code as location_code,
-             (julianday(b.exp_date) - julianday('now')) as days_to_expiry
+             (CAST((JULIANDAY(b.exp_date) - JULIANDAY('now')) AS INTEGER)) as days_to_expiry
       FROM batches b
       JOIN products p ON b.product_id = p.id
       LEFT JOIN warehouse_locations wl ON b.location_id = wl.id
       WHERE b.status IN ('open', 'released')
         AND b.exp_date IS NOT NULL
-        AND julianday(b.exp_date) - julianday('now') <= ?
-        AND julianday(b.exp_date) - julianday('now') > 0
+        AND (JULIANDAY(b.exp_date) - JULIANDAY('now')) <= ?
+        AND (JULIANDAY(b.exp_date) - JULIANDAY('now')) > 0
       ORDER BY b.exp_date ASC
-    `);
-    
-    const batches = stmt.all(daysAhead);
+    `, [daysAhead]);
     
     res.json({ data: batches });
   } catch (error) {

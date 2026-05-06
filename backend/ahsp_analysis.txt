@@ -1,0 +1,71 @@
+High Value AHSPs Found: 10
+ID: 91 | Code: A.1.5.26 | Price: 158896902.21 | Name: Pemasangan dinding bata ringan tebal 10 cm
+ID: 90 | Code: A.1.5.25 | Price: 158896798.58 | Name: Pemasangan dinding bata ringan tebal 7,5 cm
+ID: 149 | Code: A.1.7.19 | Price: 14189560.00 | Name: Langsir 1 buah komponen untuk kolom beton pracetak (Â± 20m)
+ID: 236 | Code: A.1.9.52 | Price: 9509673.24 | Name: Pemasangan 1 m2  dinding keramik artistik 5x20
+ID: 217 | Code: A.1.9.33 | Price: 5974876.83 | Name: Pemasangan 1 m2  lantai keramik artistik 10x20 atau 5x20
+ID: 235 | Code: A.1.9.51 | Price: 4845343.24 | Name: Pemasangan 1 m2  dinding keramik artistik 10x20
+ID: 237 | Code: A.1.9.53 | Price: 4845343.24 | Name: Pemasangan 1 m2  dinding keramik 10x20
+ID: 216 | Code: A.1.9.32 | Price: 3058886.83 | Name: Pemasangan 1 m2  lantai keramik artistik 10x20
+ID: 238 | Code: A.1.9.54 | Price: 2511561.24 | Name: Pemasangan 1 m2  dinding keramik 20x20
+ID: 36 | Code: A.1.2.13 | Price: 2054675.70 | Name: Mengerjakan kembali bangunan kayu yang telah dibongkar 1 m3
+
+Checking items for AHSP ID 91...
+[
+  {
+    "resource_type": "labor",
+    "resource_name": "Pekerja",
+    "koefisien": "0.6710",
+    "resource_harga": "94206.00",
+    "jumlah_harga": "63212.23"
+  },
+  {
+    "resource_type": "labor",
+    "resource_name": "Tukang batu",
+    "koefisien": "1300.0000",
+    "resource_harga": "111055.00",
+    "jumlah_harga": "144371500.00"
+  },
+  {
+    "resource_type": "labor",
+    "resource_name": "Kepala tukang",
+    "koefisien": "0.1300",
+    "resource_harga": "128000.00",
+    "jumlah_harga": "16640.00"
+  },
+  {
+    "resource_type": "labor",
+    "resource_name": "Mandor",
+    "koefisien": "0.0030",
+    "resource_harga": "125685.00",
+    "jumlah_harga": "377.06"
+  },
+  {
+    "resource_type": "material",
+    "resource_name": "Bata ringan tebal 10cm",
+    "koefisien": "8.4000",
+    "resource_harga": "0.00",
+    "jumlah_harga": "0.00"
+  },
+  {
+    "resource_type": "material",
+    "resource_name": "Mortar siap pakai",
+    "koefisien": "0.0630",
+    "resource_harga": "0.00",
+    "jumlah_harga": "0.00"
+  },
+  {
+    "resource_type": "equipment",
+    "resource_name": "Peralatan",
+    "koefisien": "10.0000",
+    "resource_harga": "0.00",
+    "jumlah_harga": "0.00"
+  },
+  {
+    "resource_type": "equipment",
+    "resource_name": "Overhead & Profit (Contoh 15%)",
+    "koefisien": "15.0000",
+    "resource_harga": "0.00",
+    "jumlah_harga": "0.00"
+  }
+]

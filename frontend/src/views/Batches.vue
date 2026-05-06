@@ -7,7 +7,7 @@
       </div>
 
       <!-- Filters & Actions -->
-      <div class="bg-white rounded-lg shadow-sm p-4 mb-6">
+      <div class="bg-white rounded-lg shadow-sm p-4 mb-6 tilt-card">
         <div class="flex flex-wrap gap-4 items-center justify-between">
           <div class="flex gap-3">
             <select v-model="filterStatus" @change="applyFilters" 
@@ -50,7 +50,7 @@
       </div>
 
       <!-- Batches Table -->
-      <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+      <div class="bg-white rounded-lg shadow-sm overflow-hidden tilt-card">
         <div v-if="loading" class="p-8 text-center">
           <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div>
           <p class="mt-2 text-slate-600">Loading batches...</p>

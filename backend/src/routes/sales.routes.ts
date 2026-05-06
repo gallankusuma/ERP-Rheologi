@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import db from '../config/database';
+import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
@@ -12,9 +12,9 @@ const generateCode = (prefix: string) => {
 };
 
 // Customers CRUD
-router.get('/customers', authMiddleware, (req: Request, res: Response) => {
+router.get('/customers', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const customers = db.prepare('SELECT * FROM customers ORDER BY name ASC').all();
+    const customers = await dbAll('SELECT * FROM customers ORDER BY name ASC', []);
     res.json({ data: customers });
   } catch (error) {
     console.error('Error fetching customers:', error);
@@ -22,9 +22,9 @@ router.get('/customers', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.get('/customers/:id', authMiddleware, (req: Request, res: Response) => {
+router.get('/customers/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
+    const customer = await dbGet('SELECT * FROM customers WHERE id = ?', [req.params.id]);
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
     res.json({ data: customer });
   } catch (error) {
@@ -33,29 +33,31 @@ router.get('/customers/:id', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.post('/customers', authMiddleware, (req: Request, res: Response) => {
+router.post('/customers', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { code, name, contact, phone, email, address } = req.body;
     if (!code || !name) return res.status(400).json({ error: 'code and name are required' });
 
-    const result = db
-      .prepare('INSERT INTO customers (code, name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(code, name, contact || null, phone || null, email || null, address || null);
+    const result = await dbRun(
+      'INSERT INTO customers (code, name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?, ?)',
+      [code, name, contact || null, phone || null, email || null, address || null]
+    );
 
-    res.status(201).json({ message: 'Customer created', data: { id: result.lastInsertRowid, code, name } });
+    res.status(201).json({ message: 'Customer created', data: { id: result.insertId, code, name } });
   } catch (error: any) {
     console.error('Error creating customer:', error);
-    if (error.message?.includes('UNIQUE')) return res.status(400).json({ error: 'Customer code must be unique' });
+    if (error.message?.includes('Duplicate entry')) return res.status(400).json({ error: 'Customer code must be unique' });
     res.status(500).json({ error: 'Failed to create customer' });
   }
 });
 
-router.put('/customers/:id', authMiddleware, (req: Request, res: Response) => {
+router.put('/customers/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { code, name, contact, phone, email, address } = req.body;
-    db.prepare(
-      'UPDATE customers SET code = ?, name = ?, contact = ?, phone = ?, email = ?, address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(code, name, contact, phone, email, address, req.params.id);
+    await dbRun(
+      'UPDATE customers SET code = ?, name = ?, contact = ?, phone = ?, email = ?, address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [code, name, contact || null, phone || null, email || null, address || null, req.params.id]
+    );
     res.json({ message: 'Customer updated' });
   } catch (error) {
     console.error('Error updating customer:', error);
@@ -63,9 +65,9 @@ router.put('/customers/:id', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.delete('/customers/:id', authMiddleware, (req: Request, res: Response) => {
+router.delete('/customers/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);
+    await dbRun('DELETE FROM customers WHERE id = ?', [req.params.id]);
     res.json({ message: 'Customer deleted' });
   } catch (error) {
     console.error('Error deleting customer:', error);
@@ -74,17 +76,15 @@ router.delete('/customers/:id', authMiddleware, (req: Request, res: Response) =>
 });
 
 // Sales Orders
-router.get('/sales-orders', authMiddleware, (req: Request, res: Response) => {
+router.get('/sales-orders', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const orders = db
-      .prepare(
-        `SELECT so.*, c.name as customer_name,
-                (SELECT COUNT(*) FROM sales_order_items i WHERE i.so_id = so.id) as item_count
+    const orders = await dbAll(
+      `SELECT so.*, c.name as customer_name,
+                (SELECT COUNT(*) FROM so_items i WHERE i.so_id = so.id) as item_count
          FROM sales_orders so
          LEFT JOIN customers c ON so.customer_id = c.id
          ORDER BY so.created_at DESC`
-      )
-      .all();
+    );
     res.json({ data: orders });
   } catch (error) {
     console.error('Error fetching sales orders:', error);
@@ -92,26 +92,24 @@ router.get('/sales-orders', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.get('/sales-orders/:id', authMiddleware, (req: Request, res: Response) => {
+router.get('/sales-orders/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const order = db
-      .prepare(
-        `SELECT so.*, c.name as customer_name
+    const order = await dbGet(
+      `SELECT so.*, c.name as customer_name
          FROM sales_orders so
          LEFT JOIN customers c ON so.customer_id = c.id
-         WHERE so.id = ?`
-      )
-      .get(req.params.id);
+         WHERE so.id = ?`,
+      [req.params.id]
+    );
     if (!order) return res.status(404).json({ error: 'Sales order not found' });
 
-    const items = db
-      .prepare(
-        `SELECT i.*, p.sku, p.name as product_name
-         FROM sales_order_items i
+    const items = await dbAll(
+      `SELECT i.*, p.sku, p.name as product_name
+         FROM so_items i
          JOIN products p ON i.product_id = p.id
-         WHERE i.so_id = ?`
-      )
-      .all(req.params.id);
+         WHERE i.so_id = ?`,
+      [req.params.id]
+    );
 
     res.json({ data: { ...order, items } });
   } catch (error) {
@@ -120,7 +118,7 @@ router.get('/sales-orders/:id', authMiddleware, (req: Request, res: Response) =>
   }
 });
 
-router.post('/sales-orders', authMiddleware, (req: Request, res: Response) => {
+router.post('/sales-orders', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { so_number, customer_id, status, expected_ship_date, currency, notes, items } = req.body;
     if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
@@ -128,24 +126,22 @@ router.post('/sales-orders', authMiddleware, (req: Request, res: Response) => {
       return res.status(400).json({ error: 'items are required' });
     }
 
+    // TODO: Use transaction for production
     const number = so_number || generateCode('SO');
-    const insertOrder = db.prepare(
-      'INSERT INTO sales_orders (so_number, customer_id, status, expected_ship_date, currency, notes) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    const insertItem = db.prepare(
-      'INSERT INTO sales_order_items (so_id, product_id, quantity, uom, unit_price, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    );
 
-    const tx = db.transaction(() => {
-      const orderResult = insertOrder.run(number, customer_id, status || 'draft', expected_ship_date || null, currency || 'IDR', notes || null);
-      const soId = Number(orderResult.lastInsertRowid);
-      for (const item of items) {
-        insertItem.run(soId, item.product_id, item.quantity, item.uom || null, item.unit_price || 0, item.currency || currency || 'IDR', item.notes || null);
-      }
-      return soId;
-    });
+    const orderResult = await dbRun(
+      'INSERT INTO sales_orders (so_number, customer_id, status, expected_ship_date, currency, notes) VALUES (?, ?, ?, ?, ?, ?)',
+      [number, customer_id, status || 'draft', expected_ship_date || null, currency || 'IDR', notes || null]
+    );
+    const soId = orderResult.insertId;
 
-    const soId = tx();
+    for (const item of items) {
+      await dbRun(
+        'INSERT INTO sales_order_items (so_id, product_id, quantity, uom, unit_price, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [soId, item.product_id, item.quantity, item.uom || null, item.unit_price || 0, item.currency || currency || 'IDR', item.notes || null]
+      );
+    }
+
     res.status(201).json({ message: 'Sales order created', data: { id: soId, so_number: number } });
   } catch (error: any) {
     console.error('Error creating sales order:', error);
@@ -154,36 +150,26 @@ router.post('/sales-orders', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.put('/sales-orders/:id', authMiddleware, (req: Request, res: Response) => {
+router.put('/sales-orders/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { customer_id, status, expected_ship_date, currency, notes, items } = req.body;
-    const updateOrder = db.prepare(
-      'UPDATE sales_orders SET customer_id = ?, status = ?, expected_ship_date = ?, currency = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    );
-    const deleteItems = db.prepare('DELETE FROM sales_order_items WHERE so_id = ?');
-    const insertItem = db.prepare(
-      'INSERT INTO sales_order_items (so_id, product_id, quantity, uom, unit_price, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?)'
+
+    // TODO: Use transaction for production
+    await dbRun(
+      'UPDATE sales_orders SET customer_id = ?, status = ?, expected_ship_date = ?, currency = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [customer_id, status, expected_ship_date || null, currency || 'IDR', notes || null, req.params.id]
     );
 
-    const tx = db.transaction(() => {
-      updateOrder.run(customer_id, status, expected_ship_date || null, currency || 'IDR', notes || null, req.params.id);
-      if (items && Array.isArray(items)) {
-        deleteItems.run(req.params.id);
-        for (const item of items) {
-          insertItem.run(
-            req.params.id,
-            item.product_id,
-            item.quantity,
-            item.uom || null,
-            item.unit_price || 0,
-            item.currency || currency || 'IDR',
-            item.notes || null
-          );
-        }
+    if (items && Array.isArray(items)) {
+      await dbRun('DELETE FROM sales_order_items WHERE so_id = ?', [req.params.id]);
+      for (const item of items) {
+        await dbRun(
+          'INSERT INTO sales_order_items (so_id, product_id, quantity, uom, unit_price, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [req.params.id, item.product_id, item.quantity, item.uom || null, item.unit_price || 0, item.currency || currency || 'IDR', item.notes || null]
+        );
       }
-    });
+    }
 
-    tx();
     res.json({ message: 'Sales order updated' });
   } catch (error) {
     console.error('Error updating sales order:', error);
@@ -192,17 +178,14 @@ router.put('/sales-orders/:id', authMiddleware, (req: Request, res: Response) =>
 });
 
 // Deliveries
-router.get('/deliveries', authMiddleware, (req: Request, res: Response) => {
+router.get('/deliveries', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const deliveries = db
-      .prepare(
-        `SELECT d.*, so.so_number, w.name as warehouse_name
+    const deliveries = await dbAll(
+      `SELECT d.*, so.so_number
          FROM deliveries d
          LEFT JOIN sales_orders so ON d.so_id = so.id
-         LEFT JOIN warehouses w ON d.warehouse_id = w.id
          ORDER BY d.created_at DESC`
-      )
-      .all();
+    );
     res.json({ data: deliveries });
   } catch (error) {
     console.error('Error fetching deliveries:', error);
@@ -210,17 +193,15 @@ router.get('/deliveries', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.get('/deliveries/:id', authMiddleware, (req: Request, res: Response) => {
+router.get('/deliveries/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const delivery = db
-      .prepare(
-        `SELECT d.*, so.so_number, w.name as warehouse_name
+    const delivery = await dbGet(
+      `SELECT d.*, so.so_number
          FROM deliveries d
          LEFT JOIN sales_orders so ON d.so_id = so.id
-         LEFT JOIN warehouses w ON d.warehouse_id = w.id
-         WHERE d.id = ?`
-      )
-      .get(req.params.id);
+         WHERE d.id = ?`,
+      [req.params.id]
+    );
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
     res.json({ data: delivery });
   } catch (error) {
@@ -229,17 +210,18 @@ router.get('/deliveries/:id', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.post('/deliveries', authMiddleware, (req: Request, res: Response) => {
+router.post('/deliveries', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { do_number, so_id, warehouse_id, status, shipped_at, notes } = req.body;
     if (!so_id) return res.status(400).json({ error: 'so_id is required' });
 
     const number = do_number || generateCode('DO');
-    const result = db
-      .prepare('INSERT INTO deliveries (do_number, so_id, warehouse_id, status, shipped_at, notes) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(number, so_id, warehouse_id || null, status || 'draft', shipped_at || null, notes || null);
+    const result = await dbRun(
+      'INSERT INTO deliveries (do_number, so_id, warehouse_id, status, shipped_at, notes) VALUES (?, ?, ?, ?, ?, ?)',
+      [number, so_id, warehouse_id || null, status || 'draft', shipped_at || null, notes || null]
+    );
 
-    res.status(201).json({ message: 'Delivery created', data: { id: result.lastInsertRowid, do_number: number } });
+    res.status(201).json({ message: 'Delivery created', data: { id: result.insertId, do_number: number } });
   } catch (error: any) {
     console.error('Error creating delivery:', error);
     if (error.message?.includes('UNIQUE')) return res.status(400).json({ error: 'DO number must be unique' });
@@ -248,16 +230,14 @@ router.post('/deliveries', authMiddleware, (req: Request, res: Response) => {
 });
 
 // Invoices
-router.get('/invoices', authMiddleware, (req: Request, res: Response) => {
+router.get('/invoices', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const invoices = db
-      .prepare(
-        `SELECT i.*, so.so_number
+    const invoices = await dbAll(
+      `SELECT i.*, so.so_number
          FROM invoices i
          LEFT JOIN sales_orders so ON i.so_id = so.id
-         ORDER BY i.issued_at DESC`
-      )
-      .all();
+         ORDER BY i.created_at DESC`
+    );
     res.json({ data: invoices });
   } catch (error) {
     console.error('Error fetching invoices:', error);
@@ -265,16 +245,15 @@ router.get('/invoices', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.get('/invoices/:id', authMiddleware, (req: Request, res: Response) => {
+router.get('/invoices/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const invoice = db
-      .prepare(
-        `SELECT i.*, so.so_number
+    const invoice = await dbGet(
+      `SELECT i.*, so.so_number
          FROM invoices i
          LEFT JOIN sales_orders so ON i.so_id = so.id
-         WHERE i.id = ?`
-      )
-      .get(req.params.id);
+         WHERE i.id = ?`,
+      [req.params.id]
+    );
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     res.json({ data: invoice });
   } catch (error) {
@@ -283,17 +262,18 @@ router.get('/invoices/:id', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.post('/invoices', authMiddleware, (req: Request, res: Response) => {
+router.post('/invoices', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { invoice_number, so_id, amount, currency, status, issued_at, due_at, notes } = req.body;
+    const { invoice_number, so_id, amount, status, issued_at, due_at, notes } = req.body;
     if (!so_id || amount === undefined) return res.status(400).json({ error: 'so_id and amount are required' });
 
     const number = invoice_number || generateCode('INV');
-    const result = db
-      .prepare('INSERT INTO invoices (invoice_number, so_id, amount, currency, status, issued_at, due_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(number, so_id, amount, currency || 'IDR', status || 'unpaid', issued_at || null, due_at || null, notes || null);
+    const result = await dbRun(
+      'INSERT INTO invoices (invoice_number, so_id, total_amount, status, invoice_date, due_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [number, so_id, amount, status || 'unpaid', issued_at || null, due_at || null, notes || null]
+    );
 
-    res.status(201).json({ message: 'Invoice created', data: { id: result.lastInsertRowid, invoice_number: number } });
+    res.status(201).json({ message: 'Invoice created', data: { id: result.insertId, invoice_number: number } });
   } catch (error: any) {
     console.error('Error creating invoice:', error);
     if (error.message?.includes('UNIQUE')) return res.status(400).json({ error: 'Invoice number must be unique' });
@@ -301,16 +281,140 @@ router.post('/invoices', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-router.put('/invoices/:id', authMiddleware, (req: Request, res: Response) => {
+router.put('/invoices/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { so_id, amount, currency, status, issued_at, due_at, notes } = req.body;
-    db.prepare(
-      'UPDATE invoices SET so_id = ?, amount = ?, currency = ?, status = ?, issued_at = COALESCE(?, issued_at), due_at = COALESCE(?, due_at), notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(so_id, amount, currency || 'IDR', status, issued_at || null, due_at || null, notes || null, req.params.id);
+    const { so_id, amount, status, issued_at, due_at, notes } = req.body;
+    await dbRun(
+      'UPDATE invoices SET so_id = ?, total_amount = ?, status = ?, invoice_date = COALESCE(?, invoice_date), due_date = COALESCE(?, due_date), notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [so_id, amount, status, issued_at || null, due_at || null, notes || null, req.params.id]
+    );
     res.json({ message: 'Invoice updated' });
   } catch (error) {
     console.error('Error updating invoice:', error);
     res.status(500).json({ error: 'Failed to update invoice' });
+  }
+});
+
+// ===== SO APPROVAL =====
+
+router.get('/approval', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const rows = await dbAll(
+      `SELECT so.*, c.name as customer_name,
+              COALESCE(SUM(soi.quantity * soi.unit_price), 0) as total_amount
+       FROM sales_orders so
+       LEFT JOIN customers c ON so.customer_id = c.id
+       LEFT JOIN sales_order_items soi ON soi.so_id = so.id
+       WHERE so.status = 'draft'
+       GROUP BY so.id
+       ORDER BY so.created_at DESC`
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching SO for approval:', error);
+    res.status(500).json({ error: 'Failed to fetch approvals' });
+  }
+});
+
+router.put('/approval/:id/approve', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const so: any = await dbGet('SELECT * FROM sales_orders WHERE id = ?', [req.params.id]);
+    if (!so) return res.status(404).json({ error: 'SO not found' });
+    await dbRun('UPDATE sales_orders SET status = ? WHERE id = ?', ['open', req.params.id]);
+    res.json({ success: true, message: 'SO approved' });
+  } catch (error) {
+    console.error('Error approving SO:', error);
+    res.status(500).json({ error: 'Failed to approve SO' });
+  }
+});
+
+router.put('/approval/:id/reject', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { reason } = req.body;
+    await dbRun('UPDATE sales_orders SET status = ?, notes = CONCAT(COALESCE(notes, \'\'), ?) WHERE id = ?',
+      ['cancelled', `\n[REJECTED] ${reason || 'No reason provided'}`, req.params.id]);
+    res.json({ success: true, message: 'SO rejected' });
+  } catch (error) {
+    console.error('Error rejecting SO:', error);
+    res.status(500).json({ error: 'Failed to reject SO' });
+  }
+});
+
+// ===== PRICE LIST =====
+
+router.get('/price-list', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const rows = await dbAll(
+      `SELECT p.id, p.sku, p.name, p.description,
+              p.selling_price as base_price, p.unit
+       FROM products p
+       WHERE p.selling_price IS NOT NULL AND p.selling_price > 0
+       ORDER BY p.name`
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching price list:', error);
+    res.status(500).json({ error: 'Failed to fetch price list' });
+  }
+});
+
+router.put('/price-list/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { selling_price } = req.body;
+    if (selling_price === undefined || selling_price < 0) return res.status(400).json({ error: 'Valid price required' });
+    await dbRun('UPDATE products SET selling_price = ? WHERE id = ?', [selling_price, req.params.id]);
+    res.json({ success: true, message: 'Price updated' });
+  } catch (error) {
+    console.error('Error updating price:', error);
+    res.status(500).json({ error: 'Failed to update price' });
+  }
+});
+
+// ===== SALES HISTORY =====
+
+router.get('/history', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { status, from, to, search } = req.query;
+    let where = 'WHERE 1=1';
+    const params: any[] = [];
+    if (status && status !== 'all') { where += ' AND so.status = ?'; params.push(status); }
+    if (from) { where += ' AND so.created_at >= ?'; params.push(from); }
+    if (to) { where += ' AND so.created_at <= ?'; params.push(to + ' 23:59:59'); }
+    if (search) { where += ' AND (so.so_number LIKE ? OR c.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+
+    const rows = await dbAll(
+      `SELECT so.*, c.name as customer_name,
+              COALESCE(SUM(soi.quantity * soi.unit_price), 0) as total_amount,
+              (SELECT COUNT(*) FROM deliveries d WHERE d.so_id = so.id) as delivery_count,
+              (SELECT COUNT(*) FROM invoices inv WHERE inv.so_id = so.id) as invoice_count
+       FROM sales_orders so
+       LEFT JOIN customers c ON so.customer_id = c.id
+       LEFT JOIN sales_order_items soi ON soi.so_id = so.id
+       ${where}
+       GROUP BY so.id
+       ORDER BY so.created_at DESC`, params
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching sales history:', error);
+    res.status(500).json({ error: 'Failed to fetch sales history' });
+  }
+});
+
+router.get('/history/stats', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const stats = await dbGet(
+      `SELECT
+         COUNT(*) as total_orders,
+         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_orders,
+         SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_orders,
+         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_orders
+       FROM sales_orders`
+    );
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error('Error fetching sales stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
 

@@ -15,13 +15,21 @@
 
         <p v-if="store.error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">{{ store.error }}</p>
 
-        <section class="bg-white shadow sm:rounded-lg p-4">
+        <section class="bg-white shadow sm:rounded-lg p-4 tilt-card">
           <div class="flex items-center justify-between mb-3">
             <h2 class="text-lg font-semibold text-gray-900">Vendors</h2>
             <div class="flex space-x-2">
               <input v-model="vendorForm.code" placeholder="Code" class="input" />
               <input v-model="vendorForm.name" placeholder="Name" class="input" />
               <button @click="submitVendor" class="btn-primary" :disabled="submitting">Save</button>
+              <button 
+                @click="cleanupVendors" 
+                :disabled="isCleaningUpVendors"
+                :class="isCleaningUpVendors ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-700'"
+                class="px-3 py-2 bg-orange-600 text-white rounded text-sm font-medium"
+              >
+                {{ isCleaningUpVendors ? '⏳ Cleaning...' : '🧹 Cleanup & Standardize' }}
+              </button>
             </div>
           </div>
           <div class="overflow-x-auto">
@@ -46,37 +54,31 @@
           </div>
         </section>
 
-        <section class="bg-white shadow sm:rounded-lg p-4">
+        <section class="bg-white shadow sm:rounded-lg p-4 tilt-card">
           <div class="flex items-center justify-between mb-3">
             <h2 class="text-lg font-semibold text-gray-900">Purchase Requests</h2>
-            <div class="flex space-x-2">
-              <input v-model="prForm.notes" placeholder="Notes" class="input" />
-              <button @click="submitPR" class="btn-primary" :disabled="submitting">Create PR</button>
-            </div>
+            <router-link to="/procurement/pr" class="btn-primary">
+              Go to PR Page →
+            </router-link>
           </div>
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">PR Number</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Requester</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Status</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Notes</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200">
-                <tr v-for="pr in store.purchaseRequests" :key="pr.id">
-                  <td class="px-3 py-2">{{ pr.pr_number }}</td>
-                  <td class="px-3 py-2">{{ pr.requester_name || '-' }}</td>
-                  <td class="px-3 py-2">{{ pr.status }}</td>
-                  <td class="px-3 py-2">{{ pr.notes || '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <p class="text-sm text-gray-600">
+            Gunakan halaman <router-link to="/procurement/pr" class="text-blue-600 hover:underline">Purchase Request</router-link> untuk manage PR dengan approval workflow lengkap.
+          </p>
         </section>
 
-        <section class="bg-white shadow sm:rounded-lg p-4">
+        <section class="bg-white shadow sm:rounded-lg p-4 tilt-card">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold text-gray-900">Purchase Orders</h2>
+            <router-link to="/procurement/po" class="btn-primary">
+              Go to PO Page →
+            </router-link>
+          </div>
+          <p class="text-sm text-gray-600">
+            Gunakan halaman <router-link to="/procurement/po" class="text-blue-600 hover:underline">Purchase Order</router-link> untuk create PO dari PR yang sudah approved 2/2.
+          </p>
+        </section>
+
+        <section class="bg-white shadow sm:rounded-lg p-4 tilt-card">
           <div class="flex items-center justify-between mb-3">
             <h2 class="text-lg font-semibold text-gray-900">Purchase Orders</h2>
             <div class="space-y-2 w-full">
@@ -111,25 +113,51 @@
                 <tr>
                   <th class="px-3 py-2 text-left font-medium text-gray-500">PO Number</th>
                   <th class="px-3 py-2 text-left font-medium text-gray-500">Vendor</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Status</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-500">Approval</th>
                   <th class="px-3 py-2 text-left font-medium text-gray-500">Expected Date</th>
                   <th class="px-3 py-2 text-left font-medium text-gray-500">Items</th>
+                  <th class="px-3 py-2 text-left font-medium text-gray-500 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
                 <tr v-for="po in store.purchaseOrders" :key="po.id">
                   <td class="px-3 py-2">{{ po.po_number }}</td>
                   <td class="px-3 py-2">{{ po.vendor_name || '-' }}</td>
-                  <td class="px-3 py-2">{{ po.status }}</td>
+                  <td class="px-3 py-2">
+                    <span :class="getApprovalStatusClass(po.approval_status || 0)" class="px-2 py-1 rounded-full text-xs font-semibold">
+                      {{ getApprovalStatusText(po.approval_status || 0) }}
+                    </span>
+                    <div v-if="getApprovalMessage(po.approval_status || 0)" class="text-xs text-orange-600 mt-1">
+                      {{ getApprovalMessage(po.approval_status || 0) }}
+                    </div>
+                  </td>
                   <td class="px-3 py-2">{{ po.expected_date ? formatDate(po.expected_date) : '-' }}</td>
                   <td class="px-3 py-2">{{ po.item_count }}</td>
+                  <td class="px-3 py-2 text-right space-x-2">
+                    <button
+                      v-if="canApprove(po.approval_status || 0)"
+                      @click="approvePO(po.id)"
+                      class="btn-primary"
+                      :disabled="submitting"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      v-if="canReject(po.approval_status || 0)"
+                      @click="rejectPO(po.id)"
+                      class="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+                      :disabled="submitting"
+                    >
+                      Reject
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
         </section>
 
-        <section class="bg-white shadow sm:rounded-lg p-4">
+        <section class="bg-white shadow sm:rounded-lg p-4 tilt-card">
           <div class="flex items-center justify-between mb-3">
             <h2 class="text-lg font-semibold text-gray-900">Goods Receipts</h2>
             <div class="flex space-x-2">
@@ -158,7 +186,7 @@
                   <td class="px-3 py-2">{{ gr.po_number || '-' }}</td>
                   <td class="px-3 py-2">{{ gr.warehouse_name || '-' }}</td>
                   <td class="px-3 py-2">{{ gr.status }}</td>
-                  <td class="px-3 py-2">{{ gr.received_at ? formatDate(gr.received_at) : '-' }}</td>
+                  <td class="px-3 py-2">{{ gr.received_date || gr.received_at ? formatDate(gr.received_date || gr.received_at) : '-' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -174,15 +202,18 @@ import { onMounted, ref, computed } from 'vue';
 import { useProcurementStore } from '../stores/procurement';
 import { useProductStore } from '../stores/products';
 import { useWarehouseStore } from '../stores/warehouse';
+import { useApprovalWorkflow } from '../composables/useApprovalWorkflow';
+import api from '../config/api';
 
 const store = useProcurementStore();
 const productStore = useProductStore();
 const warehouseStore = useWarehouseStore();
+const { canApprove, canReject, getApprovalStatusClass, getApprovalStatusText, getApprovalMessage } = useApprovalWorkflow();
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString();
 
 const vendorForm = ref({ code: '', name: '' });
-const prForm = ref({ notes: '' });
+// const prForm = ref({ notes: '' });
 const poForm = ref({ vendor_id: undefined as number | undefined, expected_date: '' });
 const poItems = ref([{ product_id: undefined as number | undefined, quantity: 1 }]);
 const grForm = ref({ po_id: undefined as number | undefined, warehouse_id: undefined as number | undefined });
@@ -191,6 +222,7 @@ const errorMsg = ref('');
 const products = computed(() => productStore.products || []);
 const warehouses = computed(() => warehouseStore.warehouses || []);
 const submitting = ref(false);
+const isCleaningUpVendors = ref(false);
 
 onMounted(async () => {
   await Promise.all([
@@ -221,6 +253,36 @@ const submitVendor = async () => {
   }
 };
 
+const cleanupVendors = async () => {
+  if (!confirm('Jalankan cleanup dan standardisasi vendor? Ini akan:\n- Normalisasi nama/kontak\n- Nonaktifkan duplikasi\n- Standardisasi kode')) {
+    return;
+  }
+
+  isCleaningUpVendors.value = true;
+
+  try {
+    const { data } = await api.post('/import/vendors/cleanup', {});
+    
+    // Reload vendors after cleanup
+    await store.fetchVendors();
+    
+    // Show results notification
+    const result = data.result || {};
+    const message = `✅ Cleanup vendor berhasil!
+- ${result.normalizedRows} row dinormalisasi
+- ${result.duplicateDeactivated} duplikat dinonaktifkan
+- ${result.codesStandardized} kode di-standardisasi${result.standardizedRange ? ` (${result.standardizedRange})` : ''}`;
+    
+    alert(message);
+  } catch (error) {
+    console.error('Failed to cleanup vendors:', error);
+    alert('❌ Gagal cleanup vendor. Coba lagi.');
+  } finally {
+    isCleaningUpVendors.value = false;
+  }
+};
+
+/*
 const submitPR = async () => {
   errorMsg.value = '';
   submitting.value = true;
@@ -234,6 +296,33 @@ const submitPR = async () => {
     submitting.value = false;
   }
 };
+
+const approvePR = async (id: number) => {
+  submitting.value = true;
+  errorMsg.value = '';
+  try {
+    await store.approvePurchaseRequest(id);
+    successMsg.value = 'Purchase request approved';
+  } catch (err: any) {
+    errorMsg.value = err?.response?.data?.error || 'Gagal approve purchase request';
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const rejectPR = async (id: number) => {
+  submitting.value = true;
+  errorMsg.value = '';
+  try {
+    await store.rejectPurchaseRequest(id);
+    successMsg.value = 'Purchase request dikembalikan ke pending';
+  } catch (err: any) {
+    errorMsg.value = err?.response?.data?.error || 'Gagal reject purchase request';
+  } finally {
+    submitting.value = false;
+  }
+};
+*/
 
 const submitPO = async () => {
   const validItems = poItems.value.filter((i) => i.product_id && i.quantity);
@@ -266,6 +355,34 @@ const addPoItem = () => {
 const removePoItem = (idx: number) => {
   if (poItems.value.length > 1) {
     poItems.value.splice(idx, 1);
+  }
+};
+
+const approvePO = async (id: number) => {
+  if (!confirm('Approve PO? Pastikan semua data sudah benar.')) return;
+  submitting.value = true;
+  errorMsg.value = '';
+  try {
+    await store.approvePurchaseOrder(id);
+    successMsg.value = 'Purchase order approved';
+  } catch (err: any) {
+    errorMsg.value = err?.response?.data?.error || 'Gagal approve purchase order';
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const rejectPO = async (id: number) => {
+  if (!confirm('Reject dan kembalikan PO ke pending?')) return;
+  submitting.value = true;
+  errorMsg.value = '';
+  try {
+    await store.rejectPurchaseOrder(id);
+    successMsg.value = 'Purchase order dikembalikan ke pending';
+  } catch (err: any) {
+    errorMsg.value = err?.response?.data?.error || 'Gagal reject purchase order';
+  } finally {
+    submitting.value = false;
   }
 };
 

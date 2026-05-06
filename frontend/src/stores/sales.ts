@@ -7,6 +7,10 @@ export const useSalesStore = defineStore('sales', {
     salesOrders: [] as any[],
     deliveries: [] as any[],
     invoices: [] as any[],
+    pendingApprovals: [] as any[],
+    priceList: [] as any[],
+    salesHistory: [] as any[],
+    salesStats: {} as any,
     loading: false,
     error: null as string | null,
   }),
@@ -99,6 +103,42 @@ export const useSalesStore = defineStore('sales', {
       const res = await api.post('/sales/invoices', payload);
       await this.fetchInvoices();
       return res.data;
+    },
+
+    // Approval
+    async fetchPendingApprovals() {
+      this.loading = true;
+      try { this.pendingApprovals = (await api.get('/sales/approval')).data?.data || []; } catch { this.pendingApprovals = []; }
+      this.loading = false;
+    },
+    async approveSO(id: number) {
+      await api.put(`/sales/approval/${id}/approve`);
+      await this.fetchPendingApprovals();
+    },
+    async rejectSO(id: number, reason: string) {
+      await api.put(`/sales/approval/${id}/reject`, { reason });
+      await this.fetchPendingApprovals();
+    },
+
+    // Price List
+    async fetchPriceList() {
+      this.loading = true;
+      try { this.priceList = (await api.get('/sales/price-list')).data?.data || []; } catch { this.priceList = []; }
+      this.loading = false;
+    },
+    async updatePrice(id: number, selling_price: number) {
+      await api.put(`/sales/price-list/${id}`, { selling_price });
+      await this.fetchPriceList();
+    },
+
+    // History
+    async fetchSalesHistory(params?: any) {
+      this.loading = true;
+      try { this.salesHistory = (await api.get('/sales/history', { params })).data?.data || []; } catch { this.salesHistory = []; }
+      this.loading = false;
+    },
+    async fetchSalesStats() {
+      try { this.salesStats = (await api.get('/sales/history/stats')).data?.data || {}; } catch { this.salesStats = {}; }
     },
   },
 });

@@ -3,14 +3,17 @@ import { api } from '../lib/api';
 
 interface BOM {
   id: number;
-  product_id: number;
+  product_id?: number;
   product_name?: string;
-  component_product_id: number;
+  component_product_id?: number;
   component_name?: string;
   component_sku?: string;
-  quantity: number;
+  quantity?: number;
   unit?: string;
   notes?: string;
+  version?: string;
+  effective_date?: string;
+  approval_status?: number;
   created_at: string;
 }
 
@@ -46,16 +49,11 @@ export const useBOMStore = defineStore('bom', {
     async createBOM(bomData: any) {
       try {
         const payload = {
-          product_id: bomData.product_id,
-          component_product_id: bomData.component_product_id,
-          quantity: bomData.quantity,
-          unit: bomData.unit,
-          notes: bomData.notes,
-          loss_percent: bomData.loss_percent || 0,
-          is_sub_bom: bomData.is_sub_bom || false,
+          product_name: bomData.product_name,
+          notes: bomData.notes || null,
+          details: bomData.details || [],
         };
         const response = await api.post(`/bom`, payload);
-        await this.fetchBOMs();
         return response.data;
       } catch (error: any) {
         this.error = error.response?.data?.error || 'Failed to create BOM';
@@ -66,16 +64,15 @@ export const useBOMStore = defineStore('bom', {
     async updateBOM(id: number, bomData: any) {
       try {
         const payload = {
-          product_id: bomData.product_id,
-          component_product_id: bomData.component_product_id,
-          quantity: bomData.quantity,
-          unit: bomData.unit,
-          notes: bomData.notes,
+          product_id: parseInt(bomData.product_id),
+          component_product_id: parseInt(bomData.component_product_id),
+          quantity: parseFloat(bomData.quantity),
+          unit: bomData.unit || null,
+          notes: bomData.notes || null,
           loss_percent: bomData.loss_percent || 0,
-          is_sub_bom: bomData.is_sub_bom || false,
+          is_sub_bom: bomData.is_sub_bom ? 1 : 0,
         };
         const response = await api.put(`/bom/${id}`, payload);
-        await this.fetchBOMs();
         return response.data;
       } catch (error: any) {
         this.error = error.response?.data?.error || 'Failed to update BOM';
@@ -89,6 +86,28 @@ export const useBOMStore = defineStore('bom', {
         await this.fetchBOMs();
       } catch (error: any) {
         this.error = error.response?.data?.error || 'Failed to delete BOM';
+        throw error;
+      }
+    },
+
+    async approveBOM(productId: number) {
+      try {
+        const response = await api.post(`/bom/${productId}/approve`);
+        await this.fetchBOMs();
+        return response.data;
+      } catch (error: any) {
+        this.error = error.response?.data?.error || 'Failed to approve BOM';
+        throw error;
+      }
+    },
+
+    async rejectBOM(productId: number) {
+      try {
+        const response = await api.post(`/bom/${productId}/reject`);
+        await this.fetchBOMs();
+        return response.data;
+      } catch (error: any) {
+        this.error = error.response?.data?.error || 'Failed to reject BOM';
         throw error;
       }
     },

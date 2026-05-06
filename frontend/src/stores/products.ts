@@ -7,8 +7,18 @@ interface Product {
   name: string;
   description?: string;
   unit_of_measure?: string;
+  uom?: string;
+  unit_code?: string;
   category?: string;
+  category_name?: string;
+  unit_name?: string;
+  item_type?: string;
+  type_name?: string;
+  type_code?: string;
   status: string;
+  standard_cost?: number;
+  is_active?: boolean;
+  active?: number;
   created_at: string;
 }
 

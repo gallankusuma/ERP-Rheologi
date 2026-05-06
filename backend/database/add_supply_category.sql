@@ -1,0 +1,1 @@
+ALTER TABLE vendors ADD COLUMN supply_category VARCHAR(50) DEFAULT NULL AFTER name;

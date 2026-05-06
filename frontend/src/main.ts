@@ -4,6 +4,7 @@ import App from './App.vue';
 import router from './router';
 import { useAuthStore } from './stores/auth';
 import { api } from './lib/api';
+import { vPermission } from './directives/permission';
 import './style.css';
 
 const app = createApp(App);
@@ -11,6 +12,7 @@ const pinia = createPinia();
 
 app.use(pinia);
 app.use(router);
+app.directive('permission', vPermission);
 
 // Initialize auth state from localStorage
 const authStore = useAuthStore();

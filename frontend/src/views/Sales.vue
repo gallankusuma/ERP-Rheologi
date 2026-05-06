@@ -1,302 +1,140 @@
 <template>
   <div class="min-h-screen bg-gray-50">
-    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-      <div class="px-4 sm:px-0 space-y-8">
-        <header class="flex items-center justify-between">
-          <div>
-            <p class="text-sm text-gray-500">Sales</p>
-            <h1 class="text-2xl font-bold text-gray-900">Customers, SO, Delivery, Invoice</h1>
-          </div>
-          <span v-if="store.loading" class="text-sm text-gray-500">Loading...</span>
-        </header>
-
-        <div v-if="errorMsg" class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded">{{ errorMsg }}</div>
-        <div v-if="successMsg" class="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded">{{ successMsg }}</div>
-
-        <p v-if="store.error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">{{ store.error }}</p>
-
-        <section class="bg-white shadow sm:rounded-lg p-4">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold text-gray-900">Customers</h2>
-            <div class="flex space-x-2">
-              <input v-model="customerForm.code" placeholder="Code" class="input" />
-              <input v-model="customerForm.name" placeholder="Name" class="input" />
-              <button @click="submitCustomer" class="btn-primary" :disabled="submitting">Save</button>
-            </div>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Code</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Name</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Contact</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Email</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200">
-                <tr v-for="customer in store.customers" :key="customer.id">
-                  <td class="px-3 py-2">{{ customer.code }}</td>
-                  <td class="px-3 py-2">{{ customer.name }}</td>
-                  <td class="px-3 py-2">{{ customer.contact || '-' }}</td>
-                  <td class="px-3 py-2">{{ customer.email || '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="bg-white shadow sm:rounded-lg p-4">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold text-gray-900">Sales Orders</h2>
-            <div class="flex flex-wrap gap-2 items-center">
-              <select v-model.number="soForm.customer_id" class="input w-40">
-                <option :value="undefined" disabled>Pilih Customer</option>
-                <option v-for="c in store.customers" :key="c.id" :value="c.id">{{ c.name }}</option>
-              </select>
-              <input v-model="soForm.expected_ship_date" type="date" class="input w-40" />
-              <button @click="submitSO" class="btn-primary" :disabled="submitting">Create SO</button>
-            </div>
-            <div class="space-y-1 mt-2">
-              <div
-                v-for="(item, idx) in soItems"
-                :key="idx"
-                class="flex flex-wrap gap-2 items-center"
-              >
-                <select v-model.number="item.product_id" class="input w-40">
-                  <option :value="undefined" disabled>Pilih Product</option>
-                  <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name }} ({{ p.sku }})</option>
-                </select>
-                <input v-model.number="item.quantity" type="number" placeholder="Qty" class="input w-24" />
-                <button class="text-sm text-red-600" @click="removeSoItem(idx)" v-if="soItems.length > 1" :disabled="submitting">Remove</button>
-              </div>
-              <button class="text-sm text-blue-600" @click="addSoItem" :disabled="submitting">+ Add Item</button>
-            </div>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">SO Number</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Customer</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Status</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Expected Ship</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Items</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200">
-                <tr v-for="so in store.salesOrders" :key="so.id">
-                  <td class="px-3 py-2">{{ so.so_number }}</td>
-                  <td class="px-3 py-2">{{ so.customer_name || '-' }}</td>
-                  <td class="px-3 py-2">{{ so.status }}</td>
-                  <td class="px-3 py-2">{{ so.expected_ship_date ? formatDate(so.expected_ship_date) : '-' }}</td>
-                  <td class="px-3 py-2">{{ so.item_count }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="bg-white shadow sm:rounded-lg p-4">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold text-gray-900">Deliveries</h2>
-            <div class="flex space-x-2">
-                <input v-model.number="doForm.so_id" type="number" placeholder="SO ID" class="input w-28" />
-                <select v-model.number="doForm.warehouse_id" class="input w-32">
-                  <option :value="undefined" disabled>Pilih Warehouse</option>
-                  <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name }}</option>
-                </select>
-              <button @click="submitDO" class="btn-primary" :disabled="submitting">Create DO</button>
-            </div>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">DO Number</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">SO</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Warehouse</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Status</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Shipped At</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200">
-                <tr v-for="doItem in store.deliveries" :key="doItem.id">
-                  <td class="px-3 py-2">{{ doItem.do_number }}</td>
-                  <td class="px-3 py-2">{{ doItem.so_number || '-' }}</td>
-                  <td class="px-3 py-2">{{ doItem.warehouse_name || '-' }}</td>
-                  <td class="px-3 py-2">{{ doItem.status }}</td>
-                  <td class="px-3 py-2">{{ doItem.shipped_at ? formatDate(doItem.shipped_at) : '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="bg-white shadow sm:rounded-lg p-4">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold text-gray-900">Invoices</h2>
-            <div class="flex space-x-2 items-center">
-              <input v-model.number="invForm.so_id" type="number" placeholder="SO ID" class="input w-28" />
-              <input v-model.number="invForm.amount" type="number" placeholder="Amount" class="input w-28" />
-              <button @click="submitInvoice" class="btn-primary" :disabled="submitting">Create Invoice</button>
-            </div>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Invoice</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">SO</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Amount</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Status</th>
-                  <th class="px-3 py-2 text-left font-medium text-gray-500">Issued</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200">
-                <tr v-for="inv in store.invoices" :key="inv.id">
-                  <td class="px-3 py-2">{{ inv.invoice_number }}</td>
-                  <td class="px-3 py-2">{{ inv.so_number || '-' }}</td>
-                  <td class="px-3 py-2">{{ inv.amount }} {{ inv.currency }}</td>
-                  <td class="px-3 py-2">{{ inv.status }}</td>
-                  <td class="px-3 py-2">{{ inv.issued_at ? formatDate(inv.issued_at) : '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <!-- Header -->
+      <div class="mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">Sales</h1>
+        <p class="text-gray-500 mt-1">Manage sales orders, invoices, and customer relationships</p>
       </div>
-    </main>
+
+      <!-- Quick Stats -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div class="flex items-center">
+            <div class="bg-blue-100 p-3 rounded-lg">
+              <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div class="ml-4">
+              <p class="text-sm text-gray-600">Total Invoices</p>
+              <p class="text-2xl font-bold text-gray-900">0</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div class="flex items-center">
+            <div class="bg-green-100 p-3 rounded-lg">
+              <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <div class="ml-4">
+              <p class="text-sm text-gray-600">Total Orders</p>
+              <p class="text-2xl font-bold text-gray-900">0</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div class="flex items-center">
+            <div class="bg-yellow-100 p-3 rounded-lg">
+              <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </div>
+            <div class="ml-4">
+              <p class="text-sm text-gray-600">Pending Payments</p>
+              <p class="text-2xl font-bold text-gray-900">0</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div class="flex items-center">
+            <div class="bg-purple-100 p-3 rounded-lg">
+              <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div class="ml-4">
+              <p class="text-sm text-gray-600">Total Revenue</p>
+              <p class="text-2xl font-bold text-gray-900">IDR 0</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Access Menu -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">Quick Access</h2>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <router-link
+            to="/sales/invoices"
+            class="flex flex-col items-center p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+          >
+            <svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span class="text-sm font-medium text-gray-700">Invoices</span>
+          </router-link>
+
+          <router-link
+            to="/sales/orders-list"
+            class="flex flex-col items-center p-4 rounded-lg border border-gray-200 hover:border-green-300 hover:bg-green-50 transition-colors"
+          >
+            <svg class="w-8 h-8 text-green-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span class="text-sm font-medium text-gray-700">Orders</span>
+          </router-link>
+
+          <router-link
+            to="/sales/store"
+            class="flex flex-col items-center p-4 rounded-lg border border-gray-200 hover:border-purple-300 hover:bg-purple-50 transition-colors"
+          >
+            <svg class="w-8 h-8 text-purple-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+            </svg>
+            <span class="text-sm font-medium text-gray-700">Store</span>
+          </router-link>
+
+          <router-link
+            to="/sales/payments"
+            class="flex flex-col items-center p-4 rounded-lg border border-gray-200 hover:border-yellow-300 hover:bg-yellow-50 transition-colors"
+          >
+            <svg class="w-8 h-8 text-yellow-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+            </svg>
+            <span class="text-sm font-medium text-gray-700">Payments</span>
+          </router-link>
+
+          <router-link
+            to="/sales/items"
+            class="flex flex-col items-center p-4 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors"
+          >
+            <svg class="w-8 h-8 text-indigo-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            <span class="text-sm font-medium text-gray-700">Items</span>
+          </router-link>
+
+          <router-link
+            to="/sales/contracts"
+            class="flex flex-col items-center p-4 rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
+          >
+            <svg class="w-8 h-8 text-red-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span class="text-sm font-medium text-gray-700">Contracts</span>
+          </router-link>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue';
-import { useSalesStore } from '../stores/sales';
-import { useProductStore } from '../stores/products';
-import { useWarehouseStore } from '../stores/warehouse';
-
-const store = useSalesStore();
-const productStore = useProductStore();
-const warehouseStore = useWarehouseStore();
-const formatDate = (value: string) => new Date(value).toLocaleDateString();
-
-const customerForm = ref({ code: '', name: '' });
-const soForm = ref({ customer_id: undefined as number | undefined, expected_ship_date: '' });
-const soItems = ref([{ product_id: undefined as number | undefined, quantity: 1 }]);
-const doForm = ref({ so_id: undefined as number | undefined, warehouse_id: undefined as number | undefined });
-const invForm = ref({ so_id: undefined as number | undefined, amount: undefined as number | undefined });
-const successMsg = ref('');
-const errorMsg = ref('');
-const products = computed(() => productStore.products || []);
-const warehouses = computed(() => warehouseStore.warehouses || []);
-const submitting = ref(false);
-
-onMounted(async () => {
-  await Promise.all([
-    store.fetchCustomers(),
-    store.fetchSalesOrders(),
-    store.fetchDeliveries(),
-    store.fetchInvoices(),
-    productStore.fetchProducts(),
-    warehouseStore.fetchWarehouses(),
-  ]);
-});
-
-const submitCustomer = async () => {
-  if (!customerForm.value.code || !customerForm.value.name) {
-    errorMsg.value = 'Customer code dan name wajib diisi';
-    return;
-  }
-  errorMsg.value = '';
-  submitting.value = true;
-  try {
-    await store.createCustomer(customerForm.value);
-    customerForm.value = { code: '', name: '' };
-    successMsg.value = 'Customer dibuat';
-  } catch (err: any) {
-    errorMsg.value = err?.response?.data?.error || 'Gagal membuat customer';
-  } finally {
-    submitting.value = false;
-  }
-};
-
-const submitSO = async () => {
-  const validItems = soItems.value.filter((i) => i.product_id && i.quantity);
-  if (!soForm.value.customer_id || validItems.length === 0) {
-    errorMsg.value = 'Customer dan minimal satu item (product + qty) wajib diisi';
-    return;
-  }
-  errorMsg.value = '';
-  submitting.value = true;
-  try {
-    await store.createSalesOrder({
-      customer_id: soForm.value.customer_id,
-      expected_ship_date: soForm.value.expected_ship_date || undefined,
-      items: validItems.map((i) => ({ product_id: i.product_id!, quantity: i.quantity! })),
-    });
-    soForm.value = { customer_id: undefined, expected_ship_date: '' };
-    soItems.value = [{ product_id: undefined, quantity: 1 }];
-    successMsg.value = 'Sales order dibuat';
-  } catch (err: any) {
-    errorMsg.value = err?.response?.data?.error || 'Gagal membuat sales order';
-  } finally {
-    submitting.value = false;
-  }
-};
-
-const addSoItem = () => {
-  soItems.value.push({ product_id: undefined, quantity: 1 });
-};
-
-const removeSoItem = (idx: number) => {
-  if (soItems.value.length > 1) {
-    soItems.value.splice(idx, 1);
-  }
-};
-
-const submitDO = async () => {
-  if (!doForm.value.so_id) {
-    errorMsg.value = 'SO ID wajib diisi';
-    return;
-  }
-  errorMsg.value = '';
-  submitting.value = true;
-  try {
-    await store.createDelivery({ so_id: doForm.value.so_id, warehouse_id: doForm.value.warehouse_id });
-    doForm.value = { so_id: undefined, warehouse_id: undefined };
-    successMsg.value = 'Delivery order dibuat';
-  } catch (err: any) {
-    errorMsg.value = err?.response?.data?.error || 'Gagal membuat delivery order';
-  } finally {
-    submitting.value = false;
-  }
-};
-
-const submitInvoice = async () => {
-  if (!invForm.value.so_id || invForm.value.amount === undefined) {
-    errorMsg.value = 'SO ID dan amount wajib diisi';
-    return;
-  }
-  errorMsg.value = '';
-  submitting.value = true;
-  try {
-    await store.createInvoice({ so_id: invForm.value.so_id, amount: invForm.value.amount });
-    invForm.value = { so_id: undefined, amount: undefined };
-    successMsg.value = 'Invoice dibuat';
-  } catch (err: any) {
-    errorMsg.value = err?.response?.data?.error || 'Gagal membuat invoice';
-  } finally {
-    submitting.value = false;
-  }
-};
+// Sales module main page
 </script>
-
-<style scoped>
-.input {
-  @apply border border-gray-300 rounded px-2 py-1 text-sm;
-}
-.btn-primary {
-  @apply bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700;
-}
-</style>

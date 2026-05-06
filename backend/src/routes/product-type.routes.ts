@@ -1,14 +1,13 @@
 import { Router, Request, Response } from 'express';
-import db from '../config/database';
+import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
 // GET /api/product-types - Get all product types
-router.get('/', authMiddleware, (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const stmt = db.prepare('SELECT * FROM product_types ORDER BY name ASC');
-    const types = stmt.all();
+    const types = await dbAll('SELECT * FROM product_types ORDER BY name ASC', []);
     res.json({ data: types });
   } catch (error) {
     console.error('Error fetching product types:', error);
@@ -17,10 +16,9 @@ router.get('/', authMiddleware, (req: Request, res: Response) => {
 });
 
 // GET /api/product-types/:id - Get specific product type
-router.get('/:id', authMiddleware, (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const stmt = db.prepare('SELECT * FROM product_types WHERE id = ?');
-    const type = stmt.get(req.params.id);
+    const type = await dbGet('SELECT * FROM product_types WHERE id = ?', [req.params.id]);
     
     if (!type) {
       return res.status(404).json({ error: 'Product type not found' });
@@ -34,7 +32,7 @@ router.get('/:id', authMiddleware, (req: Request, res: Response) => {
 });
 
 // POST /api/product-types - Create product type
-router.post('/', authMiddleware, (req: Request, res: Response) => {
+router.post('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { code, name, description } = req.body;
 
@@ -42,14 +40,14 @@ router.post('/', authMiddleware, (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Code and Name are required' });
     }
 
-    const stmt = db.prepare(
-      'INSERT INTO product_types (code, name, description, active) VALUES (?, ?, ?, ?)'
+    const result = await dbRun(
+      'INSERT INTO product_types (code, name, description, active) VALUES (?, ?, ?, ?)',
+      [code, name, description || null, 1]
     );
-    const result = stmt.run(code, name, description || null, 1);
 
     res.status(201).json({
       message: 'Product type created successfully',
-      data: { id: result.lastInsertRowid, code, name, description, active: true },
+      data: { id: result.insertId, code, name, description, active: true },
     });
   } catch (error) {
     console.error('Error creating product type:', error);
@@ -58,7 +56,7 @@ router.post('/', authMiddleware, (req: Request, res: Response) => {
 });
 
 // PUT /api/product-types/:id - Update product type
-router.put('/:id', authMiddleware, (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { code, name, description, active } = req.body;
 
@@ -66,10 +64,10 @@ router.put('/:id', authMiddleware, (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Code and Name are required' });
     }
 
-    const stmt = db.prepare(
-      'UPDATE product_types SET code = ?, name = ?, description = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    await dbRun(
+      'UPDATE product_types SET code = ?, name = ?, description = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [code, name, description || null, active ? 1 : 0, req.params.id]
     );
-    stmt.run(code, name, description || null, active ? 1 : 0, req.params.id);
 
     res.json({ message: 'Product type updated successfully' });
   } catch (error) {
@@ -79,10 +77,9 @@ router.put('/:id', authMiddleware, (req: Request, res: Response) => {
 });
 
 // DELETE /api/product-types/:id - Delete product type
-router.delete('/:id', authMiddleware, (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const stmt = db.prepare('DELETE FROM product_types WHERE id = ?');
-    stmt.run(req.params.id);
+    await dbRun('DELETE FROM product_types WHERE id = ?', [req.params.id]);
 
     res.json({ message: 'Product type deleted successfully' });
   } catch (error) {

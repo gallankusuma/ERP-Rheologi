@@ -1,141 +1,116 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
-    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-      <div class="px-4 py-6 sm:px-0">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-2xl font-bold text-gray-900">Inventory Management</h2>
-          <button @click="showUpdateModal = true" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">
-            + Update Inventory
-          </button>
-        </div>
+  <div class="space-y-6">
+    <!-- Header -->
+    <PageHeader title="Stock Overview" icon="📦" subtitle="Manage warehouse inventory levels and transactions">
+      <template #actions>
+        <button @click="showUpdateModal = true" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 font-medium transition-colors">
+          + Update Stock
+        </button>
+      </template>
+    </PageHeader>
 
-        <div v-if="store.loading" class="text-center py-8">Loading...</div>
-        <div v-else-if="store.error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {{ store.error }}
-        </div>
+    <!-- KPIs -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <StatCard title="Total SKU" :value="totalSku" icon="📊" color="primary" />
+      <StatCard title="Qty On Hand" :value="totalOnHand" icon="🏭" color="success" />
+      <StatCard title="Low Stock (< 10)" :value="lowStock.length" icon="⚠️" :color="lowStock.length ? 'warning' : 'success'" />
+    </div>
 
-        <div v-else>
-          <!-- Inventory Levels -->
-          <div class="bg-white shadow overflow-hidden sm:rounded-md mb-6">
-            <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">On Hand</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reserved</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Available</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
-                  <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-                </tr>
-              </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="inv in store.inventory" :key="inv.id">
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ inv.product_name }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ inv.quantity_on_hand }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ inv.quantity_reserved }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span :class="inv.quantity_on_hand - inv.quantity_reserved < 10 ? 'text-red-600 font-semibold' : 'text-green-600'">
-                      {{ inv.quantity_on_hand - inv.quantity_reserved }}
-                    </span>
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ inv.location || '-' }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button @click="viewTransactions(inv.product_id)" class="text-blue-600 hover:text-blue-900 mr-4">History</button>
-                    <button @click="editInventory(inv)" class="text-green-600 hover:text-green-900">Update</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+    <!-- Search -->
+    <FilterBar v-model="search" search-placeholder="Search product..." />
+
+    <!-- Loading / Error -->
+    <div v-if="store.loading" class="text-center py-8 text-gray-500 dark:text-gray-400">Loading...</div>
+    <div v-else-if="store.error" class="bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 px-4 py-3 rounded mb-4">
+      {{ store.error }}
+    </div>
+
+    <template v-else>
+      <!-- Inventory Table -->
+      <DataTable :columns="columns" :rows="filtered" :loading="false">
+        <template #cell-available="{ row }">
+          <StatusBadge
+            :status="String(row.quantity_on_hand - row.quantity_reserved)"
+            :variant="availabilityVariant(row)"
+            size="md"
+          />
+        </template>
+        <template #cell-location="{ row }">
+          {{ row.location || '-' }}
+        </template>
+        <template #cell-actions="{ row }">
+          <div class="flex gap-2">
+            <button @click="viewTransactions(row.product_id)" class="px-3 py-1 rounded text-sm font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 transition-colors">
+              History
+            </button>
+            <button @click="editInventory(row)" class="px-3 py-1 rounded text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50 transition-colors">
+              Update
+            </button>
           </div>
+        </template>
+      </DataTable>
 
-          <!-- Transaction History -->
-          <div v-if="showTransactions" class="bg-white shadow sm:rounded-lg p-6">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-lg font-bold text-gray-900">Transaction History</h3>
-              <button @click="showTransactions = false" class="text-gray-500 hover:text-gray-700">&times;</button>
-            </div>
-            <div v-if="store.transactions.length === 0" class="text-gray-500 text-center py-4">
-              No transactions found
-            </div>
-            <table v-else class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">Date</th>
-                  <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">Type</th>
-                  <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">Quantity</th>
-                  <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">Notes</th>
-                </tr>
-              </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="txn in store.transactions" :key="txn.id">
-                  <td class="px-4 py-2 text-sm text-gray-900">{{ new Date(txn.transaction_date).toLocaleString() }}</td>
-                  <td class="px-4 py-2 text-sm">
-                    <span :class="txn.transaction_type === 'in' ? 'text-green-600' : 'text-red-600'">
-                      {{ txn.transaction_type === 'in' ? '+ Receipt' : '- Issue' }}
-                    </span>
-                  </td>
-                  <td class="px-4 py-2 text-sm text-gray-900">{{ txn.quantity }}</td>
-                  <td class="px-4 py-2 text-sm text-gray-500">{{ txn.notes || '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+      <!-- Transaction History -->
+      <div v-if="showTransactions" class="bg-white dark:bg-gray-800 shadow-sm rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">Transaction History</h3>
+          <button @click="showTransactions = false" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl">&times;</button>
         </div>
+        <div v-if="store.transactions.length === 0" class="text-gray-500 dark:text-gray-400 text-center py-4">
+          No transactions found
+        </div>
+        <DataTable v-else :columns="txnColumns" :rows="store.transactions">
+          <template #cell-transaction_date="{ value }">
+            {{ new Date(value).toLocaleString() }}
+          </template>
+          <template #cell-transaction_type="{ value }">
+            <span :class="value === 'in' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'">
+              {{ value === 'in' ? '+ Receipt' : '- Issue' }}
+            </span>
+          </template>
+          <template #cell-notes="{ value }">
+            {{ value || '-' }}
+          </template>
+        </DataTable>
       </div>
-    </main>
+    </template>
 
     <!-- Update Modal -->
-    <div v-if="showUpdateModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-      <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-        <h3 class="text-lg font-bold mb-4">Update Inventory</h3>
-        <form @submit.prevent="updateInventory()">
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700">Product</label>
-            <select v-model="form.product_id" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
-              <option value="">Select Product</option>
-              <option v-for="product in productStore.products" :key="product.id" :value="product.id">
-                {{ product.name }}
-              </option>
-            </select>
-          </div>
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700">Transaction Type</label>
-            <select v-model="form.transaction_type" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
-              <option value="in">Receipt (Add Stock)</option>
-              <option value="out">Issue (Remove Stock)</option>
-            </select>
-          </div>
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700">Quantity</label>
-            <input v-model.number="form.quantity" type="number" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700">Location</label>
-            <input v-model="form.location" type="text" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700">Notes</label>
-            <textarea v-model="form.notes" rows="3" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"></textarea>
-          </div>
-          <div class="flex justify-end space-x-3">
-            <button type="button" @click="closeModal" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">Cancel</button>
-            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Update</button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <Dialog :is-open="showUpdateModal" @update:is-open="showUpdateModal = $event" size="small">
+      <template #title>Update Inventory</template>
+      <form @submit.prevent="updateInventory()" class="space-y-4">
+        <FormField name="product_id" label="Product" type="select" :model-value="form.product_id" @update:model-value="form.product_id = $event" :options="productStore.products.map(p => ({ value: p.id, label: p.name }))" select-placeholder="Select Product" required />
+        <FormField name="transaction_type" label="Transaction Type" type="select" :model-value="form.transaction_type" @update:model-value="form.transaction_type = $event" :options="[{ value: 'in', label: 'Receipt (Add Stock)' }, { value: 'out', label: 'Issue (Remove Stock)' }]" required />
+        <FormField name="quantity" label="Quantity" type="number" :model-value="form.quantity" @update:model-value="form.quantity = $event" required />
+        <FormField name="location" label="Location" :model-value="form.location" @update:model-value="form.location = $event" />
+        <FormField name="notes" label="Notes" type="textarea" :model-value="form.notes" @update:model-value="form.notes = $event" :rows="3" />
+      </form>
+      <template #actions="{ close }">
+        <button @click="close" class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 font-medium">Cancel</button>
+        <button @click="updateInventory()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 font-medium">Update</button>
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useProductStore } from '../stores/products';
+import PageHeader from '../components/ui/PageHeader.vue';
+import StatCard from '../components/ui/StatCard.vue';
+import FilterBar from '../components/ui/FilterBar.vue';
+import StatusBadge from '../components/ui/StatusBadge.vue';
+import DataTable from '../components/DataTable.vue';
+import Dialog from '../components/ui/Dialog.vue';
+import FormField from '../components/FormField.vue';
+
 const store = useInventoryStore();
 const productStore = useProductStore();
 
 const showUpdateModal = ref(false);
 const showTransactions = ref(false);
+const search = ref('');
 const form = ref({
   product_id: '',
   inventory_id: 0,
@@ -145,12 +120,46 @@ const form = ref({
   notes: '',
 });
 
+const columns = [
+  { key: 'product_name', label: 'Product' },
+  { key: 'quantity_on_hand', label: 'On Hand' },
+  { key: 'quantity_reserved', label: 'Reserved' },
+  { key: 'available', label: 'Available' },
+  { key: 'location', label: 'Location' },
+  { key: 'actions', label: 'Action' },
+];
+
+const txnColumns = [
+  { key: 'transaction_date', label: 'Date' },
+  { key: 'transaction_type', label: 'Type' },
+  { key: 'quantity', label: 'Quantity' },
+  { key: 'notes', label: 'Notes' },
+];
+
 onMounted(async () => {
   await Promise.all([
     store.fetchInventory(),
     productStore.fetchProducts(),
   ]);
 });
+
+const filtered = computed(() => {
+  const term = search.value.toLowerCase();
+  return store.inventory.filter((inv) =>
+    !term || (inv.product_name || '').toLowerCase().includes(term) || (inv.sku || '').toLowerCase().includes(term)
+  );
+});
+
+const totalSku = computed(() => store.inventory.length);
+const totalOnHand = computed(() => store.inventory.reduce((sum, inv) => sum + (inv.quantity_on_hand || 0), 0));
+const lowStock = computed(() => store.inventory.filter((inv) => inv.quantity_on_hand - inv.quantity_reserved < 10));
+
+const availabilityVariant = (inv: any): 'success' | 'warning' | 'danger' => {
+  const available = (inv.quantity_on_hand || 0) - (inv.quantity_reserved || 0);
+  if (available <= 0) return 'danger';
+  if (available < 10) return 'warning';
+  return 'success';
+};
 
 const editInventory = (inv: any) => {
   form.value = {
@@ -166,14 +175,12 @@ const editInventory = (inv: any) => {
 
 const updateInventory = async () => {
   try {
-    // Record transaction
     await store.recordTransaction(form.value.inventory_id, {
       transaction_type: form.value.transaction_type,
       quantity: form.value.quantity,
       notes: form.value.notes,
     });
     
-    // Update inventory location if changed
     const inv = store.inventory.find(i => i.id === form.value.inventory_id);
     if (inv) {
       const newQty = form.value.transaction_type === 'in' 
@@ -197,6 +204,7 @@ const viewTransactions = async (productId: number) => {
   await store.fetchTransactions(productId);
   showTransactions.value = true;
 };
+
 const closeModal = () => {
   showUpdateModal.value = false;
   form.value = {

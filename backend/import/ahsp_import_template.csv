@@ -1,0 +1,7 @@
+kode,name,satuan,version,status,sub_discipline_id,section,resource_type,resource_id,resource_name,resource_satuan,koefisien,resource_harga
+1.1.1.1,Pembuatan 1 m1 pagar sementara dari kayu tinggi 2 meter,m1,2024,active,1,A,labor,0,Mandor,OH,0.013,125685
+1.1.1.1,Pembuatan 1 m1 pagar sementara dari kayu tinggi 2 meter,m1,2024,active,1,A,labor,0,Kepala Tukang,OH,0.04,128000
+1.1.1.1,Pembuatan 1 m1 pagar sementara dari kayu tinggi 2 meter,m1,2024,active,1,A,labor,0,Tukang Batu,OH,0.2,111055
+1.1.1.1,Pembuatan 1 m1 pagar sementara dari kayu tinggi 2 meter,m1,2024,active,1,B,material,0,Pasir Beton,Kg,61.56,190
+1.1.1.1,Pembuatan 1 m1 pagar sementara dari kayu tinggi 2 meter,m1,2024,active,1,B,material,0,PC/Portland Cement,Kg,26.406,1417
+1.1.1.1,Pembuatan 1 m1 pagar sementara dari kayu tinggi 2 meter,m1,2024,active,1,C,equipment,0,,,0,0

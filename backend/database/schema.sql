@@ -539,3 +539,126 @@ CREATE INDEX idx_stock_movements_batch_id ON stock_movements(batch_id);
 CREATE INDEX idx_stock_movements_product_id ON stock_movements(product_id);
 CREATE INDEX idx_approval_requests_status ON approval_requests(status);
 CREATE INDEX idx_approval_requests_entity ON approval_requests(entity_type, entity_id);
+
+-- ============================================
+-- CRM / Clients Management Tables
+-- ============================================
+
+-- Clients table
+CREATE TABLE IF NOT EXISTS clients (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255),
+  phone VARCHAR(50),
+  address TEXT,
+  city VARCHAR(100),
+  state VARCHAR(100),
+  postal_code VARCHAR(20),
+  country VARCHAR(100),
+  website VARCHAR(255),
+  tax_id VARCHAR(100),
+  client_group VARCHAR(50),
+  label VARCHAR(50),
+  status VARCHAR(20) DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Contacts table
+CREATE TABLE IF NOT EXISTS contacts (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  job_title VARCHAR(255),
+  email VARCHAR(255),
+  phone VARCHAR(50),
+  is_primary BOOLEAN DEFAULT FALSE,
+  last_contact_date TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Projects table (if not exists)
+CREATE TABLE IF NOT EXISTS projects (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  status VARCHAR(50) DEFAULT 'open',
+  start_date DATE,
+  end_date DATE,
+  budget DECIMAL(15, 2),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Invoices table (if not exists)
+CREATE TABLE IF NOT EXISTS invoices (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  invoice_number VARCHAR(50) UNIQUE NOT NULL,
+  total_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  paid_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) DEFAULT 'unpaid',
+  due_date DATE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Estimates table (if not exists)
+CREATE TABLE IF NOT EXISTS estimates (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  estimate_number VARCHAR(50) UNIQUE NOT NULL,
+  total_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) DEFAULT 'new',
+  valid_until DATE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Proposals table (if not exists)
+CREATE TABLE IF NOT EXISTS proposals (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  total_amount DECIMAL(15, 2),
+  status VARCHAR(20) DEFAULT 'open',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tickets table (if not exists)
+CREATE TABLE IF NOT EXISTS tickets (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  subject VARCHAR(255) NOT NULL,
+  description TEXT,
+  status VARCHAR(20) DEFAULT 'open',
+  priority VARCHAR(20) DEFAULT 'medium',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Orders table (if not exists)
+CREATE TABLE IF NOT EXISTS orders (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  order_number VARCHAR(50) UNIQUE NOT NULL,
+  total_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) DEFAULT 'new',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_clients_status ON clients(status);
+CREATE INDEX idx_clients_group ON clients(client_group);
+CREATE INDEX idx_contacts_client_id ON contacts(client_id);
+CREATE INDEX idx_projects_client_id ON projects(client_id);
+CREATE INDEX idx_invoices_client_id ON invoices(client_id);
+CREATE INDEX idx_estimates_client_id ON estimates(client_id);
+CREATE INDEX idx_proposals_client_id ON proposals(client_id);
+CREATE INDEX idx_tickets_client_id ON tickets(client_id);
+CREATE INDEX idx_orders_client_id ON orders(client_id);
+

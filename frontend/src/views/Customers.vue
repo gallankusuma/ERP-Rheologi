@@ -5,6 +5,12 @@
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold text-gray-900">Customers</h2>
           <button
+          @click="handleExport"
+          class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+        >
+          📥 Export
+        </button>
+        <button
             @click="openAddModal"
             class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
           >
@@ -178,6 +184,7 @@
 </template>
 
 <script setup lang="ts">
+import { exportToCSV } from '../utils/export';
 import { ref, onMounted } from 'vue';
 
 interface Customer {
@@ -207,7 +214,18 @@ const openAddModal = () => {
 
 const editCustomer = (customer: Customer) => {
   editingId.value = customer.id;
-  form.value = { ...customer };
+  form.value = {
+    code: customer.code,
+    name: customer.name,
+    contact_person: customer.contact_person || '',
+    email: customer.email || '',
+    phone: customer.phone || '',
+    city: customer.city || '',
+    province: customer.province || '',
+    address: customer.address || '',
+    customer_type: customer.customer_type || '',
+    active: customer.active
+  };
   showModal.value = true;
 };
 
@@ -244,4 +262,9 @@ onMounted(() => {
     { id: 3, code: 'CUST003', name: 'CV Customer C', contact_person: 'Charlie Green', email: 'charlie@customerc.com', phone: '+62821333333', city: 'Bandung', province: 'Jawa Barat', customer_type: 'Distributor', active: true },
   ];
 });
+
+function handleExport() {
+  exportToCSV(customers.value, 'Customers_Export');
+}
+
 </script>

@@ -1,129 +1,74 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-cyan-50 via-emerald-50 to-blue-50 overflow-hidden relative">
-    <!-- Animated background video/animation -->
-    <div class="absolute inset-0 overflow-hidden">
-      <!-- SVG Background with elegant patterns -->
-      <svg class="absolute inset-0 w-full h-full" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="flowGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:0.15" />
-            <stop offset="100%" style="stop-color:#0891B2;stop-opacity:0.05" />
-          </linearGradient>
-          <linearGradient id="flowGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" style="stop-color:#059669;stop-opacity:0.15" />
-            <stop offset="100%" style="stop-color:#047857;stop-opacity:0.05" />
-          </linearGradient>
-        </defs>
-        
-        <!-- Flowing lines animation -->
-        <g class="animated-particles">
-          <path d="M 0 100 Q 300 50, 600 100 T 1200 100" stroke="url(#flowGrad1)" stroke-width="4" fill="none" class="animate-flow-1"/>
-          <path d="M 0 300 Q 300 250, 600 300 T 1200 300" stroke="url(#flowGrad2)" stroke-width="4" fill="none" class="animate-flow-3"/>
-          <path d="M 0 500 Q 300 450, 600 500 T 1200 500" stroke="url(#flowGrad1)" stroke-width="4" fill="none" class="animate-flow-1"/>
-          <path d="M 0 700 Q 300 650, 600 700 T 1200 700" stroke="url(#flowGrad2)" stroke-width="4" fill="none" class="animate-flow-4"/>
-        </g>
+  <div class="min-h-screen flex items-center justify-end overflow-hidden relative pr-12">
+    <!-- Background Video -->
+    <video
+      autoplay
+      muted
+      loop
+      class="absolute inset-0 w-full h-full object-cover"
+    >
+      <source src="/videos/login-bg.mp4" type="video/mp4" />
+      <!-- Fallback gradient if video fails to load -->
+      <div class="absolute inset-0 bg-gradient-to-br from-cyan-50 via-emerald-50 to-blue-50"></div>
+    </video>
 
-        <!-- Geometric accent circles -->
-        <g class="floating-elements" opacity="0.1">
-          <circle cx="100" cy="150" r="60" fill="none" stroke="#06B6D4" stroke-width="1" class="animate-float-1"/>
-          <circle cx="200" cy="600" r="50" fill="none" stroke="#06B6D4" stroke-width="1" class="animate-float-2"/>
-          <circle cx="1100" cy="300" r="70" fill="none" stroke="#059669" stroke-width="1" class="animate-float-3"/>
-          <circle cx="900" cy="200" r="55" fill="none" stroke="#059669" stroke-width="1" class="animate-float-4"/>
-        </g>
+    <!-- Dark overlay for better form visibility -->
+    <div class="absolute inset-0 bg-black/40"></div>
 
-        <!-- X pattern elements (AQUION inspired) -->
-        <g opacity="0.08" class="animate-pulse-slow">
-          <path d="M 150 100 L 250 200" stroke="#06B6D4" stroke-width="2"/>
-          <path d="M 250 100 L 150 200" stroke="#06B6D4" stroke-width="2"/>
-          
-          <path d="M 1050 600 L 1150 700" stroke="#059669" stroke-width="2"/>
-          <path d="M 1150 600 L 1050 700" stroke="#059669" stroke-width="2"/>
-          
-          <path d="M 550 200 L 650 300" stroke="#06B6D4" stroke-width="1.5"/>
-          <path d="M 650 200 L 550 300" stroke="#06B6D4" stroke-width="1.5"/>
-        </g>
+    <div class="w-full max-w-sm relative z-10">
+      <!-- Login Card - Transparent -->
+      <div v-if="!showRegister" class="space-y-5">
+        <!-- Login Form Only -->
+        <form @submit.prevent="handleLogin" class="space-y-4">
+          <!-- Error Message -->
+          <div v-if="error" class="p-4 bg-red-500/20 border border-red-500 text-red-200 rounded-lg text-sm backdrop-blur">
+            {{ error }}
+          </div>
 
-        <!-- Subtle accent dots -->
-        <g opacity="0.15" class="animate-pulse">
-          <circle cx="300" cy="250" r="6" fill="#06B6D4"/>
-          <circle cx="800" cy="550" r="6" fill="#06B6D4"/>
-          <circle cx="500" cy="150" r="4" fill="#059669"/>
-          <circle cx="1000" cy="700" r="4" fill="#059669"/>
-          <circle cx="200" cy="400" r="5" fill="#06B6D4"/>
-          <circle cx="950" cy="350" r="5" fill="#059669"/>
-        </g>
-      </svg>
-    </div>
-
-    <!-- Decorative colored overlays -->
-    <div class="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-cyan-300 to-blue-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style="animation-delay: 0s;"></div>
-    <div class="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-tl from-emerald-300 to-cyan-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style="animation-delay: 2s;"></div>
-    <div class="absolute top-1/2 left-1/3 w-72 h-72 bg-gradient-to-r from-blue-200 to-emerald-200 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse" style="animation-delay: 4s;"></div>
-
-    <!-- Acceleration themed decorations -->
-    <div class="absolute top-10 left-10 text-6xl opacity-10 animate-bounce">⚡</div>
-    <div class="absolute top-32 right-20 text-5xl opacity-10 animate-bounce animation-delay-1000">�</div>
-    <div class="absolute bottom-32 left-20 text-5xl opacity-10 animate-bounce animation-delay-2000">🌊</div>
-    <div class="absolute bottom-10 right-10 text-6xl opacity-10 animate-bounce animation-delay-3000">✨</div>
-
-    <div class="max-w-md w-full mx-4 relative z-10">
-      <!-- Login Card -->
-      <div v-if="!showRegister" class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-cyan-200 transition-all duration-500 transform hover:shadow-cyan-200/50 hover:shadow-2xl">
-        <!-- Logo & Title -->
-        <div class="text-center mb-8">
-          <img src="@/assets/logo/Red and Black Modern X Studio Logo.svg" alt="X Lerate" class="w-16 h-16 mx-auto mb-3">
-          <h1 class="text-3xl font-black bg-gradient-to-r from-red-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h1>
-          <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Advanced Hydro-Fiber Manufacturing</p>
-        </div>
-
-        <!-- Error Message -->
-        <div v-if="error" class="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-lg text-sm">
-          {{ error }}
-        </div>
-
-        <!-- Login Form -->
-        <form @submit.prevent="handleLogin" class="space-y-5">
+          <!-- Email Input -->
           <div>
-            <label for="email" class="block text-sm font-semibold text-gray-700 mb-2">Email Address</label>
             <input
               v-model="form.email"
               type="email"
-              id="email"
               required
-              placeholder="you@example.com"
-              class="w-full px-4 py-3 border-2 border-cyan-200 rounded-xl bg-cyan-50/50 focus:outline-none focus:border-cyan-500 focus:bg-white focus:ring-2 focus:ring-cyan-300 transition-all"
+              placeholder="Email Address"
+              class="w-full px-4 py-3 border-2 border-white/30 rounded-lg bg-white/10 backdrop-blur text-white placeholder-white/60 focus:outline-none focus:border-white/60 focus:bg-white/15 transition-all"
             />
           </div>
 
-          <div>
-            <label for="password" class="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+          <!-- Password Input -->
+          <div class="relative">
             <input
               v-model="form.password"
-              type="password"
-              id="password"
+              :type="showPassword ? 'text' : 'password'"
               required
-              placeholder="••••••••"
-              class="w-full px-4 py-3 border-2 border-cyan-200 rounded-xl bg-cyan-50/50 focus:outline-none focus:border-cyan-500 focus:bg-white focus:ring-2 focus:ring-cyan-300 transition-all"
+              placeholder="Password"
+              class="w-full px-4 py-3 border-2 border-white/30 rounded-lg bg-white/10 backdrop-blur text-white placeholder-white/60 focus:outline-none focus:border-white/60 focus:bg-white/15 transition-all"
             />
+            <button
+              type="button"
+              @click="showPassword = !showPassword"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-white focus:outline-none"
+            >
+              <svg v-if="!showPassword" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+              </svg>
+            </button>
           </div>
 
-          <!-- Remember & Forgot Password -->
-          <div class="flex items-center justify-between text-sm">
-            <label class="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" class="w-4 h-4 text-cyan-600 rounded border-cyan-300 focus:ring-cyan-500">
-              <span class="text-gray-600">Remember me</span>
-            </label>
-            <a href="#" class="text-cyan-600 hover:text-cyan-700 font-medium">Forgot password?</a>
-          </div>
-
+          <!-- Sign In Button -->
           <button
             type="submit"
             :disabled="loading"
-            class="w-full bg-gradient-to-r from-cyan-600 via-emerald-600 to-blue-600 text-white py-3 px-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 text-lg"
+            class="w-full bg-white text-blue-600 py-3 px-4 rounded-lg font-semibold hover:bg-white/90 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           >
             <span v-if="!loading">Sign In</span>
             <span v-else class="flex items-center justify-center">
-              <svg class="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg class="animate-spin -ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
@@ -132,123 +77,104 @@
           </button>
         </form>
 
-        <!-- Divider -->
-        <div class="my-6 flex items-center gap-4">
-          <div class="flex-1 h-px bg-cyan-200"></div>
-          <span class="text-gray-500 text-sm">New here?</span>
-          <div class="flex-1 h-px bg-cyan-200"></div>
-        </div>
-
-        <!-- Register Toggle -->
+        <!-- Create Account Link -->
         <button
           @click="showRegister = true"
-          class="w-full py-3 px-4 rounded-xl font-semibold border-2 border-cyan-300 text-cyan-600 hover:bg-cyan-50 transition-all duration-200"
+          class="w-full py-3 px-4 rounded-lg font-semibold border-2 border-white/30 text-white/80 hover:bg-white/10 hover:border-white/50 transition-all duration-200 backdrop-blur"
         >
           Create Account
         </button>
       </div>
 
-      <!-- Register Card -->
-      <div v-else class="bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl p-8 border border-emerald-200 transition-all duration-500 transform hover:shadow-emerald-200/50 hover:shadow-2xl max-w-sm w-full">
-        <!-- Logo & Title -->
-        <div class="text-center mb-8">
-          <img src="@/assets/logo/Red and Black Modern X Studio Logo.svg" alt="X Lerate" class="w-16 h-16 mx-auto mb-3">
-          <h2 class="text-3xl font-black bg-gradient-to-r from-red-600 to-gray-900 bg-clip-text text-transparent mb-2 tracking-tighter">X <span class="text-gray-900">Lerate</span></h2>
-          <p class="text-gray-600 text-sm font-bold uppercase tracking-widest">Join the Hydro-Fiber Revolution</p>
-        </div>
+      <!-- Register Card - Transparent -->
+      <div v-else class="space-y-5">
+        <!-- Register Form Only -->
+        <form @submit.prevent="handleRegister" class="space-y-4">
+          <!-- Error Message -->
+          <div v-if="error" class="p-4 bg-red-500/20 border border-red-500 text-red-200 rounded-lg text-sm backdrop-blur">
+            {{ error }}
+          </div>
 
-        <!-- Error Message -->
-        <div v-if="error" class="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-lg text-sm">
-          {{ error }}
-        </div>
-
-        <!-- Register Form -->
-        <form @submit.prevent="handleRegister" class="space-y-5">
+          <!-- Name Input -->
           <div>
-            <label for="reg-name" class="block text-sm font-semibold text-gray-700 mb-2">Full Name</label>
             <input
               v-model="registerForm.name"
               type="text"
-              id="reg-name"
               required
-              placeholder="John Doe"
-              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
+              placeholder="Full Name"
+              class="w-full px-4 py-3 border-2 border-white/30 rounded-lg bg-white/10 backdrop-blur text-white placeholder-white/60 focus:outline-none focus:border-white/60 focus:bg-white/15 transition-all"
             />
           </div>
 
+          <!-- Email Input -->
           <div>
-            <label for="reg-email" class="block text-sm font-semibold text-gray-700 mb-2">Email Address</label>
             <input
               v-model="registerForm.email"
               type="email"
-              id="reg-email"
               required
-              placeholder="you@example.com"
-              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
+              placeholder="Email Address"
+              class="w-full px-4 py-3 border-2 border-white/30 rounded-lg bg-white/10 backdrop-blur text-white placeholder-white/60 focus:outline-none focus:border-white/60 focus:bg-white/15 transition-all"
             />
           </div>
 
+          <!-- Password Input -->
           <div>
-            <label for="reg-password" class="block text-sm font-semibold text-gray-700 mb-2">Password</label>
             <input
               v-model="registerForm.password"
-              type="password"
-              id="reg-password"
+              :type="showPassword ? 'text' : 'password'"
               required
-              minlength="6"
-              placeholder="Min. 6 characters"
-              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
+              placeholder="Password"
+              class="w-full px-4 py-3 border-2 border-white/30 rounded-lg bg-white/10 backdrop-blur text-white placeholder-white/60 focus:outline-none focus:border-white/60 focus:bg-white/15 transition-all"
             />
           </div>
 
-          <div>
-            <label for="reg-confirm" class="block text-sm font-semibold text-gray-700 mb-2">Confirm Password</label>
+          <!-- Confirm Password Input -->
+          <div class="relative">
             <input
               v-model="registerForm.confirmPassword"
-              type="password"
-              id="reg-confirm"
+              :type="showPassword ? 'text' : 'password'"
               required
-              minlength="6"
-              placeholder="Confirm password"
-              class="w-full px-4 py-3 border-2 border-emerald-200 rounded-xl bg-emerald-50/50 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-300 transition-all"
+              placeholder="Confirm Password"
+              class="w-full px-4 py-3 pr-12 border-2 border-white/30 rounded-lg bg-white/10 backdrop-blur text-white placeholder-white/60 focus:outline-none focus:border-white/60 focus:bg-white/15 transition-all"
             />
+            <button
+              type="button"
+              @click="showPassword = !showPassword"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-white focus:outline-none"
+            >
+              <svg v-if="!showPassword" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+              </svg>
+            </button>
           </div>
 
-          <!-- Terms checkbox -->
-          <label class="flex items-start space-x-3 cursor-pointer">
-            <input v-model="registerForm.agreedToTerms" type="checkbox" class="w-5 h-5 text-emerald-600 rounded border-emerald-300 focus:ring-emerald-500 mt-0.5">
-            <span class="text-sm text-gray-600">I agree to the <a href="#" class="text-emerald-600 hover:underline font-medium">Terms of Service</a> and <a href="#" class="text-emerald-600 hover:underline font-medium">Privacy Policy</a></span>
-          </label>
-
+          <!-- Sign Up Button -->
           <button
             type="submit"
-            :disabled="loading || !registerForm.agreedToTerms"
-            class="w-full bg-gradient-to-r from-emerald-600 via-cyan-600 to-blue-600 text-white py-3 px-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-emerald-400/50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 text-lg"
+            :disabled="loading"
+            class="w-full bg-white text-emerald-600 py-3 px-4 rounded-lg font-semibold hover:bg-white/90 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           >
             <span v-if="!loading">Create Account</span>
             <span v-else class="flex items-center justify-center">
-              <svg class="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg class="animate-spin -ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Creating account...
+              Creating...
             </span>
           </button>
         </form>
 
-        <!-- Divider -->
-        <div class="my-6 flex items-center gap-4">
-          <div class="flex-1 h-px bg-emerald-200"></div>
-          <span class="text-gray-500 text-sm">Already have account?</span>
-          <div class="flex-1 h-px bg-emerald-200"></div>
-        </div>
-
-        <!-- Back to Login -->
+        <!-- Back to Login Link -->
         <button
           @click="showRegister = false"
-          class="w-full py-3 px-4 rounded-xl font-semibold border-2 border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-all duration-200"
+          class="w-full py-3 px-4 rounded-lg font-semibold border-2 border-white/30 text-white/80 hover:bg-white/10 hover:border-white/50 transition-all duration-200 backdrop-blur"
         >
-          Back to Sign In
+          Back to Login
         </button>
       </div>
     </div>
@@ -279,6 +205,7 @@ const registerForm = ref({
 const loading = ref(false);
 const error = ref('');
 const showRegister = ref(false);
+const showPassword = ref(false);
 
 const handleLogin = async () => {
   loading.value = true;

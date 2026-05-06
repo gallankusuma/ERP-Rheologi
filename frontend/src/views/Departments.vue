@@ -4,6 +4,12 @@
     <div class="flex justify-between items-center">
       <h1 class="text-3xl font-bold text-gray-900">Departments Management</h1>
       <button
+          @click="handleExport"
+          class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+        >
+          📥 Export
+        </button>
+        <button
         @click="openCreateModal"
         class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow transition"
       >
@@ -11,21 +17,34 @@
       </button>
     </div>
 
+    <!-- Bulk Delete Bar -->
+    <div v-if="selectedIds.length > 0" class="flex items-center gap-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+      <span class="text-sm font-medium text-red-700">{{ selectedIds.length }} item(s) selected</span>
+      <button @click="bulkDelete" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm">🗑️ Delete Selected</button>
+      <button @click="selectedIds = []" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm">Cancel</button>
+    </div>
+
     <!-- Table -->
     <div class="bg-white rounded-lg shadow overflow-hidden">
       <table class="w-full">
         <thead class="bg-gray-50 border-b border-gray-200">
           <tr>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Code</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Name</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Description</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Department Head</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Status</th>
+            <th class="px-4 py-3 w-10">
+              <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="w-4 h-4 rounded border-gray-300 text-blue-600" />
+            </th>
+            <th @click="toggleSort('code')" class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">Code <span class="text-gray-400">{{ sortIcon('code') }}</span></th>
+            <th @click="toggleSort('name')" class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">Name <span class="text-gray-400">{{ sortIcon('name') }}</span></th>
+            <th @click="toggleSort('description')" class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">Description <span class="text-gray-400">{{ sortIcon('description') }}</span></th>
+            <th @click="toggleSort('head_user_name')" class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">Department Head <span class="text-gray-400">{{ sortIcon('head_user_name') }}</span></th>
+            <th @click="toggleSort('active')" class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">Status <span class="text-gray-400">{{ sortIcon('active') }}</span></th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-200">
-          <tr v-for="dept in departmentStore.departments" :key="dept.id" class="hover:bg-gray-50">
+          <tr v-for="dept in sortedData" :key="dept.id" class="hover:bg-gray-50" :class="{ 'bg-blue-50': selectedIds.includes(dept.id) }">
+            <td class="px-4 py-4">
+              <input type="checkbox" :value="dept.id" v-model="selectedIds" class="w-4 h-4 rounded border-gray-300 text-blue-600" />
+            </td>
             <td class="px-6 py-4 text-sm text-gray-900 font-medium">{{ dept.code }}</td>
             <td class="px-6 py-4 text-sm text-gray-900">{{ dept.name }}</td>
             <td class="px-6 py-4 text-sm text-gray-600">{{ dept.description || '-' }}</td>
@@ -54,7 +73,7 @@
             </td>
           </tr>
           <tr v-if="departmentStore.departments.length === 0">
-            <td colspan="6" class="px-6 py-8 text-center text-gray-500">
+            <td colspan="7" class="px-6 py-8 text-center text-gray-500">
               No departments found
             </td>
           </tr>
@@ -136,13 +155,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { exportToCSV } from '../utils/export';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useDepartmentStore } from '../stores/departments';
+import { useTableSort } from '../composables/useTableSort';
 
 const departmentStore = useDepartmentStore();
 const showModal = ref(false);
 const isEditing = ref(false);
 const editingId = ref<number | null>(null);
+const selectedIds = ref<number[]>([]);
+
+const isAllSelected = computed(() => departmentStore.departments.length > 0 && departmentStore.departments.every((d: any) => selectedIds.value.includes(d.id)));
+const toggleSelectAll = () => { if (isAllSelected.value) { selectedIds.value = []; } else { selectedIds.value = departmentStore.departments.map((d: any) => d.id); } };
+const bulkDelete = async () => {
+  if (!confirm(`Delete ${selectedIds.value.length} departments?`)) return;
+  for (const id of selectedIds.value) { await confirmDeleteDirect(id); }
+  selectedIds.value = [];
+};
+const confirmDeleteDirect = async (id: number) => {
+  try { await departmentStore.deleteDepartment(id); } catch (e) { console.error(e); }
+};
+
+const deptsRef = computed(() => departmentStore.departments as any[]);
+const { toggleSort, sortIcon, sortedData } = useTableSort(deptsRef);
 
 const form = reactive({
   code: '',
@@ -198,8 +234,10 @@ const saveDepartment = async () => {
       });
     }
     closeModal();
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error saving department:', error);
+    const errorMsg = error?.response?.data?.error || error?.message || 'Failed to save department';
+    alert(errorMsg);
   }
 };
 
@@ -212,4 +250,9 @@ const confirmDelete = async (id: number) => {
     }
   }
 };
+
+function handleExport() {
+  exportToCSV(departmentStore.departments, 'Departments_Export');
+}
+
 </script>

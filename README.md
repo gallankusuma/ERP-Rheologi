@@ -2,6 +2,23 @@
 
 Small business ERP system focused on manufacturing operations, built with **Node.js + Express + PostgreSQL + Vue 3 + TypeScript + Tailwind CSS**.
 
+## 🎯 Quick Start - View Project Overview
+
+**Once the system is running, navigate to:**
+```
+http://localhost:5173/project
+```
+
+This opens the **Project Overview Dashboard** which displays:
+- All 9 active modules with their features
+- Complete menu structure per design.pdf
+- Implementation status of each feature
+- Quick navigation to all modules and submenus
+
+📋 **See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for detailed module specifications**
+
+---
+
 ## Features
 
 - **Authentication & Authorization**: User login/registration with JWT

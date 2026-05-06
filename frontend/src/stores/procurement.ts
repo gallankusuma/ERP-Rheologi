@@ -66,8 +66,50 @@ export const useProcurementStore = defineStore('procurement', {
       return res.data;
     },
 
-    async createPurchaseRequest(payload: { pr_number?: string; requester_id?: number; status?: string; notes?: string }) {
+    async createPurchaseRequest(payload: {
+      pr_number?: string;
+      requester_id?: number;
+      project_id?: number;
+      status?: string;
+      notes?: string;
+      department?: string;
+      request_date?: string;
+      needed_by?: string;
+      reason?: string;
+    }) {
       const res = await api.post('/procurement/purchase-requests', payload);
+      await this.fetchPurchaseRequests();
+      return res.data;
+    },
+
+    async updatePurchaseRequest(id: number, payload: {
+      status?: string;
+      project_id?: number;
+      request_date?: string;
+      department?: string;
+      needed_by?: string;
+      reason?: string;
+      notes?: string;
+    }) {
+      const res = await api.put(`/procurement/purchase-requests/${id}`, payload);
+      await this.fetchPurchaseRequests();
+      return res.data;
+    },
+
+    async approvePurchaseRequest(id: number) {
+      const res = await api.post(`/procurement/purchase-requests/${id}/approve`);
+      await this.fetchPurchaseRequests();
+      return res.data;
+    },
+
+    async rejectPurchaseRequest(id: number) {
+      const res = await api.post(`/procurement/purchase-requests/${id}/reject`);
+      await this.fetchPurchaseRequests();
+      return res.data;
+    },
+
+    async deletePurchaseRequest(id: number) {
+      const res = await api.delete(`/procurement/purchase-requests/${id}`);
       await this.fetchPurchaseRequests();
       return res.data;
     },
@@ -87,12 +129,30 @@ export const useProcurementStore = defineStore('procurement', {
       return res.data;
     },
 
+    async approvePurchaseOrder(id: number) {
+      const res = await api.post(`/procurement/purchase-orders/${id}/approve`);
+      await this.fetchPurchaseOrders();
+      return res.data;
+    },
+
+    async rejectPurchaseOrder(id: number) {
+      const res = await api.post(`/procurement/purchase-orders/${id}/reject`);
+      await this.fetchPurchaseOrders();
+      return res.data;
+    },
+
+    async deletePurchaseOrder(id: number) {
+      const res = await api.delete(`/procurement/purchase-orders/${id}`);
+      await this.fetchPurchaseOrders();
+      return res.data;
+    },
+
     async createGoodsReceipt(payload: {
       gr_number?: string;
       po_id: number;
       warehouse_id?: number;
       status?: string;
-      received_at?: string;
+      received_date?: string;
       notes?: string;
       received_by?: number;
     }) {

@@ -1,0 +1,10 @@
+Setup started at 2026-04-22T22:53:51.553Z
+[2026-04-22T22:53:51.554Z] [CHECK] Checking dependencies...
+[2026-04-22T22:53:51.555Z] [CHECK] Backend dependencies installed
+[2026-04-22T22:53:51.555Z] [CHECK] .env file already exists
+[2026-04-22T22:53:51.555Z] [CHECK] Checking database...
+[2026-04-22T22:53:51.556Z] [CHECK] Database already initialized
+[2026-04-22T22:53:51.556Z] [INFO] Setting up hot reload capabilities...
+[2026-04-22T22:53:51.556Z] [CHECK] Backend hot reload: tsx watch enabled
+[2026-04-22T22:53:51.557Z] [CHECK] Frontend hot reload: Vite HMR enabled
+[2026-04-22T22:53:51.557Z] [SUCCESS] Setup completed successfully

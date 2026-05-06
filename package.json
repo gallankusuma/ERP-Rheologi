@@ -8,16 +8,25 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "setup": "node scripts/setup.js",
+    "dev": "npm run setup && concurrently \"npm run dev:backend\" \"npm run dev:frontend\" --kill-others-on-exit",
+    "dev:auto": "npm run dev",
+    "start": "node scripts/start.js",
+    "start:auto": "node scripts/start.js",
     "dev:backend": "npm run dev --workspace=backend",
     "dev:frontend": "npm run dev --workspace=frontend",
+    "init": "cd backend && node init-database.js",
+    "seed": "cd backend && npm run seed",
     "build": "npm run build --workspace=frontend",
     "lint": "npm run lint --workspaces",
-    "format": "prettier --write \"**/*.{js,ts,vue,json,md}\""
+    "format": "prettier --write \"**/*.{js,ts,vue,json,md}\"",
+    "clean": "rm -rf node_modules backend/node_modules frontend/node_modules backend/dist frontend/dist",
+    "reinstall": "npm run clean && npm install"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "prettier": "^3.4.2"
+    "prettier": "^3.4.2",
+    "terser": "^5.44.1"
   },
   "engines": {
     "node": ">=18.0.0",

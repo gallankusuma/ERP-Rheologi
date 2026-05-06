@@ -1,0 +1,5 @@
+src/components/projects/ProjectFiles.vue(87,7): error TS6133: 'props' is declared but its value is never read.
+src/components/projects/ProjectMilestones.vue(74,7): error TS6133: 'props' is declared but its value is never read.
+src/components/projects/ProjectTasksList.vue(61,7): error TS6133: 'props' is declared but its value is never read.
+src/views/ClientDetail.vue(1349,20): error TS6133: 'useRouter' is declared but its value is never read.
+src/views/ClientDetail.vue(1762,15): error TS6133: 'token' is declared but its value is never read.

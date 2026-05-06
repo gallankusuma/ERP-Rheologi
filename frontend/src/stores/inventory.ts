@@ -16,6 +16,7 @@ interface Inventory {
 interface InventoryState {
   inventory: Inventory[];
   transactions: any[];
+  batches: any[];
   loading: boolean;
   error: string | null;
 }
@@ -24,11 +25,26 @@ export const useInventoryStore = defineStore('inventory', {
   state: (): InventoryState => ({
     inventory: [],
     transactions: [],
+    batches: [],
     loading: false,
     error: null,
   }),
 
   actions: {
+    async fetchBatches() {
+      this.loading = true;
+      this.error = null;
+      try {
+        const response = await api.get(`/batches`);
+        this.batches = response.data.data;
+      } catch (error: any) {
+        this.error = error.response?.data?.error || 'Failed to fetch batches';
+        throw error;
+      } finally {
+        this.loading = false;
+      }
+    },
+
     async fetchInventory() {
       this.loading = true;
       this.error = null;
@@ -81,6 +97,21 @@ export const useInventoryStore = defineStore('inventory', {
       } catch (error: any) {
         this.error = error.response?.data?.error || 'Failed to record transaction';
         throw error;
+      }
+    },
+
+    async fetchExpiringBatches(days = 30) {
+      this.loading = true;
+      this.error = null;
+      try {
+        const response = await api.get(`/batches/expiring/soon`, { params: { days } });
+        this.batches = response.data.data;
+        return response.data.data;
+      } catch (error: any) {
+        this.error = error.response?.data?.error || 'Failed to fetch expiring batches';
+        throw error;
+      } finally {
+        this.loading = false;
       }
     },
   },

@@ -1,3 +1,15 @@
+Quick Chat Summary (paste to new chat)
+- Goal: Build Manufacturing ERP for small biochemical company; complete modules and fix issues fast.
+- Current focus: Procurement module SQLite -> MySQL conversion and endpoint stabilization.
+- Stack: Node.js/Express/TypeScript + MySQL; Vue 3 + Vite + Tailwind.
+- Key modules: Products, BOM, Procurement, Inventory, Work Orders, Auth.
+- Recent changes: Converted procurement routes to dbGet/dbAll/dbRun; fixed FK nullable issues.
+- Current issue: Some procurement endpoints return 500; need log-driven SQL fixes.
+- Files of interest: backend/src/routes/procurement.routes.ts; backend/database/schema_mysql.sql.
+- Next action: Check backend logs for failing queries; validate PO list/vendor prices/history queries.
+
+---
+
 📄 ERP Manufacturing & Distribution Specification
 Version 1.0 — Biochemical Small Enterprise ERP
 Author: Mismerak (Gallan)
@@ -1136,6 +1148,34 @@ We already have:
 
 Start by summarizing your understanding of the ERP domain and proposing the final folder structure and domain bounda
 WIRE FRAME
+
+1️⃣ DASHBOARD – OVERVIEW
++-------------------------------------------------------------+
+| DASHBOARD OVERVIEW                                          |
++-------------------------------------------------------------+
+| [ Production KPI ] [ Inventory KPI ] [ Sales KPI ] [ Approval ] |
++-------------------------------------------------------------+
+| Pending Approvals                                          |
++-------------------------------------------------------------+
+| Doc No | Module | Amount | Step | Action                   |
+|-------------------------------------------------------------|
+| PR-13  | PR     | 22 jt  | 1/2  | [Review]                |
+| PO-08  | PO     | 65 jt  | 2/2  | [Review]                |
++-------------------------------------------------------------+
+
+2️⃣ MASTER DATA – PRODUCTS
+📄 Product List
++-------------------------------------------------------------+
+| PRODUCTS                                                    |
++-------------------------------------------------------------+
+| [ + Add Product ]                                          |
++-------------------------------------------------------------+
+| Code | Name        | Type | UoM | Status | Action           |
+|-------------------------------------------------------------|
+| RM01 | Caustic     | RM   | KG  | Active | [Edit]          |
+| FG01 | BioChem A   | FG   | KG  | Active | [Edit]          |
++-------------------------------------------------------------+
+📄 Product Form
 +------------------------------------------------------+
 |               PRODUCT MASTER FORM                    |
 +------------------------------------------------------+
@@ -1235,26 +1275,44 @@ Stock Transfer
 | [ Cancel ]                           [ Transfer Stock ]       |
 +--------------------------------------------------------------+
 
++-------------------------------------------------------------+
+| STOCK OVERVIEW                                             |
++-------------------------------------------------------------+
+| Product | Warehouse | Qty | UoM | Expiry | Status          |
+|-------------------------------------------------------------|
+| Caustic | WH-A      | 500 | KG  | -      | OK              |
+| Solvent | WH-B      | 200 | L   | 10/26  | Near Expiry     |
++-------------------------------------------------------------+
+
 Purchase Request (PR)
-+--------------------------------------------------------------+
-|                    PURCHASE REQUEST (PR)                     |
-+--------------------------------------------------------------+
-| Requester:    [ auto user ]                                 |
-| Department:   [ auto dept ]                                 |
-| Request Date: [ YYYY-MM-DD ]                                |
-| Needed By:    [ YYYY-MM-DD ]                                |
-| Reason:       [__________________________________________]  |
-+--------------------------------------------------------------+
-| Items:                                               +       |
-+--------------------------------------------------------------+
-| Product         | Qty Req | UoM | Notes                       |
-|--------------------------------------------------------------|
-| [Select ▼]      | [___]   |KG   | [_________ ]               |
-+--------------------------------------------------------------+
-| [ Add Row ]                                             |
-+--------------------------------------------------------------+
-| [ Submit PR ]                                          |
-+--------------------------------------------------------------+
+
+📄 PR List + Approval Button
++-------------------------------------------------------------+
+| PURCHASE REQUEST                                           |
++-------------------------------------------------------------+
+| [ + Create PR ]                                           |
++-------------------------------------------------------------+
+| PR No | Date | Dept | Amount | Approval | Action           |
+|-------------------------------------------------------------|
+| PR-01 | 01/8 | Prod | 15 jt  | Draft    | [Edit]          |
+| PR-02 | 02/8 | Prod | 22 jt  | 1/2      | [Approve][Reject] |
+| PR-03 | 03/8 | QC   | 40 jt  | 2/2      | [Approve][Reject] |
+| PR-04 | 04/8 | Prod | 10 jt  | Approved | [View]          |
++-------------------------------------------------------------+
+
+📄 PR Form
++-------------------------------------------------------------+
+| PURCHASE REQUEST FORM                                      |
++-------------------------------------------------------------+
+| Requester : Andi (Production)                              |
+| Date      : [ YYYY-MM-DD ]                                 |
++-------------------------------------------------------------+
+| Item      | Qty | UoM | Est Price                           |
+|-------------------------------------------------------------|
+| Caustic   | 100 | KG  | 10,000                              |
++-------------------------------------------------------------+
+| [ Save Draft ]   [ Submit for Approval ]                   |
++-------------------------------------------------------------+
 
 Purchase Order (PO)
 +--------------------------------------------------------------+
@@ -1276,3 +1334,782 @@ Purchase Order (PO)
 | [ Cancel ]                    [ Submit for Approval ]         |
 +--------------------------------------------------------------+
 
+5️⃣ PRODUCTION – WORK ORDER (WO)
+📄 WO List + Approval
++-------------------------------------------------------------+
+| WORK ORDER                                                 |
++-------------------------------------------------------------+
+| [ + Create WO ]                                           |
++-------------------------------------------------------------+
+| WO No | Product | Qty | Status | Approval | Action         |
+|-------------------------------------------------------------|
+| WO-01 | Bio A   | 500 | Draft  | -        | [Edit]         |
+| WO-02 | Bio B   | 800 | Ready  | 1/2      | [Approve][Reject] |
+| WO-03 | Bio C   | 600 | Ready  | 2/2      | [Approve][Reject] |
+| WO-04 | Bio D   | 700 | Closed | Approved | [View]         |
++-------------------------------------------------------------+
+
+6️⃣ QUALITY – BATCH RELEASE
++-------------------------------------------------------------+
+| BATCH RELEASE                                              |
++-------------------------------------------------------------+
+| Batch | Product | QC Result | Approval | Action            |
+|-------------------------------------------------------------|
+| B001  | Bio A   | PASS      | 1/2      | [Approve][Reject] |
+| B002  | Bio B   | PASS      | 2/2      | [Approve][Reject] |
+| B003  | Bio C   | FAIL      | -        | [View]            |
++-------------------------------------------------------------+
+
+7️⃣ SALES – SALES ORDER (SO)
++-------------------------------------------------------------+
+| SALES ORDER                                                |
++-------------------------------------------------------------+
+| [ + Create SO ]                                           |
++-------------------------------------------------------------+
+| SO No | Customer | Amount | Approval | Action             |
+|-------------------------------------------------------------|
+| SO-01 | PT ABC   | 50 jt  | Draft    | [Edit]             |
+| SO-02 | PT XYZ   | 80 jt  | 1/2      | [Approve][Reject] |
+| SO-03 | PT MNO   |120 jt  | 2/2      | [Approve][Reject] |
+| SO-04 | PT QRS   | 30 jt  | Approved | [View]             |
++-------------------------------------------------------------+
+
+8️⃣ APPROVAL – MY APPROVAL INBOX
++-------------------------------------------------------------+
+| MY APPROVAL INBOX                                          |
++-------------------------------------------------------------+
+| Doc No | Module | Amount | Step | Action                  |
+|-------------------------------------------------------------|
+| PR-02  | PR     | 22 jt  | 1/2  | [Review]               |
+| PO-08  | PO     | 65 jt  | 2/2  | [Review]               |
++-------------------------------------------------------------+
+
+9️⃣ APPROVAL – REVIEW DETAIL
++-------------------------------------------------------------+
+| APPROVAL DETAIL                                            |
++-------------------------------------------------------------+
+| Document : PO-08                                           |
+| Amount   : 65 jt                                           |
+| Status   : Waiting Approval 2/2                            |
++-------------------------------------------------------------+
+| Approval Flow                                              |
+| Supervisor  ✔                                             |
+| Manager     ⏳                                             |
++-------------------------------------------------------------+
+| [ Approve ]     [ Reject ]     [ Back ]                    |
++-------------------------------------------------------------+
+
+🔟 REPORTS – GENERIC REPORT PAGE
++-------------------------------------------------------------+
+| REPORTS                                                    |
++-------------------------------------------------------------+
+| Filter: Date | Module | Export                            |
++-------------------------------------------------------------+
+| Data Table (dynamic)                                      |
++-------------------------------------------------------------+
+| [ Export Excel ]   [ Export PDF ]                          |
++-------------------------------------------------------------+
+
+1️⃣1️⃣ ADMINISTRATION – USERS
++-------------------------------------------------------------+
+| USER MANAGEMENT                                            |
++-------------------------------------------------------------+
+| [ + Add User ]                                            |
++-------------------------------------------------------------+
+| Name | Role | Dept | Status | Action                      |
+|-------------------------------------------------------------|
+| Budi | MGR  | Prod | Active | [Edit]                     |
++-------------------------------------------------------------+
+
+🟩 DETAIL MENU + SUB MENU (VERTICAL)
+
+## 🔵 Horizontal Menu (Main Menu)
+
+| No | Main Menu | Description |
+|----|-----------|-------------|
+| 1 | Dashboard | KPI & summary seluruh sistem |
+| 2 | Master Data | Data dasar sistem |
+| 3 | Procurement | Pengadaan barang |
+| 4 | Inventory | Stok & gudang |
+| 5 | Production | Proses produksi |
+| 6 | Quality | QC & QA |
+| 7 | Sales | Penjualan & distribusi |
+| 8 | Finance | Keuangan operasional |
+| 9 | Approval | Persetujuan dokumen |
+|10 | Reports | Laporan & analitik |
+|11 | Administration | Pengaturan sistem |
+
+---
+
+## 🟢 Vertical Menu (Sub Menu Detail)
+
+---
+
+### 1️⃣ Dashboard
+
+| Sub Menu | Function |
+|---------|----------|
+| Overview | Ringkasan KPI |
+| Production KPI | Plan vs Actual |
+| Inventory KPI | Stock & aging |
+| Sales KPI | Performance penjualan |
+| Approval Summary | Approval pending |
+| Alerts | Notifikasi kritikal |
+
+---
+
+### 2️⃣ Master Data
+
+| Sub Menu | Function |
+|---------|----------|
+| Products | Master produk (RM / FG / PKG) |
+| Product Categories | Kategori produk |
+| Bill of Materials | Struktur material |
+| Units of Measure | KG, L, PCS |
+| Warehouses | Gudang |
+| Warehouse Locations | Rak / Bin |
+| Vendors | Supplier |
+| Customers | Pelanggan |
+| Employees | Karyawan |
+| Departments | Struktur organisasi |
+
+---
+
+### 3️⃣ Procurement
+
+| Sub Menu | Function |
+|---------|----------|
+| Purchase Request (PR) | Permintaan pembelian |
+| PR Approval | Persetujuan PR |
+| Purchase Order (PO) | Order ke vendor |
+| PO Approval | Persetujuan PO |
+| Goods Receipt (GRN) | Penerimaan barang |
+| Vendor Price List | Harga supplier |
+| Procurement History | Riwayat pengadaan |
+
+---
+
+### 4️⃣ Inventory
+
+| Sub Menu | Function |
+|---------|----------|
+| Stock Overview | Stok real-time |
+| Stock Card | Mutasi stok |
+| Stock Transfer | Transfer gudang |
+| Stock Adjustment | Koreksi stok |
+| Stock Opname | Stok fisik |
+| Batch / Lot Tracking | Traceability |
+| Expiry Monitoring | FEFO / expired |
+
+---
+
+### 5️⃣ Production
+
+| Sub Menu | Function |
+|---------|----------|
+| Production Planning | Rencana produksi |
+| Material Requirement | MRP Lite |
+| Work Orders (WO) | Perintah kerja |
+| Issue Material | RM ke produksi |
+| Production Execution | Proses produksi |
+| Yield & Scrap | Output & loss |
+| FG Receipt | Hasil produksi |
+| Production History | Riwayat |
+
+---
+
+### 6️⃣ Quality (QC / QA)
+
+| Sub Menu | Function |
+|---------|----------|
+| QC Test Methods | Parameter uji |
+| QC Sampling | Pengambilan sampel |
+| QC Results | Hasil uji |
+| Batch Release | Release / block batch |
+| Non-Conformance | Produk gagal |
+| Rework | Rework produk |
+| QC Reports | Laporan mutu |
+
+---
+
+### 7️⃣ Sales
+
+| Sub Menu | Function |
+|---------|----------|
+| Sales Orders (SO) | Order penjualan |
+| SO Approval | Persetujuan SO |
+| Price List | Harga jual |
+| Delivery Orders (DO) | Pengiriman |
+| Shipment Tracking | Tracking |
+| Invoices | Faktur |
+| Customer Payments | Pembayaran |
+| Sales History | Riwayat penjualan |
+
+---
+
+### 8️⃣ Finance (Operational)
+
+| Sub Menu | Function |
+|---------|----------|
+| COGS Calculation | Biaya produksi |
+| Accounts Payable | Hutang |
+| Accounts Receivable | Piutang |
+| Cost Analysis | Analisa biaya |
+| Margin Analysis | Margin produk |
+| Financial Summary | Ringkasan |
+
+---
+
+### 9️⃣ Approval
+
+| Sub Menu | Function |
+|---------|----------|
+| My Approval Inbox | Approval pending |
+| Approval History | Riwayat approval |
+| Approval Rules | Aturan approval |
+| Delegation | Delegasi approval |
+| Escalation Rules | Eskalasi |
+
+---
+
+### 🔟 Reports
+
+| Sub Menu | Function |
+|---------|----------|
+| Production Reports | Produksi |
+| Inventory Reports | Stok |
+| Procurement Reports | Pembelian |
+| QC Reports | Mutu |
+| Sales Reports | Penjualan |
+| Finance Reports | Keuangan |
+| Custom Reports | Laporan dinamis |
+| Export Data | Excel / PDF |
+
+---
+
+### 1️⃣1️⃣ Administration
+
+| Sub Menu | Function |
+|---------|----------|
+| Users | Manajemen user |
+| Roles & Permissions | Hak akses |
+| System Settings | Konfigurasi sistem |
+| Approval Configuration | Setup approval |
+| Audit Log | Jejak aktivitas |
+| Notification Settings | Email / in-app |
+| Integration Settings | API / device |
+| Backup & Restore | Backup data |
+
+---
+
+# 🚀 IMPLEMENTATION STATUS (December 12, 2025)
+
+## ✅ **COMPLETED & ACTIVE**
+
+### Phase 1: Foundation & Core Infrastructure ✅
+- [x] Vue 3 + TypeScript + Vite + Tailwind CSS (Frontend)
+- [x] Node.js + Express + TypeScript + SQLite (Backend)
+- [x] JWT Authentication + bcrypt password hashing
+- [x] User Level Hierarchy (1-5 + Level 10 Master)
+- [x] Database schema with all master tables
+
+### Phase 2: Master Data Management ✅
+- [x] Product Master (Finished Good, Raw Material, Packaging)
+- [x] Product Categories, Units of Measure, Warehouses
+- [x] Departments, Roles, Permissions (44+ permissions)
+- [x] Vendors, Customers (Basic)
+- [x] Users with department assignment
+
+### Phase 3: Bill of Materials (BOM) ✅
+- [x] Full CRUD functionality
+- [x] Component filtering (exclude Finished Goods)
+- [x] **2-LEVEL APPROVAL SYSTEM IMPLEMENTED:**
+  - [x] Supervisor (Level 2): Approve 0/2 → 1/2
+  - [x] Manager (Level 3+): Approve 1/2 → 2/2
+  - [x] Blocking: Manager cannot approve before Supervisor
+  - [x] Reject/Reset functionality
+  - [x] Read-only view when fully approved (2/2)
+  - [x] Color-coded status badges
+
+### Phase 4: Authentication & Security ✅
+- [x] JWT token with user_level
+- [x] Password visibility toggle on login
+- [x] Hardcoded Master account (master@admin.com / master)
+- [x] Sample users for testing all approval levels
+
+### Phase 5: Approval Workflow Framework ✅
+- [x] `useApprovalWorkflow()` composable (reusable)
+- [x] Backend /approve & /reject endpoints
+- [x] Database approval_status tracking (0/1/2)
+- [x] Frontend conditional buttons based on user level
+- [x] CREDENTIALS.txt documentation
+
+---
+
+## ⏳ **IN DEVELOPMENT (Next Phases)**
+
+### Phase 6: Inventory Management
+- [ ] Goods Receipt (GRN) with approval
+- [ ] Stock Outbound (Pengeluaran barang)
+- [ ] Internal Transfer (Perpindahan barang)
+- [ ] Stock Adjustment & Opname
+- [ ] Batch/Lot traceability
+- **→ Will use same 2-level approval system as BOM**
+
+### Phase 7: Procurement 
+- [ ] Purchase Request (PR) with approval
+- [ ] Purchase Order (PO) with approval
+- [ ] Return Slip (RS)
+- [ ] Goods Receipt linking
+- **→ Will use same 2-level approval system**
+
+### Phase 8: Production (Advanced)
+- [ ] Work Orders with approval
+- [ ] Material Issue tracking
+- [ ] Process logs (Mixing, Reaction, QC, Packaging)
+- [ ] Yield & scrap monitoring
+- [ ] Batch release
+
+### Phase 9: QC/Quality Control
+- [ ] QC test methods & sampling
+- [ ] Batch QC results entry
+- [ ] Batch release/block decision
+- [ ] Non-Conformance tracking
+
+### Phase 10: Sales & Distribution
+- [ ] Sales Orders
+- [ ] Delivery Orders  
+- [ ] Shipment tracking
+- [ ] Invoicing
+
+### Phase 11: Finance & Reports
+- [ ] COGS calculation
+- [ ] Dashboard KPIs
+- [ ] Production, Inventory, Sales reports
+- [ ] Export to Excel/PDF
+
+---
+
+## 📊 **MENU PROGRESS MAP (Detailed by Submenu)**
+
+### 1️⃣ Dashboard (10% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Overview | ⏳ | Basic page exists, no KPI |
+| Production KPI | ⏳ | Not implemented |
+| Inventory KPI | ⏳ | Not implemented |
+| Sales KPI | ⏳ | Not implemented |
+| Approval Summary | ⏳ | Not implemented |
+| Alerts | ⏳ | Not implemented |
+
+### 2️⃣ Master Data (85% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Products | ✅ | Full CRUD with type filter |
+| Product Categories | ✅ | Full CRUD |
+| Bill of Materials | ✅ | **Full CRUD + 2-level approval system** |
+| Units of Measure | ✅ | Full CRUD |
+| Warehouses | ✅ | Full CRUD |
+| Warehouse Locations | ⏳ | Not implemented (Rack/Bin) |
+| Vendors | ✅ | Full CRUD (Suppliers) |
+| Customers | ✅ | Full CRUD |
+| Employees | ⚠️ | Using Users module (partial) |
+| Departments | ✅ | Full CRUD |
+
+### 3️⃣ Procurement (30% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Purchase Request (PR) | ⏳ | Not implemented |
+| PR Approval | ⏳ | Framework ready (useApprovalWorkflow) |
+| Purchase Order (PO) | ⏳ | Not implemented |
+| PO Approval | ⏳ | Framework ready |
+| Goods Receipt (GRN) | ⏳ | Not implemented |
+| Vendor Price List | ✅ | Full CRUD with vendor-product pricing |
+| Procurement History | ✅ | Timeline view with doc type badges |
+
+### 4️⃣ Inventory (0% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Stock Overview | ⏳ | Not implemented |
+| Stock Card | ⏳ | Not implemented |
+| Stock Transfer | ⏳ | Framework ready (approval config exists) |
+| Stock Adjustment | ⏳ | Not implemented |
+| Stock Opname | ⏳ | Not implemented |
+| Batch / Lot Tracking | ⏳ | Not implemented |
+| Expiry Monitoring | ⏳ | Not implemented |
+
+### 5️⃣ Production (0% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Production Planning | ⏳ | Not implemented |
+| Material Requirement | ⏳ | Not implemented (MRP Lite) |
+| Work Orders (WO) | ⏳ | Not implemented |
+| Issue Material | ⏳ | Not implemented |
+| Production Execution | ⏳ | Not implemented |
+| Yield & Scrap | ⏳ | Not implemented |
+| FG Receipt | ⏳ | Not implemented |
+| Production History | ⏳ | Not implemented |
+
+### 6️⃣ Quality (QC/QA) (0% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| QC Test Methods | ⏳ | Not implemented |
+| QC Sampling | ⏳ | Not implemented |
+| QC Results | ⏳ | Not implemented |
+| Batch Release | ⏳ | Not implemented |
+| Non-Conformance | ⏳ | Not implemented |
+| Rework | ⏳ | Not implemented |
+| QC Reports | ⏳ | Not implemented |
+
+### 7️⃣ Sales (0% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Sales Orders (SO) | ⏳ | Not implemented |
+| SO Approval | ⏳ | Not implemented |
+| Price List | ⏳ | Not implemented |
+| Delivery Orders (DO) | ⏳ | Not implemented |
+| Shipment Tracking | ⏳ | Not implemented |
+| Invoices | ⏳ | Not implemented |
+| Customer Payments | ⏳ | Not implemented |
+| Sales History | ⏳ | Not implemented |
+
+### 8️⃣ Finance (0% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| COGS Calculation | ⏳ | Not implemented |
+| Accounts Payable | ⏳ | Not implemented |
+| Accounts Receivable | ⏳ | Not implemented |
+| Cost Analysis | ⏳ | Not implemented |
+| Margin Analysis | ⏳ | Not implemented |
+| Financial Summary | ⏳ | Not implemented |
+
+### 9️⃣ Approval (40% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| My Approval Inbox | ⏳ | UI not implemented |
+| Approval History | ⏳ | UI not implemented |
+| Approval Rules | ⚠️ | Framework exists (useApprovalWorkflow) |
+| Delegation | ⏳ | Not implemented |
+| Escalation Rules | ⏳ | Not implemented |
+
+### 🔟 Reports (0% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Production Reports | ⏳ | Not implemented |
+| Inventory Reports | ⏳ | Not implemented |
+| Procurement Reports | ⏳ | Not implemented |
+| QC Reports | ⏳ | Not implemented |
+| Sales Reports | ⏳ | Not implemented |
+| Finance Reports | ⏳ | Not implemented |
+| Custom Reports | ⏳ | Not implemented |
+| Export Data | ⏳ | Not implemented (Excel/PDF) |
+
+### 1️⃣1️⃣ Administration (60% Complete)
+| Sub Menu | Status | Notes |
+|----------|--------|-------|
+| Users | ✅ | Full CRUD with levels |
+| Roles & Permissions | ✅ | Full CRUD (44+ permissions) |
+| System Settings | ⏳ | Not implemented |
+| Approval Configuration | ⚠️ | Framework exists, UI pending |
+| Audit Log | ⏳ | Not implemented |
+| Notification Settings | ⏳ | Not implemented |
+| Integration Settings | ⏳ | Not implemented |
+| Backup & Restore | ⏳ | Not implemented |
+
+---
+
+## 📈 **OVERALL PROGRESS SUMMARY**
+
+| Category | Total Submenus | Completed | Partial | Pending | Progress % |
+|----------|----------------|-----------|---------|---------|------------|
+| Dashboard | 6 | 0 | 1 | 5 | 10% |
+| Master Data | 10 | 8 | 1 | 1 | 85% |
+| Procurement | 7 | 2 | 0 | 5 | 30% |
+| Inventory | 7 | 0 | 0 | 7 | 0% |
+| Production | 8 | 0 | 0 | 8 | 0% |
+| Quality | 7 | 0 | 0 | 7 | 0% |
+| Sales | 8 | 0 | 0 | 8 | 0% |
+| Finance | 6 | 0 | 0 | 6 | 0% |
+| Approval | 5 | 0 | 1 | 4 | 40% |
+| Reports | 8 | 0 | 0 | 8 | 0% |
+| Administration | 8 | 2 | 1 | 5 | 60% |
+| **TOTAL** | **80** | **12** | **4** | **64** | **≈20%** |
+
+**Legend:**
+- ✅ = Fully implemented & tested
+- ⚠️ = Partially implemented (framework/backend ready)
+- ⏳ = Not yet started
+
+---
+
+## 🎯 **KEY ACHIEVEMENT: 2-Level Approval System**
+
+This hierarchical approval framework is now **reusable across ALL modules:**
+
+**How It Works:**
+```
+Document Status 0/2 (Pending)
+    ↓ [Supervisor Level 2 Approves]
+Document Status 1/2 (Supervisor Approved)
+    ↓ [Manager Level 3+ Approves]
+Document Status 2/2 (Final - LOCKED, Read-Only)
+    ↓ [Manager can REJECT to reset to 0/2 for fixes]
+```
+
+**Applied To:**
+- ✅ BOM (ACTIVE NOW)
+- ⏳ Inventory transactions (GRN, Transfer, Adjustment)
+- ⏳ Procurement (PR, PO, RS)
+- ⏳ Production (Work Orders)
+- ⏳ QC (Batch Release)
+
+---
+
+## 📁 **FILE STRUCTURE IMPLEMENTED**
+
+```
+frontend/src/
+├─ views/           # All module pages (BOM ✅, others 🔜)
+├─ components/      # Layout, Navigation ✅
+├─ composables/     
+│  └─ useApprovalWorkflow.ts  ✅ (Reusable for all modules)
+├─ stores/          # Pinia stores per module
+├─ config/          
+│  ├─ inventoryApprovalConfig.ts
+│  └─ procurementApprovalConfig.ts
+└─ lib/api.ts       # API calls
+
+backend/src/
+├─ routes/          # API endpoints per module
+├─ config/database.ts  # Schema with approval columns ✅
+├─ middleware/auth.ts  # JWT + user_level ✅
+└─ utils/auth.utils.ts
+
+database/
+└─ erp.db          # SQLite with 15+ tables
+```
+
+---
+
+## 🚀 **NEXT IMMEDIATE TASKS**
+
+1. ✅ Fix supervisor approval buttons (testing)
+2. ⏳ Implement Inventory GRN with approval
+3. ⏳ Implement Procurement PR/PO with approval
+4. ⏳ Basic Production Work Orders
+5. ⏳ QC Results entry
+
+---
+
+## 💡 **DESIGN PHILOSOPHY**
+
+✅ **Hierarchical Approval**: Mandatory levels, no bypass  
+✅ **Traceability**: Every change logged (audit framework ready)  
+✅ **Manufacturing-Focused**: Batch/Lot tracking from start  
+✅ **Modular**: Same approval pattern across all modules  
+✅ **User-Friendly**: Color badges, clear status, conditional buttons
+
+---
+
+**Last Updated**: December 12, 2025  
+**Version**: 1.0 (Core Foundation + BOM + Approval System)  
+**Next Review**: After Inventory & Procurement modules complete
+1️⃣ STOCK CARD (🔥 PALING PENTING DI ERP INVENTORY)
+🎯 Tujuan
+
+Menampilkan mutasi stok per item (IN / OUT / ADJ / PROD / SALES)
+
+📄 Wireframe – Stock Card List
++------------------------------------------------------------------+
+| STOCK CARD                                                       |
++------------------------------------------------------------------+
+| Product    : [ Caustic Soda ▼ ]                                  |
+| Warehouse  : [ WH-A ▼ ]   Date : [ 01-08-2025 ] to [ 31-08-2025 ] |
+|------------------------------------------------------------------|
+| [ Search ]                                   [ Export Excel ]     |
++------------------------------------------------------------------+
+| Date       | Ref No | Type | IN   | OUT  | Balance | Notes       |
+|------------------------------------------------------------------|
+| 01-08-25   | GRN-01| IN   | 500  | 0    | 500     | Purchase    |
+| 02-08-25   | WO-02 | OUT  | 0    | 120  | 380     | Production  |
+| 05-08-25   | ADJ-01| ADJ  | 0    | 5    | 375     | Adjustment  |
++------------------------------------------------------------------+
+
+
+✔ Read-only
+✔ Full audit
+✔ Tidak ada edit manual (anti fraud)
+
+2️⃣ STOCK TRANSFER
+🎯 Tujuan
+
+Memindahkan stok antar gudang / lokasi / rack
+
+📄 Wireframe – Stock Transfer List
++------------------------------------------------------------------+
+| STOCK TRANSFER                                                   |
++------------------------------------------------------------------+
+| [ + Create Transfer ]                                           |
++------------------------------------------------------------------+
+| Transfer No | Date | From | To | Status | Approval | Action     |
+|------------------------------------------------------------------|
+| ST-001      | 01/8 | WH-A | WH-B | Draft | -        | [Edit]     |
+| ST-002      | 02/8 | WH-A | WH-C | Submit| 1/2      | [Approve][Reject] |
+| ST-003      | 03/8 | WH-B | WH-A | Submit| 2/2      | [Approve][Reject] |
+| ST-004      | 04/8 | WH-A | WH-B | Done  | Approved | [View]     |
++------------------------------------------------------------------+
+
+📄 Stock Transfer Form
++------------------------------------------------------------------+
+| CREATE STOCK TRANSFER                                           |
++------------------------------------------------------------------+
+| From Warehouse : [ WH-A ▼ ]                                     |
+| To Warehouse   : [ WH-B ▼ ]                                     |
+| Date           : [ YYYY-MM-DD ]                                 |
++------------------------------------------------------------------+
+| Product | Batch | Qty | UoM                                     |
+|------------------------------------------------------------------|
+| Caustic | B001  | 100 | KG                                      |
++------------------------------------------------------------------+
+| [ Save Draft ]        [ Submit for Approval ]                   |
++------------------------------------------------------------------+
+
+3️⃣ STOCK ADJUSTMENT (⚠️ SENSITIF – HARUS APPROVAL)
+🎯 Tujuan
+
+Koreksi stok karena:
+
+rusak
+
+selisih
+
+tumpah
+
+expired
+
+📄 Adjustment List
++------------------------------------------------------------------+
+| STOCK ADJUSTMENT                                                |
++------------------------------------------------------------------+
+| [ + Create Adjustment ]                                        |
++------------------------------------------------------------------+
+| Adj No | Date | Product | Qty | Reason | Approval | Action     |
+|------------------------------------------------------------------|
+| ADJ-01 | 01/8 | Caustic | -5  | Damaged| 1/2      | [Approve][Reject] |
+| ADJ-02 | 02/8 | Solvent | +10 | Count  | 2/2      | [Approve][Reject] |
+| ADJ-03 | 03/8 | Acid X  | -20 | Expired| Approved | [View]     |
++------------------------------------------------------------------+
+
+📄 Adjustment Form
++------------------------------------------------------------------+
+| STOCK ADJUSTMENT FORM                                           |
++------------------------------------------------------------------+
+| Product     : [ Caustic ▼ ]                                     |
+| Batch       : [ B001 ▼ ]                                        |
+| Adjustment  : [ -5 ]                                            |
+| Reason      : [ Damaged ▼ ]                                     |
+| Notes       : [________________________]                        |
++------------------------------------------------------------------+
+| [ Save Draft ]        [ Submit for Approval ]                   |
++------------------------------------------------------------------+
+
+4️⃣ STOCK OPNAME (PHYSICAL COUNT)
+🎯 Tujuan
+
+Cocokkan stok sistem vs fisik
+
+📄 Stock Opname List
++------------------------------------------------------------------+
+| STOCK OPNAME                                                    |
++------------------------------------------------------------------+
+| [ + New Opname ]                                               |
++------------------------------------------------------------------+
+| Opname No | Warehouse | Date | Status | Approval | Action      |
+|------------------------------------------------------------------|
+| OP-01     | WH-A      | 01/8 | Counting| -        | [Input]     |
+| OP-02     | WH-B      | 02/8 | Submit  | 1/2      | [Approve][Reject] |
+| OP-03     | WH-C      | 03/8 | Submit  | 2/2      | [Approve][Reject] |
+| OP-04     | WH-A      | 04/8 | Closed  | Approved | [View]     |
++------------------------------------------------------------------+
+
+📄 Opname Input Page
++------------------------------------------------------------------+
+| STOCK OPNAME INPUT                                              |
++------------------------------------------------------------------+
+| Product | System Qty | Physical Qty | Difference | Notes        |
+|------------------------------------------------------------------|
+| Caustic | 500        | 495          | -5         | Spill        |
++------------------------------------------------------------------+
+| [ Save ]       [ Submit for Approval ]                          |
++------------------------------------------------------------------+
+
+5️⃣ BATCH / LOT TRACKING (🔥 WAJIB DI BIOTECH & CHEMICAL)
+🎯 Tujuan
+
+Traceability 1 batch dari masuk → produksi → jual
+
+📄 Batch Tracking List
++------------------------------------------------------------------+
+| BATCH / LOT TRACKING                                            |
++------------------------------------------------------------------+
+| Batch | Product | Qty | UoM | Status | Location | Action       |
+|------------------------------------------------------------------|
+| B001  | Caustic | 300 | KG  | OK     | WH-A     | [Trace]      |
+| B002  | Solvent | 120 | L   | Used   | Prod     | [Trace]      |
+| B003  | Bio A   | 500 | KG  | Sold   | Customer | [Trace]      |
++------------------------------------------------------------------+
+
+📄 Batch Trace View
++------------------------------------------------------------------+
+| BATCH TRACE – B001                                              |
++------------------------------------------------------------------+
+| GRN-01  → WH-A                                                  |
+| WO-02   → Production                                           |
+| FG-01   → Finished Goods                                       |
+| DO-01   → Customer                                             |
++------------------------------------------------------------------+
+
+6️⃣ EXPIRY MONITORING (FEFO)
+🎯 Tujuan
+
+Mencegah expired loss
+
+📄 Expiry Monitoring List
++------------------------------------------------------------------+
+| EXPIRY MONITORING                                               |
++------------------------------------------------------------------+
+| Product | Batch | Qty | Exp Date | Days Left | Status | Action |
+|------------------------------------------------------------------|
+| Caustic | B001  | 100 | 30-08-25 | 20        | Warning| [View] |
+| Solvent | B002  | 50  | 10-08-25 | 5         | Critical| [Block] |
+| Acid X  | B003  | 30  | 01-08-25 | Expired   | Expired| [Dispose] |
++------------------------------------------------------------------+
+✅ Planning/Forecasting Module Added:
+
+Demand Forecasting
+Supply Planning
+MRP (Material Requirements Planning)
+Capacity Planning
+Safety Stock Calculation
+✅ Inventory Submenu (Complete 95% Standard):
+
+Stock Overview
+Stock Card
+Stock Transfer
+Stock Adjustment
+Stock Opname
+Batch / Lot Tracking
+Expiry Monitoring
+Location Management
+Reorder Points
+Stock Reservations
+ABC Analysis
+Cycle Counting
+Inventory Valuation
+Stock Aging
+Barcode Generator
+✅ Updated Progress Tracking:
+
+Procurement: 30% (PR, PO, GRN, Price List, History)
+Inventory: 95% (Full 15 submenu with advanced features)
+Overall: 20% → 25%![alt text](image.png)

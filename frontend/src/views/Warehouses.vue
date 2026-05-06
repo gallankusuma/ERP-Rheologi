@@ -1,451 +1,546 @@
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-    <div class="max-w-7xl mx-auto space-y-6">
-      <header class="mb-2">
-        <h1 class="text-3xl font-bold text-slate-800">Warehouse Management</h1>
-        <p class="text-slate-600">Manage warehouses, locations, allocation (FIFO/FEFO), and stock health.</p>
-      </header>
+  <div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-900">🏭 Warehouses</h1>
+        <p class="text-gray-600 mt-1">Manage warehouse locations and storage areas</p>
+      </div>
+      <button
+          @click="handleExport"
+          class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+        >
+          📥 Export
+        </button>
+        <button
+        @click="openAddModal"
+        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
+      >
+        + Add Warehouse
+      </button>
+    </div>
 
-      <!-- Warehouses Section -->
-      <section class="bg-white rounded-lg shadow-sm p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold text-slate-800">Warehouses</h2>
-          <button @click="showWHForm = !showWHForm" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            {{ showWHForm ? '✕ Close' : '+ New' }}
+    <!-- Search -->
+    <div class="flex gap-4">
+      <input
+        v-model="searchQuery"
+        type="text"
+        placeholder="Search warehouses..."
+        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+    </div>
+
+    <!-- Warehouses Table -->
+    <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase">Code</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase">Name</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase">Address</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase">Contact</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase">Status</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+          <tr v-if="filteredWarehouses.length === 0" class="hover:bg-gray-50">
+            <td colspan="6" class="px-6 py-4 text-center text-gray-500">No warehouses found</td>
+          </tr>
+          <tr v-for="wh in filteredWarehouses" :key="wh.id" class="hover:bg-gray-50 transition-colors">
+            <td class="px-6 py-4 text-sm font-medium text-gray-900">{{ wh.code }}</td>
+            <td class="px-6 py-4 text-sm text-gray-900">{{ wh.name }}</td>
+            <td class="px-6 py-4 text-sm text-gray-700">{{ wh.address || '-' }}</td>
+            <td class="px-6 py-4 text-sm text-gray-700">{{ wh.contact_person || '-' }}</td>
+            <td class="px-6 py-4 text-sm">
+              <span
+                :class="[
+                  'px-3 py-1 rounded-full text-xs font-medium',
+                  wh.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                ]"
+              >
+                {{ wh.is_active ? 'Active' : 'Inactive' }}
+              </span>
+            </td>
+            <td class="px-6 py-4 text-sm space-x-2 flex gap-2">
+              <button
+                @click="openLocations(wh)"
+                class="px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm font-medium"
+              >
+                📍 Locations
+              </button>
+              <button
+                @click="editWarehouse(wh)"
+                class="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm font-medium"
+              >
+                Edit
+              </button>
+              <button
+                @click="deleteWarehouse(wh.id)"
+                class="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm font-medium"
+              >
+                Delete
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Add/Edit Modal -->
+    <Dialog :is-open="showModal" @update:is-open="showModal = $event">
+      <template #title>
+        {{ editingWarehouse ? 'Edit Warehouse' : 'Add New Warehouse' }}
+      </template>
+
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium text-gray-700">Code *</label>
+            <input
+              v-model="formData.code"
+              type="text"
+              placeholder="e.g., WH-001"
+              class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p v-if="formErrors.code" class="text-xs text-red-500">{{ formErrors.code }}</p>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium text-gray-700">Name *</label>
+            <input
+              v-model="formData.name"
+              type="text"
+              placeholder="e.g., Main Warehouse"
+              class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p v-if="formErrors.name" class="text-xs text-red-500">{{ formErrors.name }}</p>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium text-gray-700">Address</label>
+          <input
+            v-model="formData.address"
+            type="text"
+            placeholder="Warehouse address..."
+            class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium text-gray-700">Contact Person</label>
+          <input
+            v-model="formData.contact_person"
+            type="text"
+            placeholder="Contact person name..."
+            class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <input
+            id="is_active"
+            v-model="formData.is_active"
+            type="checkbox"
+            class="w-4 h-4 rounded border-gray-300"
+          />
+          <label for="is_active" class="text-sm font-medium text-gray-700">Active</label>
+        </div>
+      </div>
+
+      <template #actions="{ close }">
+        <button
+          @click="close"
+          class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+        >
+          Cancel
+        </button>
+        <button
+          @click="handleSubmit"
+          :disabled="isFormSubmitting"
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+        >
+          {{ isFormSubmitting ? 'Saving...' : 'Save' }}
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- Locations Management Modal -->
+    <Dialog :is-open="showLocationsModal" @update:is-open="showLocationsModal = $event" size="large">
+      <template #title>
+        📍 Manage Locations - {{ selectedWarehouse?.name }}
+      </template>
+
+      <div class="space-y-4">
+        <!-- Add Location Button -->
+        <div class="flex justify-between items-center pb-4 border-b">
+          <p class="text-sm text-gray-600">{{ locations.length }} location(s) in this warehouse</p>
+          <button
+            @click="openAddLocationModal"
+            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
+          >
+            + Add Location
           </button>
         </div>
 
-        <div v-if="showWHForm" class="bg-slate-50 rounded-lg p-4 mb-4 space-y-3">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <input v-model="whForm.code" placeholder="Code" type="text"
-                   class="px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
-            <input v-model="whForm.name" placeholder="Name" type="text"
-                   class="px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
-            <input v-model="whForm.address" placeholder="Address" type="text"
-                   class="px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
-          </div>
-          <div class="flex gap-3">
-            <button @click="submitWarehouse" :disabled="submittingWH"
-                    class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-              {{ submittingWH ? 'Saving...' : 'Create Warehouse' }}
-            </button>
-            <button @click="showWHForm = false" class="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100">
-              Cancel
-            </button>
-          </div>
-        </div>
-
-        <div v-if="warehouses.length === 0" class="text-center py-8 text-slate-500">
-          No warehouses found.
-        </div>
-
-        <div v-else class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-50 border-b border-slate-200">
+        <!-- Locations Table -->
+        <div class="max-h-96 overflow-y-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50 sticky top-0">
               <tr>
-                <th class="text-left p-3 font-semibold text-slate-700">Code</th>
-                <th class="text-left p-3 font-semibold text-slate-700">Name</th>
-                <th class="text-left p-3 font-semibold text-slate-700">Address</th>
-                <th class="text-right p-3 font-semibold text-slate-700">Actions</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Code</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Rack</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Row</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Bin</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Capacity</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Actions</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-200">
-              <tr v-for="wh in warehouses" :key="wh.id" class="hover:bg-slate-50 transition">
-                <td class="p-3 font-medium">{{ wh.code }}</td>
-                <td class="p-3">{{ wh.name }}</td>
-                <td class="p-3">{{ wh.address || '-' }}</td>
-                <td class="p-3 text-right">
-                  <button @click="selectWarehouse(wh.id!)" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                    View Details
+            <tbody class="divide-y divide-gray-200 bg-white">
+              <tr v-if="locations.length === 0">
+                <td colspan="6" class="px-4 py-8 text-center text-gray-500">No locations found. Add one to get started.</td>
+              </tr>
+              <tr v-for="loc in locations" :key="loc.id" class="hover:bg-gray-50">
+                <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ loc.code }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ loc.rack || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ loc.row || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ loc.bin || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ loc.capacity || '-' }}</td>
+                <td class="px-4 py-3 text-sm space-x-2">
+                  <button
+                    @click="editLocation(loc)"
+                    class="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    @click="deleteLocation(loc.id)"
+                    class="text-red-600 hover:text-red-800 text-sm font-medium"
+                  >
+                    Delete
                   </button>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-      </section>
-
-      <!-- Selected Warehouse Details -->
-      <section v-if="selectedWarehouse" class="bg-white rounded-lg shadow-sm p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold text-slate-800">{{ selectedWarehouse.name }} - Locations</h2>
-          <button @click="showLocationForm = true" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            + New Location
-          </button>
-        </div>
-
-        <div v-if="locationsLoading" class="text-center py-8 text-slate-500">
-          <div class="inline-block animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full"></div>
-        </div>
-
-        <div v-else-if="locations.length === 0" class="text-center py-8 text-slate-500">
-          No locations. Create one to start organizing inventory.
-        </div>
-
-        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div v-for="location in locations" :key="location.id"
-               class="border border-slate-200 rounded-lg p-4 hover:shadow-md transition">
-            <div class="flex justify-between items-start mb-3">
-              <div>
-                <p class="font-bold text-slate-800">{{ location.location_code }}</p>
-                <p class="text-xs text-slate-500">{{ location.rack }}/{{ location.row }}/{{ location.bin }}</p>
-              </div>
-              <button @click="deleteLocation(location.id!)" class="text-red-600 hover:text-red-800 text-xs">×</button>
-            </div>
-            <div class="space-y-1 text-xs">
-              <p v-if="location.description" class="text-slate-600">{{ location.description }}</p>
-              <p class="text-slate-500">📦 {{ location.batch_count || 0 }} batches</p>
-              <p class="text-slate-500">📊 {{ (location.total_quantity || 0).toFixed(2) }} units</p>
-              <p v-if="location.capacity" class="text-slate-500">⚙️ Cap: {{ location.capacity }}</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Stock Health -->
-        <div class="mt-8 pt-6 border-t border-slate-200">
-          <div class="flex justify-between items-center mb-4">
-            <h3 class="text-lg font-bold text-slate-800">Stock Health</h3>
-            <button @click="refreshStockHealth" class="px-3 py-1 bg-slate-200 text-slate-700 rounded text-sm hover:bg-slate-300">
-              Refresh
-            </button>
-          </div>
-
-          <div v-if="healthLoading" class="text-center py-4 text-slate-500">Loading...</div>
-
-          <div v-else-if="stockHealth" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="bg-red-50 border border-red-200 rounded-lg p-4">
-              <h4 class="font-bold text-red-700 mb-3">⚠️ Low Stock ({{ (stockHealth.low_stock || []).length }})</h4>
-              <div v-if="(stockHealth.low_stock || []).length === 0" class="text-sm text-red-600">All items OK</div>
-              <div v-else class="space-y-2 text-xs">
-                <div v-for="item in stockHealth.low_stock" :key="item.id" class="bg-white rounded p-2">
-                  <p class="font-medium">{{ item.name }}</p>
-                  <p class="text-slate-600">Current: {{ (item.current_qty || 0).toFixed(0) }} / Min: {{ (item.min_qty || 0).toFixed(0) }}</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <h4 class="font-bold text-amber-700 mb-3">📦 Expiring (30d) ({{ (stockHealth.expiring_batches || []).length }})</h4>
-              <div v-if="(stockHealth.expiring_batches || []).length === 0" class="text-sm text-amber-600">All OK</div>
-              <div v-else class="space-y-2 text-xs">
-                <div v-for="batch in stockHealth.expiring_batches.slice(0, 5)" :key="batch.id" class="bg-white rounded p-2">
-                  <p class="font-mono text-blue-600">{{ batch.batch_number }}</p>
-                  <p class="text-slate-600">{{ batch.product_name }} - {{ batch.days_to_expiry }}d</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Stock Allocation -->
-      <section class="bg-white rounded-lg shadow-sm p-6">
-        <h2 class="text-xl font-bold text-slate-800 mb-4">Stock Allocation (FIFO/FEFO)</h2>
-
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-3 mb-6">
-          <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">Product</label>
-            <select v-model.number="allocationFilter.product_id"
-                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-              <option value="0">Select...</option>
-              <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">Quantity</label>
-            <input v-model.number="allocationFilter.quantity" type="number" step="0.01"
-                   class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">Method</label>
-            <select v-model="allocationFilter.method" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-              <option value="FEFO">FEFO</option>
-              <option value="FIFO">FIFO</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">Warehouse</label>
-            <select v-model.number="allocationFilter.warehouse_id" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-              <option :value="0">Any</option>
-              <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.code }}</option>
-            </select>
-          </div>
-
-          <div class="flex items-end">
-            <button @click="runAllocation" class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
-              Allocate
-            </button>
-          </div>
-        </div>
-
-        <div v-if="allocationResult" class="bg-slate-50 rounded-lg p-4 mb-6">
-          <div class="grid grid-cols-4 gap-4 text-sm">
-            <div class="text-center">
-              <p class="text-slate-500">Needed</p>
-              <p class="text-2xl font-bold">{{ allocationResult.quantity_needed }}</p>
-            </div>
-            <div class="text-center">
-              <p class="text-slate-500">Allocated</p>
-              <p class="text-2xl font-bold text-green-600">{{ allocationResult.quantity_allocated }}</p>
-            </div>
-            <div class="text-center">
-              <p class="text-slate-500">Short</p>
-              <p class="text-2xl font-bold" :class="allocationResult.quantity_short > 0 ? 'text-red-600' : ''">
-                {{ allocationResult.quantity_short }}
-              </p>
-            </div>
-            <div class="text-center">
-              <p class="text-slate-500">Status</p>
-              <p class="text-lg font-bold px-3 py-1 rounded" :class="allocationResult.can_fulfill ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
-                {{ allocationResult.can_fulfill ? '✓ OK' : '✗ SHORT' }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="stockAllocations.length > 0" class="mt-4 overflow-x-auto">
-          <table class="w-full text-xs">
-            <thead class="bg-slate-100">
-              <tr>
-                <th class="text-left p-2">Batch</th>
-                <th class="text-left p-2">Location</th>
-                <th class="text-left p-2">Qty Allocated</th>
-                <th class="text-left p-2">Available</th>
-                <th class="text-left p-2">Exp Date</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y">
-              <tr v-for="a in stockAllocations" :key="a.batch_id" class="hover:bg-slate-50">
-                <td class="p-2 font-mono text-blue-600">{{ a.batch_number }}</td>
-                <td class="p-2">{{ a.rack }}/{{ a.row }}/{{ a.bin }}</td>
-                <td class="p-2 font-medium">{{ a.allocated_qty }}</td>
-                <td class="p-2">{{ a.available_qty }}</td>
-                <td class="p-2">{{ a.exp_date ? formatDate(a.exp_date) : '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Stock Movements -->
-      <section class="bg-white rounded-lg shadow-sm p-6">
-        <h2 class="text-xl font-bold text-slate-800 mb-4">Recent Stock Movements</h2>
-        <div v-if="stockMovements.length === 0" class="text-center py-8 text-slate-500">
-          No stock movements recorded.
-        </div>
-        <div v-else class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th class="text-left p-3 font-semibold">Product</th>
-                <th class="text-left p-3 font-semibold">Type</th>
-                <th class="text-left p-3 font-semibold">Quantity</th>
-                <th class="text-left p-3 font-semibold">Warehouse</th>
-                <th class="text-left p-3 font-semibold">Date</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-200">
-              <tr v-for="(m, idx) in stockMovements.slice(0, 10)" :key="idx" class="hover:bg-slate-50">
-                <td class="p-3">{{ m.product_name }}</td>
-                <td class="p-3">
-                  <span class="px-2 py-1 rounded text-xs font-medium"
-                        :class="m.movement_type === 'IN'
-                          ? 'bg-green-100 text-green-700'
-                          : m.movement_type === 'OUT'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-blue-100 text-blue-700'">
-                    {{ m.movement_type }}
-                  </span>
-                </td>
-                <td class="p-3">{{ m.quantity }} {{ m.uom }}</td>
-                <td class="p-3">{{ m.warehouse_name }}</td>
-                <td class="p-3 text-xs text-slate-500">{{ new Date(m.moved_at).toLocaleDateString() }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-
-    <!-- Location Form Modal -->
-    <div v-if="showLocationForm" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
-        <div class="border-b border-slate-200 px-6 py-4">
-          <h2 class="text-xl font-bold text-slate-800">New Location</h2>
-        </div>
-
-        <form @submit.prevent="submitLocation" class="p-6 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Location Code *</label>
-            <input v-model="locationForm.location_code" type="text" required
-                   class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
-          </div>
-
-          <div class="grid grid-cols-3 gap-2">
-            <input v-model="locationForm.rack" placeholder="Rack" type="text"
-                   class="px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-            <input v-model="locationForm.row" placeholder="Row" type="text"
-                   class="px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-            <input v-model="locationForm.bin" placeholder="Bin" type="text"
-                   class="px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-          </div>
-
-          <input v-model.number="locationForm.capacity" placeholder="Capacity" type="number" step="0.01"
-                 class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm" />
-
-          <textarea v-model="locationForm.description" placeholder="Description" rows="2"
-                    class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
-
-          <div class="flex gap-3 justify-end pt-4 border-t">
-            <button type="button" @click="showLocationForm = false"
-                    class="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50">
-              Cancel
-            </button>
-            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              Create
-            </button>
-          </div>
-        </form>
       </div>
-    </div>
+
+      <template #actions="{ close }">
+        <button
+          @click="close"
+          class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+        >
+          Close
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- Add/Edit Location Modal -->
+    <Dialog :is-open="showLocationModal" @update:is-open="showLocationModal = $event">
+      <template #title>
+        {{ editingLocation ? 'Edit Location' : 'Add New Location' }}
+      </template>
+
+      <form @submit.prevent="handleLocationSubmit" class="space-y-4">
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium text-gray-700">Location Code *</label>
+          <input
+            v-model="locationForm.code"
+            type="text"
+            placeholder="e.g., A-01-01"
+            class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
+
+        <div class="grid grid-cols-3 gap-4">
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium text-gray-700">Rack</label>
+            <input
+              v-model="locationForm.rack"
+              type="text"
+              placeholder="e.g., A"
+              class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium text-gray-700">Row</label>
+            <input
+              v-model="locationForm.row"
+              type="text"
+              placeholder="e.g., 01"
+              class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium text-gray-700">Bin</label>
+            <input
+              v-model="locationForm.bin"
+              type="text"
+              placeholder="e.g., 01"
+              class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium text-gray-700">Capacity</label>
+          <input
+            v-model.number="locationForm.capacity"
+            type="number"
+            placeholder="e.g., 100"
+            class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium text-gray-700">Description</label>
+          <textarea
+            v-model="locationForm.description"
+            placeholder="Location description..."
+            rows="2"
+            class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          ></textarea>
+        </div>
+      </form>
+
+      <template #actions="{ close }">
+        <button
+          @click="close"
+          class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+        >
+          Cancel
+        </button>
+        <button
+          @click="handleLocationSubmit"
+          :disabled="isLocationSubmitting"
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+        >
+          {{ isLocationSubmitting ? 'Saving...' : 'Save Location' }}
+        </button>
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import { exportToCSV } from '../utils/export';
 import { ref, computed, onMounted } from 'vue';
-import { useWarehouseStore } from '@/stores/warehouse';
-import { useProductStore } from '@/stores/products';
+import { useWarehouseStore } from '../stores/warehouse';
+import { api } from '../lib/api';
+import Dialog from '../components/ui/Dialog.vue';
 
-const store = useWarehouseStore();
-const productStore = useProductStore();
+const warehouseStore = useWarehouseStore();
 
-const warehouses = computed(() => store.warehouses || []);
-const locations = computed(() => store.locations || []);
-const stockHealth = computed(() => store.stockHealth);
-const stockAllocations = computed(() => store.stockAllocations || []);
-const stockMovements = computed(() => store.stockMovements || []);
-const products = computed(() => productStore.products || []);
+const showModal = ref(false);
+const searchQuery = ref('');
+const editingWarehouse = ref<any>(null);
 
-const showWHForm = ref(false);
-const showLocationForm = ref(false);
-const submittingWH = ref(false);
+// Location management states
+const showLocationsModal = ref(false);
+const showLocationModal = ref(false);
 const selectedWarehouse = ref<any>(null);
-const locationsLoading = computed(() => store.loading);
-const healthLoading = computed(() => store.loading);
-
-const whForm = ref({
-  code: '',
-  name: '',
-  address: '',
-});
-
+const locations = ref<any[]>([]);
+const editingLocation = ref<any>(null);
+const isLocationSubmitting = ref(false);
 const locationForm = ref({
-  warehouse_id: 0,
-  location_code: '',
+  code: '',
   rack: '',
   row: '',
   bin: '',
-  capacity: undefined as number | undefined,
+  capacity: null as number | null,
   description: '',
 });
 
-const allocationFilter = ref({
-  product_id: 0,
-  quantity: 0,
-  method: 'FEFO',
-  warehouse_id: 0,
-});
-
-const allocationResult = ref<any>(null);
-
 onMounted(async () => {
-  await Promise.all([
-    store.fetchWarehouses(),
-    store.fetchStockMovements(),
-    productStore.fetchProducts(),
-  ]);
+  await warehouseStore.fetchWarehouses();
 });
 
-const submitWarehouse = async () => {
-  if (!whForm.value.code || !whForm.value.name) return;
-  submittingWH.value = true;
+const warehouses = computed(() => warehouseStore.warehouses);
+
+const filteredWarehouses = computed(() => {
+  return warehouses.value.filter((w) => {
+    return (
+      !searchQuery.value ||
+      w.code.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+      w.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+      (w.address && w.address.toLowerCase().includes(searchQuery.value.toLowerCase()))
+    );
+  });
+});
+
+// Form state - NOT using vee-validate for warehouse (too complex)
+const formData = ref({
+  code: '',
+  name: '',
+  address: '',
+  contact_person: '',
+  is_active: true,
+});
+
+const formErrors = ref<Record<string, string>>({});
+const isFormSubmitting = ref(false);
+
+const validateForm = () => {
+  formErrors.value = {};
+  if (!formData.value.code?.trim()) formErrors.value.code = 'Code is required';
+  if (!formData.value.name?.trim()) formErrors.value.name = 'Name is required';
+  if (formData.value.code && formData.value.code.length < 2) formErrors.value.code = 'Code must be at least 2 characters';
+  if (formData.value.name && formData.value.name.length < 3) formErrors.value.name = 'Name must be at least 3 characters';
+  return Object.keys(formErrors.value).length === 0;
+};
+
+const handleSubmit = async () => {
+  if (!validateForm()) return;
+  
+  isFormSubmitting.value = true;
   try {
-    await store.createWarehouse(whForm.value);
-    whForm.value = { code: '', name: '', address: '' };
-    showWHForm.value = false;
-  } catch (error) {
-    console.error('Error creating warehouse:', error);
+    const payload = {
+      code: formData.value.code,
+      name: formData.value.name,
+      address: formData.value.address || null,
+      contact_person: formData.value.contact_person || null,
+      is_active: formData.value.is_active,
+    };
+    
+    if (editingWarehouse.value) {
+      await warehouseStore.updateWarehouse(editingWarehouse.value.id, payload);
+    } else {
+      await warehouseStore.createWarehouse(payload);
+    }
+    showModal.value = false;
+    editingWarehouse.value = null;
+  } catch (error: any) {
+    console.error('Error saving warehouse:', error);
+    alert(error.response?.data?.error || 'Failed to save warehouse');
   } finally {
-    submittingWH.value = false;
+    isFormSubmitting.value = false;
   }
 };
 
-const selectWarehouse = async (warehouseId: number) => {
-  selectedWarehouse.value = warehouses.value.find((w: any) => w.id === warehouseId) || null;
-  if (!selectedWarehouse.value) return;
-  locationForm.value.warehouse_id = warehouseId;
-  await store.fetchLocations(warehouseId);
-  await store.fetchStockHealth(warehouseId);
+const openAddModal = () => {
+  editingWarehouse.value = null;
+  formData.value = { code: '', name: '', address: '', contact_person: '', is_active: true };
+  formErrors.value = {};
+  showModal.value = true;
 };
 
-const submitLocation = async () => {
-  if (!selectedWarehouse.value || !locationForm.value.location_code) return;
+const editWarehouse = (warehouse: any) => {
+  editingWarehouse.value = warehouse;
+  formData.value = {
+    code: warehouse.code || '',
+    name: warehouse.name || '',
+    address: warehouse.address || '',
+    contact_person: warehouse.contact_person || '',
+    is_active: !!warehouse.is_active,
+  };
+  formErrors.value = {};
+  showModal.value = true;
+};
+
+const deleteWarehouse = async (id: number) => {
+  if (!confirm('Are you sure you want to delete this warehouse?')) return;
   try {
-    await store.createLocation(selectedWarehouse.value.id, locationForm.value);
-    showLocationForm.value = false;
-    locationForm.value = {
-      warehouse_id: selectedWarehouse.value.id,
-      location_code: '',
-      rack: '',
-      row: '',
-      bin: '',
-      capacity: undefined,
-      description: '',
-    };
+    await warehouseStore.deleteWarehouse(id);
   } catch (error) {
-    console.error('Error creating location:', error);
+    console.error('Error deleting warehouse:', error);
+  }
+};
+
+// Location management functions
+const openLocations = async (warehouse: any) => {
+  selectedWarehouse.value = warehouse;
+  await fetchLocations(warehouse.id);
+  showLocationsModal.value = true;
+};
+
+const fetchLocations = async (warehouseId: number) => {
+  try {
+    const response = await api.get(`/api/warehouses/${warehouseId}/locations`);
+    locations.value = response.data.data || [];
+  } catch (error) {
+    console.error('Error fetching locations:', error);
+    locations.value = [];
+  }
+};
+
+const openAddLocationModal = () => {
+  editingLocation.value = null;
+  locationForm.value = {
+    code: '',
+    rack: '',
+    row: '',
+    bin: '',
+    capacity: null,
+    description: '',
+  };
+  showLocationModal.value = true;
+};
+
+const editLocation = (location: any) => {
+  editingLocation.value = location;
+  locationForm.value = {
+    code: location.code,
+    rack: location.rack || '',
+    row: location.row || '',
+    bin: location.bin || '',
+    capacity: location.capacity || null,
+    description: location.description || '',
+  };
+  showLocationModal.value = true;
+};
+
+const handleLocationSubmit = async () => {
+  if (!locationForm.value.code) {
+    alert('Location code is required');
+    return;
+  }
+
+  isLocationSubmitting.value = true;
+  try {
+    const payload = {
+      code: locationForm.value.code,
+      rack: locationForm.value.rack || null,
+      row: locationForm.value.row || null,
+      bin: locationForm.value.bin || null,
+      capacity: locationForm.value.capacity || null,
+      description: locationForm.value.description || null,
+    };
+
+    if (editingLocation.value) {
+      await api.put(`/api/warehouses/${selectedWarehouse.value.id}/locations/${editingLocation.value.id}`, payload);
+    } else {
+      await api.post(`/api/warehouses/${selectedWarehouse.value.id}/locations`, payload);
+    }
+
+    showLocationModal.value = false;
+    await fetchLocations(selectedWarehouse.value.id);
+  } catch (error: any) {
+    console.error('Error saving location:', error);
+    alert(error.response?.data?.error || 'Failed to save location');
+  } finally {
+    isLocationSubmitting.value = false;
   }
 };
 
 const deleteLocation = async (locationId: number) => {
-  if (!selectedWarehouse.value) return;
-  if (confirm('Delete this location?')) {
-    try {
-      await store.deleteLocation(selectedWarehouse.value.id, locationId);
-    } catch (error) {
-      console.error('Error deleting location:', error);
-    }
-  }
-};
+  if (!confirm('Are you sure you want to delete this location?')) return;
 
-const refreshStockHealth = async () => {
-  if (selectedWarehouse.value) {
-    await store.fetchStockHealth(selectedWarehouse.value.id);
-  }
-};
-
-const runAllocation = async () => {
-  if (!allocationFilter.value.product_id || !allocationFilter.value.quantity) {
-    alert('Please select a product and quantity');
-    return;
-  }
   try {
-    allocationResult.value = await store.allocateStock(
-      allocationFilter.value.product_id,
-      allocationFilter.value.quantity,
-      allocationFilter.value.method as 'FIFO' | 'FEFO',
-      allocationFilter.value.warehouse_id || undefined,
-    );
-  } catch (error) {
-    console.error('Error allocating stock:', error);
+    await api.delete(`/api/warehouses/${selectedWarehouse.value.id}/locations/${locationId}`);
+    await fetchLocations(selectedWarehouse.value.id);
+  } catch (error: any) {
+    console.error('Error deleting location:', error);
+    alert(error.response?.data?.error || 'Failed to delete location');
   }
 };
 
-const formatDate = (date: string) => {
-  if (!date) return '—';
-  return new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-};
+function handleExport() {
+  exportToCSV(warehouses.value, 'Warehouses_Export');
+}
+
 </script>

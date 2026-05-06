@@ -4,6 +4,12 @@
     <div class="flex justify-between items-center">
       <h1 class="text-3xl font-bold text-gray-900">Users Management</h1>
       <button
+          @click="handleExport"
+          class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+        >
+          📥 Export
+        </button>
+        <button
         @click="openCreateModal"
         class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow transition"
       >
@@ -96,13 +102,15 @@
             />
           </div>
 
-          <div v-if="!isEditing">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              {{ isEditing ? 'Password (leave blank to keep current)' : 'Password' }}
+            </label>
             <input
               v-model="form.password"
-              type="password"
+              type="text"
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="••••••••"
+              :placeholder="isEditing ? 'Leave blank to keep unchanged' : '••••••••'"
             />
           </div>
 
@@ -201,6 +209,7 @@
 </template>
 
 <script setup lang="ts">
+import { exportToCSV } from '../utils/export';
 import { ref, reactive, onMounted } from 'vue';
 import { useUserStore } from '../stores/users';
 import { useDepartmentStore } from '../stores/departments';
@@ -273,7 +282,7 @@ const closeModal = () => {
 const saveUser = async () => {
   try {
     if (isEditing.value && editingId.value) {
-      await userStore.updateUser(editingId.value, {
+      const updatePayload: any = {
         name: form.name,
         email: form.email,
         department_id: form.department_id!,
@@ -282,7 +291,11 @@ const saveUser = async () => {
         phone: form.phone,
         address: form.address,
         is_active: form.is_active,
-      });
+      };
+      if (form.password) {
+        updatePayload.password = form.password;
+      }
+      await userStore.updateUser(editingId.value, updatePayload);
     } else {
       await userStore.createUser({
         name: form.name,
@@ -310,4 +323,9 @@ const confirmDelete = async (id: number) => {
     }
   }
 };
+
+function handleExport() {
+  exportToCSV(userStore.users, 'Users_Export');
+}
+
 </script>
