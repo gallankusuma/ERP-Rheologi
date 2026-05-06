@@ -52,6 +52,7 @@
             <td class="px-4 py-3 text-xs text-gray-500">{{ formatDate(item.start_date) }} → {{ formatDate(item.target_end_date) }}</td>
             <td class="px-4 py-3 text-gray-700 font-medium">{{ formatCurrency(item.budget) }}</td>
             <td class="px-4 py-3 text-right space-x-1">
+              <router-link :to="`/rnd/projects/${item.id}`" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">View</router-link>
               <button @click="openModal(item)" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Edit</button>
               <button @click="deleteItem(item.id)" class="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
             </td>

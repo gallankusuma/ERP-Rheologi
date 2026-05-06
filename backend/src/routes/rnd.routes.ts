@@ -337,4 +337,121 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// ==================== MILESTONES ====================
+
+// GET milestones for a project
+router.get('/projects/:projectId/milestones', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT m.*, u.full_name as assigned_name FROM rnd_milestones m
+       LEFT JOIN users u ON m.assigned_to = u.id
+       WHERE m.project_id = ? ORDER BY m.sort_order, m.due_date`, [req.params.projectId]
+    );
+    res.json({ data: rows });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// POST create milestone
+router.post('/projects/:projectId/milestones', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { title, description, phase, status, due_date, assigned_to, deliverables, sort_order } = req.body;
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO rnd_milestones (project_id, title, description, phase, status, due_date, assigned_to, deliverables, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.projectId, title, description, phase || 'formulation_design', status || 'pending', due_date, assigned_to, deliverables, sort_order || 0]
+    );
+    res.status(201).json({ data: { id: result.insertId }, message: 'Milestone created' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT update milestone
+router.put('/milestones/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { title, description, phase, status, due_date, completed_date, assigned_to, deliverables, sort_order } = req.body;
+    await pool.query(
+      `UPDATE rnd_milestones SET title=?, description=?, phase=?, status=?, due_date=?, completed_date=?, assigned_to=?, deliverables=?, sort_order=? WHERE id=?`,
+      [title, description, phase, status, due_date, completed_date, assigned_to, deliverables, sort_order, req.params.id]
+    );
+    res.json({ message: 'Milestone updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE milestone
+router.delete('/milestones/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await pool.query('DELETE FROM rnd_milestones WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== DOCUMENTS ====================
+
+// File upload setup
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const uploadDir = path.join(__dirname, '../../uploads/rnd');
+if (!fs.existsSync(uploadDir)) { fs.mkdirSync(uploadDir, { recursive: true }); }
+const storage = multer.diskStorage({
+  destination: (_req: any, _file: any, cb: Function) => cb(null, uploadDir),
+  filename: (_req: any, file: any, cb: Function) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `rnd-${Date.now()}-${Math.random().toString(36).substring(7)}${ext}`);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
+
+// GET documents (filter by project/formulation/test/study)
+router.get('/documents', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    let where = '1=1';
+    const params: any[] = [];
+    if (req.query.project_id) { where += ' AND d.project_id = ?'; params.push(req.query.project_id); }
+    if (req.query.formulation_id) { where += ' AND d.formulation_id = ?'; params.push(req.query.formulation_id); }
+    if (req.query.lab_test_id) { where += ' AND d.lab_test_id = ?'; params.push(req.query.lab_test_id); }
+    if (req.query.stability_study_id) { where += ' AND d.stability_study_id = ?'; params.push(req.query.stability_study_id); }
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT d.*, u.full_name as uploader_name,
+              p.name as project_name, f.name as formulation_name
+       FROM rnd_documents d
+       LEFT JOIN users u ON d.uploaded_by = u.id
+       LEFT JOIN rnd_projects p ON d.project_id = p.id
+       LEFT JOIN rnd_formulations f ON d.formulation_id = f.id
+       WHERE ${where} ORDER BY d.created_at DESC`, params
+    );
+    res.json({ data: rows });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// POST upload document
+router.post('/documents', authMiddleware, upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    const file = (req as any).file;
+    const { project_id, formulation_id, lab_test_id, stability_study_id, doc_type, title, description, version } = req.body;
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO rnd_documents (project_id, formulation_id, lab_test_id, stability_study_id, doc_type, title, description, file_name, file_path, file_size, mime_type, version, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [project_id || null, formulation_id || null, lab_test_id || null, stability_study_id || null,
+       doc_type || 'other', title || file?.originalname || 'Untitled', description,
+       file?.originalname, file ? `/uploads/rnd/${file.filename}` : null,
+       file?.size || 0, file?.mimetype, version || '1.0', (req as any).user?.id]
+    );
+    res.status(201).json({ data: { id: result.insertId, file_path: file ? `/uploads/rnd/${file.filename}` : null }, message: 'Document uploaded' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE document
+router.delete('/documents/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>('SELECT file_path FROM rnd_documents WHERE id = ?', [req.params.id]);
+    if (rows.length && rows[0].file_path) {
+      const fullPath = path.join(__dirname, '../..', rows[0].file_path);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+    await pool.query('DELETE FROM rnd_documents WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 export default router;
+

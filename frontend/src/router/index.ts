@@ -386,6 +386,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'R&D Projects' },
   },
   {
+    path: '/rnd/projects/:id',
+    name: 'RnDProjectDetail',
+    component: () => import('../views/RnDProjectDetail.vue'),
+    meta: { requiresAuth: true, title: 'R&D Project Detail' },
+  },
+  {
     path: '/rnd/formulations',
     name: 'RnDFormulation',
     component: () => import('../views/RnDFormulation.vue'),
