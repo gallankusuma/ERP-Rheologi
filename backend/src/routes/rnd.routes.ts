@@ -50,11 +50,12 @@ router.get('/projects/:id', authMiddleware, async (req: Request, res: Response) 
 // POST create project
 router.post('/projects', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { project_code, name, description, objectives, status, priority, project_leader_id, department_id, start_date, target_end_date, budget, notes } = req.body;
+    const b = req.body;
+    const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO rnd_projects (project_code, name, description, objectives, status, priority, project_leader_id, department_id, start_date, target_end_date, budget, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [project_code, name, description, objectives, status || 'draft', priority || 'medium', project_leader_id, department_id, start_date, target_end_date, budget || 0, notes, (req as any).user?.id]
+      `INSERT INTO rnd_projects (project_code, name, project_type, category, description, objectives, expected_output, status, priority, risk_level, confidentiality, regulatory_requirements, target_market, target_product, project_leader_id, department_id, start_date, target_end_date, budget, tags, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [b.project_code, b.name, b.project_type||'new_product', b.category||'chemical', b.description, b.objectives, b.expected_output, b.status||'draft', b.priority||'medium', b.risk_level||'medium', b.confidentiality||'internal', b.regulatory_requirements, b.target_market, b.target_product, toNull(b.project_leader_id), toNull(b.department_id), toNull(b.start_date), toNull(b.target_end_date), b.budget||0, b.tags, b.notes, (req as any).user?.id]
     );
     res.status(201).json({ data: { id: result.insertId }, message: 'Project created' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -63,10 +64,11 @@ router.post('/projects', authMiddleware, async (req: Request, res: Response) => 
 // PUT update project
 router.put('/projects/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { project_code, name, description, objectives, status, priority, project_leader_id, department_id, start_date, target_end_date, actual_end_date, budget, spent, notes } = req.body;
+    const b = req.body;
+    const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
     await pool.query(
-      `UPDATE rnd_projects SET project_code=?, name=?, description=?, objectives=?, status=?, priority=?, project_leader_id=?, department_id=?, start_date=?, target_end_date=?, actual_end_date=?, budget=?, spent=?, notes=? WHERE id=?`,
-      [project_code, name, description, objectives, status, priority, project_leader_id, department_id, start_date, target_end_date, actual_end_date, budget, spent, notes, req.params.id]
+      `UPDATE rnd_projects SET project_code=?, name=?, project_type=?, category=?, description=?, objectives=?, expected_output=?, status=?, priority=?, risk_level=?, confidentiality=?, regulatory_requirements=?, target_market=?, target_product=?, project_leader_id=?, department_id=?, start_date=?, target_end_date=?, actual_end_date=?, budget=?, spent=?, tags=?, notes=? WHERE id=?`,
+      [b.project_code, b.name, b.project_type, b.category, b.description, b.objectives, b.expected_output, b.status, b.priority, b.risk_level, b.confidentiality, b.regulatory_requirements, b.target_market, b.target_product, toNull(b.project_leader_id), toNull(b.department_id), toNull(b.start_date), toNull(b.target_end_date), toNull(b.actual_end_date), b.budget, b.spent, b.tags, b.notes, req.params.id]
     );
     res.json({ message: 'Project updated' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
