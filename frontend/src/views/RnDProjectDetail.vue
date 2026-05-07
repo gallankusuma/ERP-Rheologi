@@ -120,6 +120,67 @@
       </div>
     </div>
 
+    <!-- Tab: Kanban -->
+    <div v-if="activeTab === 'kanban'" class="overflow-x-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-gray-800">📊 Task Board</h3>
+        <div class="flex gap-2">
+          <button @click="showAddKCol = true" class="px-3 py-1.5 border border-dashed rounded-lg text-xs text-gray-500 hover:border-indigo-400">+ Column</button>
+          <button @click="showTaskModal = true; editingTask = null; taskForm = emptyTask()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm">+ Task</button>
+        </div>
+      </div>
+      <div class="flex gap-4 min-w-max pb-4">
+        <div v-for="col in kCols" :key="col.id" class="w-[280px] shrink-0 bg-gray-50 rounded-xl border flex flex-col" @dragover.prevent="kDragOver = col.id" @drop="dropTask(col.id)">
+          <div class="px-3 py-2.5 border-b flex items-center justify-between group" :style="{borderTopColor: col.color}" style="border-top:3px solid">
+            <div class="flex items-center gap-2"><span class="font-semibold text-xs">{{ col.label }}</span><span class="text-[10px] bg-gray-200 rounded-full px-1.5">{{ getTaskCol(col.id).length }}</span></div>
+            <button @click="removeKCol(col.id)" class="text-gray-400 hover:text-red-500 text-[10px] opacity-0 group-hover:opacity-100">✕</button>
+          </div>
+          <div class="flex-1 p-2 space-y-2 min-h-[80px]" :class="{'bg-indigo-50/50 ring-2 ring-indigo-300 ring-inset rounded-b-xl': kDragOver === col.id}">
+            <div v-for="t in getTaskCol(col.id)" :key="t.id" class="bg-white rounded-lg border p-2.5 cursor-grab active:cursor-grabbing hover:shadow-md text-xs" draggable="true" @dragstart="kDragCard = t; ($event.target as HTMLElement).style.opacity='0.4'" @dragend="($event.target as HTMLElement).style.opacity='1'; kDragOver=null; kDragCard=null">
+              <div class="font-medium text-gray-800 mb-1">{{ t.title }}</div>
+              <div v-if="t.description" class="text-gray-400 text-[10px] mb-1 line-clamp-2">{{ t.description }}</div>
+              <div class="flex items-center justify-between">
+                <span class="px-1.5 py-0.5 rounded text-[9px] font-bold" :class="priClass(t.priority)">{{ t.priority }}</span>
+                <span v-if="t.assigned_name" class="text-gray-400 text-[10px]">👤 {{ t.assigned_name }}</span>
+              </div>
+              <div class="flex gap-1 mt-1.5"><button @click="editTask(t)" class="text-blue-500 text-[10px]">Edit</button><button @click="deleteTask(t.id)" class="text-red-400 text-[10px]">Del</button></div>
+            </div>
+            <div v-if="!getTaskCol(col.id).length" class="text-center text-[10px] text-gray-300 py-6">Drop tasks here</div>
+          </div>
+        </div>
+        <div class="w-[280px] shrink-0 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center cursor-pointer hover:border-indigo-300" @click="showAddKCol = true">
+          <span class="text-xs text-gray-400">+ Add Column</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task Modal -->
+    <div v-if="showTaskModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="px-6 py-4 border-b bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-t-2xl"><h3 class="font-semibold">{{ editingTask ? 'Edit' : 'Add' }} Task</h3></div>
+        <form @submit.prevent="submitTask" class="p-6 space-y-3">
+          <div><label class="block text-xs font-medium text-gray-700 mb-1">Title *</label><input v-model="taskForm.title" required class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Status</label><select v-model="taskForm.status" class="w-full px-3 py-2 border rounded-lg text-sm"><option v-for="c in kCols" :key="c.id" :value="c.id">{{ c.label }}</option></select></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Priority</label><select v-model="taskForm.priority" class="w-full px-3 py-2 border rounded-lg text-sm"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></div>
+          </div>
+          <div><label class="block text-xs font-medium text-gray-700 mb-1">Description</label><textarea v-model="taskForm.description" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
+          <div><label class="block text-xs font-medium text-gray-700 mb-1">Due Date</label><input v-model="taskForm.due_date" type="date" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+          <div class="flex justify-end gap-3 pt-3 border-t"><button type="button" @click="showTaskModal=false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button><button type="submit" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm">Save</button></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Kanban Column Modal -->
+    <div v-if="showAddKCol" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+        <h3 class="font-semibold">Add Column</h3>
+        <input v-model="newKColLabel" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Column name" />
+        <div class="flex gap-2 flex-wrap"><button v-for="c in kColorOpts" :key="c" @click="newKColColor=c" class="w-7 h-7 rounded border-2" :class="newKColColor===c?'border-gray-800 scale-110':'border-transparent'" :style="{backgroundColor:c}"></button></div>
+        <div class="flex justify-end gap-3"><button @click="showAddKCol=false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button><button @click="addKCol" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm">Add</button></div>
+      </div>
+    </div>
+
     <!-- Milestone Modal -->
     <div v-if="showMilestoneModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
@@ -208,6 +269,7 @@ const apiBase = import.meta.env.VITE_API_URL?.replace('/api','') || '';
 const tabs = [
   { id: 'overview', icon: '📋', label: 'Overview' },
   { id: 'milestones', icon: '🎯', label: 'Milestones' },
+  { id: 'kanban', icon: '📊', label: 'Kanban' },
   { id: 'documents', icon: '📁', label: 'Documents' },
 ];
 
@@ -228,7 +290,7 @@ const phaseLabel = (p:string) => p?.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpp
 
 onMounted(async () => {
   try { const r = await api.get(`/rnd/projects/${projectId}`); project.value = r.data.data; } catch {}
-  await fetchMs(); await fetchDocs();
+  await fetchMs(); await fetchDocs(); await fetchTasks(); loadKCols();
 });
 
 async function fetchMs() { try { const r = await api.get(`/rnd/projects/${projectId}/milestones`); milestones.value = r.data.data||[]; } catch {} }
@@ -261,4 +323,51 @@ async function submitDoc() {
   catch(e:any) { alert(e.response?.data?.error||e.message); }
 }
 async function deleteDoc(id:number) { if(!confirm('Delete document?')) return; await api.delete(`/rnd/documents/${id}`); await fetchDocs(); }
+
+// ====== Kanban per-project ======
+interface KCol { id: string; label: string; color: string; }
+const KCOL_KEY = 'rnd_proj_kanban_cols';
+const kDefaultCols: KCol[] = [
+  { id:'todo', label:'To Do', color:'#94a3b8' },
+  { id:'in_progress', label:'In Progress', color:'#3b82f6' },
+  { id:'review', label:'Review', color:'#f59e0b' },
+  { id:'done', label:'Done', color:'#22c55e' },
+];
+const kCols = ref<KCol[]>([]);
+const tasks = ref<any[]>([]);
+const showTaskModal = ref(false);
+const showAddKCol = ref(false);
+const editingTask = ref<any>(null);
+const kDragCard = ref<any>(null);
+const kDragOver = ref<string|null>(null);
+const newKColLabel = ref('');
+const newKColColor = ref('#3b82f6');
+const kColorOpts = ['#94a3b8','#3b82f6','#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#14b8a6'];
+
+const emptyTask = () => ({ title:'', description:'', status:'todo', priority:'medium', due_date:'' });
+const taskForm = ref(emptyTask());
+
+const priClass = (p:string) => ({low:'bg-gray-100 text-gray-500',medium:'bg-blue-100 text-blue-600',high:'bg-orange-100 text-orange-600',critical:'bg-red-100 text-red-600'}[p]||'bg-gray-100');
+
+function loadKCols() { try { const s=localStorage.getItem(KCOL_KEY); kCols.value=s?JSON.parse(s):[...kDefaultCols]; } catch { kCols.value=[...kDefaultCols]; } }
+function saveKCols() { localStorage.setItem(KCOL_KEY, JSON.stringify(kCols.value)); }
+const getTaskCol = (colId:string) => tasks.value.filter(t => t.status === colId);
+function addKCol() { if(!newKColLabel.value.trim()) return; kCols.value.push({id:`k-${Date.now()}`,label:newKColLabel.value,color:newKColColor.value}); saveKCols(); showAddKCol.value=false; newKColLabel.value=''; }
+function removeKCol(id:string) { if(kCols.value.length<=1) return; if(!confirm('Remove column?')) return; kCols.value=kCols.value.filter(c=>c.id!==id); saveKCols(); }
+
+async function fetchTasks() { try { const r = await api.get(`/rnd/projects/${projectId}/tasks`); tasks.value = r.data.data||[]; } catch {} }
+function editTask(t:any) { editingTask.value=t; taskForm.value={...t,due_date:t.due_date?.split('T')[0]||''}; showTaskModal.value=true; }
+async function submitTask() {
+  try {
+    if(editingTask.value) await api.put(`/rnd/tasks/${editingTask.value.id}`, taskForm.value);
+    else await api.post(`/rnd/projects/${projectId}/tasks`, taskForm.value);
+    showTaskModal.value=false; await fetchTasks();
+  } catch(e:any) { alert(e.response?.data?.error||e.message); }
+}
+async function deleteTask(id:number) { if(!confirm('Delete task?')) return; await api.delete(`/rnd/tasks/${id}`); await fetchTasks(); }
+async function dropTask(colId:string) {
+  kDragOver.value=null;
+  if(!kDragCard.value || kDragCard.value.status===colId) return;
+  try { await api.patch(`/rnd/tasks/${kDragCard.value.id}/status`, {status:colId}); kDragCard.value.status=colId; } catch(e:any) { alert(e.message); }
+}
 </script>

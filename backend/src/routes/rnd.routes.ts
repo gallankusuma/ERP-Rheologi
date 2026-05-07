@@ -78,11 +78,24 @@ router.put('/projects/:id', authMiddleware, async (req: Request, res: Response) 
   try {
     const b = req.body;
     const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
+    // Fetch current to merge safely
+    const [cur] = await pool.query<RowDataPacket[]>('SELECT * FROM rnd_projects WHERE id = ?', [req.params.id]);
+    if (!cur.length) return res.status(404).json({ error: 'Not found' });
+    const c = cur[0];
     await pool.query(
       `UPDATE rnd_projects SET project_code=?, name=?, project_type=?, category=?, description=?, objectives=?, expected_output=?, status=?, priority=?, risk_level=?, confidentiality=?, regulatory_requirements=?, target_market=?, target_product=?, project_leader_id=?, department_id=?, start_date=?, target_end_date=?, actual_end_date=?, budget=?, spent=?, tags=?, notes=? WHERE id=?`,
-      [b.project_code, b.name, b.project_type, b.category, b.description, b.objectives, b.expected_output, b.status, b.priority, b.risk_level, b.confidentiality, b.regulatory_requirements, b.target_market, b.target_product, toNull(b.project_leader_id), toNull(b.department_id), toNull(b.start_date), toNull(b.target_end_date), toNull(b.actual_end_date), b.budget, b.spent, b.tags, b.notes, req.params.id]
+      [b.project_code||c.project_code, b.name||c.name, b.project_type||c.project_type, b.category||c.category, b.description??c.description, b.objectives??c.objectives, b.expected_output??c.expected_output, b.status||c.status, b.priority||c.priority, b.risk_level||c.risk_level, b.confidentiality||c.confidentiality, b.regulatory_requirements??c.regulatory_requirements, b.target_market??c.target_market, b.target_product??c.target_product, toNull(b.project_leader_id)??c.project_leader_id, toNull(b.department_id)??c.department_id, toNull(b.start_date)??c.start_date, toNull(b.target_end_date)??c.target_end_date, toNull(b.actual_end_date)??c.actual_end_date, b.budget??c.budget, b.spent??c.spent, b.tags??c.tags, b.notes??c.notes, req.params.id]
     );
     res.json({ message: 'Project updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH update status only (for kanban drag-drop)
+router.patch('/projects/:id/status', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { status } = req.body;
+    await pool.query('UPDATE rnd_projects SET status = ? WHERE id = ?', [status, req.params.id]);
+    res.json({ message: 'Status updated' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -336,6 +349,61 @@ router.put('/stability/:studyId/checkpoints/:cpId', authMiddleware, async (req: 
 router.delete('/stability/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     await pool.query('DELETE FROM rnd_stability_studies WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== PROJECT TASKS (per-project Kanban) ====================
+
+// GET tasks for a project
+router.get('/projects/:projectId/tasks', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT t.*, u.full_name as assigned_name FROM rnd_project_tasks t
+       LEFT JOIN users u ON t.assigned_to = u.id
+       WHERE t.project_id = ? ORDER BY t.sort_order, t.created_at`, [req.params.projectId]
+    );
+    res.json({ data: rows });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// POST create task
+router.post('/projects/:projectId/tasks', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { title, description, status, priority, assigned_to, due_date, tags, sort_order } = req.body;
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO rnd_project_tasks (project_id, title, description, status, priority, assigned_to, due_date, tags, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.projectId, title, description, status || 'todo', priority || 'medium', assigned_to || null, due_date || null, tags, sort_order || 0]
+    );
+    res.status(201).json({ data: { id: result.insertId }, message: 'Task created' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT update task
+router.put('/tasks/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { title, description, status, priority, assigned_to, due_date, completed_date, tags, sort_order } = req.body;
+    await pool.query(
+      `UPDATE rnd_project_tasks SET title=?, description=?, status=?, priority=?, assigned_to=?, due_date=?, completed_date=?, tags=?, sort_order=? WHERE id=?`,
+      [title, description, status, priority, assigned_to || null, due_date || null, completed_date || null, tags, sort_order, req.params.id]
+    );
+    res.json({ message: 'Task updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH task status (kanban drag)
+router.patch('/tasks/:id/status', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await pool.query('UPDATE rnd_project_tasks SET status = ? WHERE id = ?', [req.body.status, req.params.id]);
+    res.json({ message: 'Status updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE task
+router.delete('/tasks/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await pool.query('DELETE FROM rnd_project_tasks WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });

@@ -202,9 +202,8 @@ async function onDrop(_e: DragEvent, colId: string) {
   const col = columns.value.find(c => c.id === colId);
   if (!dragCard.value || !col) return;
   if (dragCard.value.status === col.status) return;
-  // Update status via API
   try {
-    await api.put(`/rnd/projects/${dragCard.value.id}`, { ...dragCard.value, status: col.status });
+    await api.patch(`/rnd/projects/${dragCard.value.id}/status`, { status: col.status });
     dragCard.value.status = col.status;
   } catch (err: any) { alert(err.message); }
 }
