@@ -214,7 +214,7 @@
                   class="flex-1 py-2 bg-blue-600 text-white text-center rounded-lg text-xs font-medium hover:bg-blue-700">⬇ Download</a>
                 <a v-if="previewDoc.file_path" :href="apiBase + previewDoc.file_path" target="_blank"
                   class="px-3 py-2 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">Open</a>
-                <button @click="deleteDoc(previewDoc.id); previewDoc = null" class="px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50">🗑️</button>
+                <button @click="deleteDocPreview(previewDoc.id)" class="px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50">🗑️</button>
               </div>
             </div>
           </div>
@@ -470,7 +470,15 @@ async function submitDoc() {
   try { await api.post('/rnd/documents', fd, {headers:{'Content-Type':'multipart/form-data'}}); showDocModal.value=false; selectedFile.value=null; await fetchDocs(); }
   catch(e:any) { alert(e.response?.data?.error||e.message); }
 }
-async function deleteDoc(id:number) { if(!confirm('Delete document?')) return; await api.delete(`/rnd/documents/${id}`); await fetchDocs(); }
+async function deleteDoc(id:number) {
+  if(!confirm('Delete this document?')) return;
+  try {
+    await api.delete(`/rnd/documents/${id}`);
+    if (previewDoc.value?.id === id) previewDoc.value = null;
+    await fetchDocs();
+  } catch(e:any) { alert(e.response?.data?.error || e.message); }
+}
+const deleteDocPreview = deleteDoc;
 
 // ====== Kanban per-project ======
 interface KCol { id: string; label: string; color: string; }
