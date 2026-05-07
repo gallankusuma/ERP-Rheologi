@@ -46,7 +46,7 @@
         <tbody>
           <tr v-for="item in sortedData" :key="item.id" class="border-b hover:bg-gray-50 transition-colors">
             <td class="px-4 py-3"><input type="checkbox" :checked="selectedIds.includes(item.id)" @change="toggleSelect(item.id)" /></td>
-            <td class="px-4 py-3 font-mono text-xs text-indigo-600 font-medium">{{ item.project_code }}</td>
+            <td class="px-4 py-3"><router-link :to="`/rnd/projects/${item.id}`" class="font-mono text-xs text-indigo-600 font-medium hover:text-indigo-800 hover:underline">{{ item.project_code }}</router-link></td>
             <td class="px-4 py-3">
               <div class="font-medium">{{ item.name }}</div>
               <div class="text-[10px] text-gray-400">{{ item.category }} · {{ labelify(item.confidentiality) }}</div>
