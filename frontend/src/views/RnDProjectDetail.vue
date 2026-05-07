@@ -110,6 +110,7 @@
           </div>
           <button @click="previewDoc = previewDoc ? null : previewDoc" class="px-2 py-1.5 border rounded-lg text-xs" :class="previewDoc ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-400'" title="Toggle preview">👁</button>
           <span class="text-xs text-gray-400">{{ filteredDocs.length }} items</span>
+          <button @click="showFolderModal = true; folderForm = { name: '', color: '#3B82F6' }; editingFolderId = null" class="px-3 py-1.5 border border-dashed border-amber-300 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-50 flex items-center gap-1">📁 New Folder</button>
           <button @click="showDocModal = true; docForm = emptyDoc()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 flex items-center gap-1">+ Upload</button>
         </div>
       </div>
@@ -120,21 +121,22 @@
         <div class="flex-1 overflow-y-auto p-4" style="min-width:200px">
           <!-- Root: Folders + Recent -->
           <div v-if="!docCurrentFolder">
-            <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Folders</div>
+            <div v-if="dbFolders.length" class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Folders</div>
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-5">
-              <div v-for="f in docFolders" :key="f.id" @click="docCurrentFolder = f.id"
-                class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/50 transition-all text-center">
+              <div v-for="f in dbFolders" :key="f.id" @click="docCurrentFolder = f.id"
+                @contextmenu.prevent="folderCtx = f; folderCtxPos = { x: $event.clientX, y: $event.clientY }"
+                class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/50 transition-all text-center relative">
                 <div class="text-3xl mb-1">📁</div>
-                <div class="text-xs font-medium text-gray-700 group-hover:text-blue-700 truncate">{{ f.label }}</div>
-                <div class="text-[10px] text-gray-400">{{ f.count }} files</div>
+                <div class="text-xs font-medium text-gray-700 group-hover:text-blue-700 truncate">{{ f.name }}</div>
+                <div class="text-[10px] text-gray-400">{{ f.file_count }} files</div>
               </div>
             </div>
-            <div v-if="documents.length" class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Recent Files</div>
+            <div v-if="unfolderedDocs.length" class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Files</div>
           </div>
 
           <!-- Files (grid or list) -->
           <div v-if="docViewMode === 'grid'" :class="docCurrentFolder ? '' : ''" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-            <div v-for="d in (docCurrentFolder ? filteredDocs : documents.slice(0,20))" :key="d.id"
+            <div v-for="d in (docCurrentFolder ? filteredDocs : unfolderedDocs)" :key="d.id"
               @click="previewDoc = d"
               class="group cursor-pointer p-3 rounded-xl border transition-all text-center relative"
               :class="previewDoc?.id === d.id ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300' : 'border-transparent hover:border-blue-200 hover:bg-blue-50/30'">
@@ -148,7 +150,7 @@
             <div class="flex items-center gap-3 px-3 py-1 text-[10px] text-gray-400 uppercase tracking-wider font-medium border-b mb-1">
               <span class="w-6"></span><span class="flex-1">Name</span><span class="w-16 text-right">Type</span><span class="w-16 text-right">Version</span><span class="w-20 text-right">Date</span>
             </div>
-            <div v-for="d in (docCurrentFolder ? filteredDocs : documents.slice(0,20))" :key="d.id"
+            <div v-for="d in (docCurrentFolder ? filteredDocs : unfolderedDocs)" :key="d.id"
               @click="previewDoc = d"
               class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors"
               :class="previewDoc?.id === d.id ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'">
@@ -218,6 +220,39 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Folder Context Menu -->
+      <div v-if="folderCtx" class="fixed z-[60] bg-white border rounded-xl shadow-xl py-1 min-w-[160px]" :style="{top: folderCtxPos.y + 'px', left: folderCtxPos.x + 'px'}" @click.stop>
+        <button @click="editFolder(folderCtx)" class="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2">✏️ Rename</button>
+        <button @click="deleteFolderCtx(folderCtx.id)" class="w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2">🗑️ Delete Folder</button>
+      </div>
+      <div v-if="folderCtx" class="fixed inset-0 z-[55]" @click="folderCtx = null"></div>
+
+      <!-- Folder Create/Edit Modal -->
+      <div v-if="showFolderModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+          <div class="px-6 py-4 border-b bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-t-2xl">
+            <h3 class="text-lg font-semibold">{{ editingFolderId ? 'Rename Folder' : 'New Folder' }}</h3>
+          </div>
+          <form @submit.prevent="submitFolder" class="p-6 space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-gray-700 mb-1">Folder Name</label>
+              <input v-model="folderForm.name" type="text" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. Certificates, Lab Reports..." autofocus />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-700 mb-1">Color</label>
+              <div class="flex gap-2">
+                <button v-for="c in ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#6B7280']" :key="c" type="button" @click="folderForm.color = c"
+                  class="w-7 h-7 rounded-full border-2 transition-all" :style="{backgroundColor: c}" :class="folderForm.color === c ? 'border-gray-800 scale-110' : 'border-transparent'"></button>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+              <button type="button" @click="showFolderModal = false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+              <button type="submit" class="px-6 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600">{{ editingFolderId ? 'Save' : 'Create' }}</button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -382,20 +417,44 @@ const docForm = ref(emptyDoc());
 
 // Document Explorer state
 const docViewMode = ref<'grid'|'list'>('grid');
-const docCurrentFolder = ref<string|null>(null);
+const docCurrentFolder = ref<number|null>(null);
+const dbFolders = ref<any[]>([]);
+const showFolderModal = ref(false);
+const editingFolderId = ref<number|null>(null);
+const folderForm = ref({ name: '', color: '#3B82F6' });
+const folderCtx = ref<any>(null);
+const folderCtxPos = ref({ x: 0, y: 0 });
 
-const docTypeLabels: Record<string, string> = {
-  protocol: 'Protocols', lab_report: 'Lab Reports', certificate: 'Certificates',
-  sds: 'SDS / MSDS', specification: 'Specifications', approval_letter: 'Approvals',
-  photo: 'Photos', raw_data: 'Raw Data', regulatory: 'Regulatory', other: 'Other'
-};
-const docFolders = computed(() => {
-  const types = Object.keys(docTypeLabels);
-  return types.map(t => ({ id: t, label: docTypeLabels[t], count: documents.value.filter(d => d.doc_type === t).length }))
-    .filter(f => f.count > 0);
-});
-const filteredDocs = computed(() => docCurrentFolder.value ? documents.value.filter(d => d.doc_type === docCurrentFolder.value) : documents.value);
-const docFolderLabel = (id: string) => docTypeLabels[id] || id;
+async function fetchFolders() {
+  try { const r = await api.get(`/rnd/folders?project_id=${projectId}`); dbFolders.value = r.data.data || []; } catch {}
+}
+const unfolderedDocs = computed(() => documents.value.filter(d => !d.folder_id));
+const filteredDocs = computed(() => docCurrentFolder.value ? documents.value.filter(d => d.folder_id === docCurrentFolder.value) : documents.value);
+const docFolderLabel = (id: any) => { const f = dbFolders.value.find(f => f.id === id); return f ? f.name : id; };
+
+async function submitFolder() {
+  try {
+    if (editingFolderId.value) {
+      await api.put(`/rnd/folders/${editingFolderId.value}`, folderForm.value);
+    } else {
+      await api.post('/rnd/folders', { project_id: projectId, ...folderForm.value });
+    }
+    showFolderModal.value = false;
+    await fetchFolders();
+  } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+function editFolder(f: any) {
+  folderCtx.value = null;
+  editingFolderId.value = f.id;
+  folderForm.value = { name: f.name, color: f.color || '#3B82F6' };
+  showFolderModal.value = true;
+}
+async function deleteFolderCtx(id: number) {
+  folderCtx.value = null;
+  if (!confirm('Delete this folder? Files inside will be moved to root.')) return;
+  try { await api.delete(`/rnd/folders/${id}`); if (docCurrentFolder.value === id) docCurrentFolder.value = null; await fetchFolders(); await fetchDocs(); } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+
 const fileIcon = (name: string) => {
   if (!name) return '📄';
   const ext = name.split('.').pop()?.toLowerCase() || '';
@@ -438,7 +497,7 @@ const phaseLabel = (p:string) => p?.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpp
 
 onMounted(async () => {
   try { const r = await api.get(`/rnd/projects/${projectId}`); project.value = r.data.data; } catch {}
-  await fetchMs(); await fetchDocs(); await fetchTasks(); loadKCols();
+  await fetchMs(); await fetchDocs(); await fetchFolders(); await fetchTasks(); loadKCols();
 });
 
 async function fetchMs() { try { const r = await api.get(`/rnd/projects/${projectId}/milestones`); milestones.value = r.data.data||[]; } catch {} }
@@ -466,8 +525,9 @@ async function submitDoc() {
   fd.append('doc_type', docForm.value.doc_type);
   fd.append('version', docForm.value.version);
   fd.append('description', docForm.value.description);
+  if (docCurrentFolder.value) fd.append('folder_id', String(docCurrentFolder.value));
   if(selectedFile.value) fd.append('file', selectedFile.value);
-  try { await api.post('/rnd/documents', fd, {headers:{'Content-Type':'multipart/form-data'}}); showDocModal.value=false; selectedFile.value=null; await fetchDocs(); }
+  try { await api.post('/rnd/documents', fd, {headers:{'Content-Type':'multipart/form-data'}}); showDocModal.value=false; selectedFile.value=null; await fetchDocs(); await fetchFolders(); }
   catch(e:any) { alert(e.response?.data?.error||e.message); }
 }
 async function deleteDoc(id:number) {
@@ -475,7 +535,7 @@ async function deleteDoc(id:number) {
   try {
     await api.delete(`/rnd/documents/${id}`);
     if (previewDoc.value?.id === id) previewDoc.value = null;
-    await fetchDocs();
+    await fetchDocs(); await fetchFolders();
   } catch(e:any) { alert(e.response?.data?.error || e.message); }
 }
 const deleteDocPreview = deleteDoc;

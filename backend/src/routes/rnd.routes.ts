@@ -509,16 +509,25 @@ router.get('/documents', authMiddleware, async (req: Request, res: Response) => 
 router.post('/documents', authMiddleware, upload.single('file'), async (req: Request, res: Response) => {
   try {
     const file = (req as any).file;
-    const { project_id, formulation_id, lab_test_id, stability_study_id, doc_type, title, description, version } = req.body;
+    const { project_id, formulation_id, lab_test_id, stability_study_id, doc_type, title, description, version, folder_id } = req.body;
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO rnd_documents (project_id, formulation_id, lab_test_id, stability_study_id, doc_type, title, description, file_name, file_path, file_size, mime_type, version, uploaded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO rnd_documents (project_id, formulation_id, lab_test_id, stability_study_id, doc_type, title, description, file_name, file_path, file_size, mime_type, version, uploaded_by, folder_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [project_id || null, formulation_id || null, lab_test_id || null, stability_study_id || null,
        doc_type || 'other', title || file?.originalname || 'Untitled', description,
        file?.originalname, file ? `/uploads/rnd/${file.filename}` : null,
-       file?.size || 0, file?.mimetype, version || '1.0', (req as any).user?.id]
+       file?.size || 0, file?.mimetype, version || '1.0', (req as any).user?.id, folder_id || null]
     );
     res.status(201).json({ data: { id: result.insertId, file_path: file ? `/uploads/rnd/${file.filename}` : null }, message: 'Document uploaded' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH move document to folder
+router.patch('/documents/:id/folder', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { folder_id } = req.body;
+    await pool.query('UPDATE rnd_documents SET folder_id = ? WHERE id = ?', [folder_id || null, req.params.id]);
+    res.json({ message: 'Moved' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -535,5 +544,51 @@ router.delete('/documents/:id', authMiddleware, async (req: Request, res: Respon
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-export default router;
+// ==================== DOCUMENT FOLDERS ====================
 
+// GET folders for a project
+router.get('/folders', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const projectId = req.query.project_id;
+    if (!projectId) return res.status(400).json({ error: 'project_id required' });
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT f.*, (SELECT COUNT(*) FROM rnd_documents d WHERE d.folder_id = f.id) as file_count
+       FROM rnd_document_folders f WHERE f.project_id = ? ORDER BY f.name`, [projectId]
+    );
+    res.json({ data: rows });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// POST create folder
+router.post('/folders', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { project_id, name, color } = req.body;
+    if (!project_id || !name) return res.status(400).json({ error: 'project_id and name required' });
+    const [result] = await pool.query<ResultSetHeader>(
+      'INSERT INTO rnd_document_folders (project_id, name, color) VALUES (?, ?, ?)',
+      [project_id, name.trim(), color || '#3B82F6']
+    );
+    res.json({ message: 'Created', id: result.insertId });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT update folder
+router.put('/folders/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, color } = req.body;
+    await pool.query('UPDATE rnd_document_folders SET name = ?, color = ? WHERE id = ?',
+      [name?.trim(), color || '#3B82F6', req.params.id]);
+    res.json({ message: 'Updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE folder (files inside get folder_id = NULL)
+router.delete('/folders/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await pool.query('UPDATE rnd_documents SET folder_id = NULL WHERE folder_id = ?', [req.params.id]);
+    await pool.query('DELETE FROM rnd_document_folders WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+export default router;
