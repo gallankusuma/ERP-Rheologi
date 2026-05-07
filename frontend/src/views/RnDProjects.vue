@@ -76,8 +76,9 @@
             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">📌 Project Identity</h4>
             <div class="grid grid-cols-3 gap-4">
               <div>
-                <label class="block text-xs font-medium text-gray-700 mb-1">Project Code *</label>
-                <input v-model="form.project_code" type="text" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="RND-2026-001" />
+                <label class="block text-xs font-medium text-gray-700 mb-1">Project Code</label>
+                <div v-if="editing" class="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 text-indigo-600 font-mono font-medium">{{ form.project_code }}</div>
+                <div v-else class="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 text-gray-400 italic">Auto: RND-{{ new Date().getFullYear() }}-XXX</div>
               </div>
               <div class="col-span-2">
                 <label class="block text-xs font-medium text-gray-700 mb-1">Project Name *</label>
