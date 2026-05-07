@@ -89,15 +89,14 @@
       </div>
     </div>
 
-    <!-- Tab: Documents (Windows Explorer Style) -->
+    <!-- Tab: Documents (Split Panel — Explorer + Preview) -->
     <div v-if="activeTab === 'documents'">
       <!-- Toolbar -->
       <div class="bg-white border rounded-t-xl px-4 py-2.5 flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <button @click="docCurrentFolder = null" class="p-1.5 rounded hover:bg-gray-100" :class="!docCurrentFolder ? 'text-gray-300' : 'text-gray-600'" :disabled="!docCurrentFolder" title="Back">
+          <button @click="docCurrentFolder = null; previewDoc = null" class="p-1.5 rounded hover:bg-gray-100" :class="!docCurrentFolder ? 'text-gray-300' : 'text-gray-600'" :disabled="!docCurrentFolder" title="Back">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
           </button>
-          <!-- Breadcrumb -->
           <div class="flex items-center text-sm">
             <button @click="docCurrentFolder = null" class="text-blue-600 hover:underline font-medium">📁 All Documents</button>
             <span v-if="docCurrentFolder" class="mx-1.5 text-gray-400">›</span>
@@ -106,107 +105,112 @@
         </div>
         <div class="flex items-center gap-2">
           <div class="flex border rounded-lg overflow-hidden">
-            <button @click="docViewMode = 'grid'" class="px-2.5 py-1.5" :class="docViewMode === 'grid' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-600'" title="Grid view">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-            </button>
-            <button @click="docViewMode = 'list'" class="px-2.5 py-1.5 border-l" :class="docViewMode === 'list' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-600'" title="List view">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2" rx="0.5"/><rect x="1" y="7" width="14" height="2" rx="0.5"/><rect x="1" y="12" width="14" height="2" rx="0.5"/></svg>
-            </button>
+            <button @click="docViewMode = 'grid'" class="px-2.5 py-1.5" :class="docViewMode === 'grid' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'" title="Grid"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg></button>
+            <button @click="docViewMode = 'list'" class="px-2.5 py-1.5 border-l" :class="docViewMode === 'list' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'" title="List"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2" rx="0.5"/><rect x="1" y="7" width="14" height="2" rx="0.5"/><rect x="1" y="12" width="14" height="2" rx="0.5"/></svg></button>
           </div>
+          <button @click="previewDoc = previewDoc ? null : previewDoc" class="px-2 py-1.5 border rounded-lg text-xs" :class="previewDoc ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-400'" title="Toggle preview">👁</button>
           <span class="text-xs text-gray-400">{{ filteredDocs.length }} items</span>
-          <button @click="showDocModal = true; docForm = emptyDoc()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 flex items-center gap-1">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-            Upload
-          </button>
+          <button @click="showDocModal = true; docForm = emptyDoc()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 flex items-center gap-1">+ Upload</button>
         </div>
       </div>
 
-      <!-- Content area -->
-      <div class="bg-white border-x border-b rounded-b-xl min-h-[400px] p-4">
-        <!-- Folder view (root) -->
-        <div v-if="!docCurrentFolder">
-          <div class="text-xs text-gray-400 uppercase tracking-wider mb-3 font-medium">Folders</div>
-          <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
-            <div v-for="f in docFolders" :key="f.id"
-              @click="docCurrentFolder = f.id"
-              @dblclick="docCurrentFolder = f.id"
-              class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/50 transition-all text-center">
-              <div class="text-4xl mb-1.5">📁</div>
-              <div class="text-xs font-medium text-gray-700 group-hover:text-blue-700 truncate">{{ f.label }}</div>
-              <div class="text-[10px] text-gray-400 mt-0.5">{{ f.count }} files</div>
+      <!-- Split Content -->
+      <div class="flex border-x border-b rounded-b-xl bg-white overflow-hidden" style="min-height:450px">
+        <!-- LEFT: File Explorer -->
+        <div class="flex-1 overflow-y-auto p-4 border-r" :class="previewDoc ? '' : 'border-r-0'">
+          <!-- Root: Folders + Recent -->
+          <div v-if="!docCurrentFolder">
+            <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Folders</div>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-5">
+              <div v-for="f in docFolders" :key="f.id" @click="docCurrentFolder = f.id"
+                class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/50 transition-all text-center">
+                <div class="text-3xl mb-1">📁</div>
+                <div class="text-xs font-medium text-gray-700 group-hover:text-blue-700 truncate">{{ f.label }}</div>
+                <div class="text-[10px] text-gray-400">{{ f.count }} files</div>
+              </div>
             </div>
+            <div v-if="documents.length" class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Recent Files</div>
           </div>
-          <!-- Recent files -->
-          <div v-if="documents.length" class="text-xs text-gray-400 uppercase tracking-wider mb-3 font-medium">Recent Files</div>
-          <div v-if="docViewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            <div v-for="d in documents.slice(0, 12)" :key="d.id"
-              class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/30 transition-all text-center relative">
-              <div class="text-3xl mb-1.5">{{ fileIcon(d.file_name) }}</div>
+
+          <!-- Files (grid or list) -->
+          <div v-if="docViewMode === 'grid'" :class="docCurrentFolder ? '' : ''" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            <div v-for="d in (docCurrentFolder ? filteredDocs : documents.slice(0,20))" :key="d.id"
+              @click="previewDoc = d"
+              class="group cursor-pointer p-3 rounded-xl border transition-all text-center relative"
+              :class="previewDoc?.id === d.id ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300' : 'border-transparent hover:border-blue-200 hover:bg-blue-50/30'">
+              <div class="text-3xl mb-1">{{ fileIcon(d.file_name) }}</div>
               <div class="text-xs font-medium text-gray-700 truncate">{{ d.title }}</div>
               <div class="text-[10px] text-gray-400 truncate">{{ d.file_name || 'No file' }}</div>
-              <div class="text-[9px] text-gray-300 mt-0.5">v{{ d.version }} · {{ formatDate(d.created_at) }}</div>
-              <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 flex gap-0.5">
-                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="p-1 bg-blue-500 text-white rounded text-[9px]" title="Download">⬇</a>
-                <button @click.stop="deleteDoc(d.id)" class="p-1 bg-red-500 text-white rounded text-[9px]" title="Delete">✕</button>
-              </div>
+              <div class="text-[9px] text-gray-300 mt-0.5">v{{ d.version }}</div>
             </div>
           </div>
-          <div v-else class="space-y-1">
-            <div v-for="d in documents.slice(0, 12)" :key="d.id"
-              class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50/50 group cursor-pointer">
-              <span class="text-xl">{{ fileIcon(d.file_name) }}</span>
+          <div v-else class="space-y-0.5">
+            <div class="flex items-center gap-3 px-3 py-1 text-[10px] text-gray-400 uppercase tracking-wider font-medium border-b mb-1">
+              <span class="w-6"></span><span class="flex-1">Name</span><span class="w-16 text-right">Type</span><span class="w-16 text-right">Version</span><span class="w-20 text-right">Date</span>
+            </div>
+            <div v-for="d in (docCurrentFolder ? filteredDocs : documents.slice(0,20))" :key="d.id"
+              @click="previewDoc = d"
+              class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors"
+              :class="previewDoc?.id === d.id ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'">
+              <span class="text-lg w-6">{{ fileIcon(d.file_name) }}</span>
               <div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-700 truncate">{{ d.title }}</div><div class="text-[10px] text-gray-400 truncate">{{ d.file_name }}</div></div>
-              <span class="text-[10px] px-2 py-0.5 bg-sky-100 text-sky-700 rounded">{{ d.doc_type }}</span>
+              <span class="text-[10px] text-gray-400 w-16 text-right">{{ d.doc_type }}</span>
               <span class="text-[10px] text-gray-400 w-16 text-right">v{{ d.version }}</span>
               <span class="text-[10px] text-gray-400 w-20 text-right">{{ formatDate(d.created_at) }}</span>
-              <div class="flex gap-1 opacity-0 group-hover:opacity-100">
-                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="text-blue-500 text-[10px] font-medium">Download</a>
-                <button @click="deleteDoc(d.id)" class="text-red-400 text-[10px]">Delete</button>
-              </div>
             </div>
           </div>
-          <div v-if="!documents.length" class="text-center py-16 text-gray-300">
-            <div class="text-5xl mb-3">📂</div>
-            <div class="text-sm">No documents yet</div>
-            <div class="text-xs mt-1">Click "Upload" to add your first file</div>
+          <div v-if="!documents.length && !docCurrentFolder" class="text-center py-16 text-gray-300">
+            <div class="text-5xl mb-3">📂</div><div class="text-sm">No documents yet</div><div class="text-xs mt-1">Click "Upload" to add files</div>
+          </div>
+          <div v-if="docCurrentFolder && !filteredDocs.length" class="text-center py-16 text-gray-300">
+            <div class="text-4xl mb-2">📂</div><div class="text-sm">Empty folder</div>
           </div>
         </div>
 
-        <!-- Inside folder -->
-        <div v-else>
-          <div v-if="docViewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            <div v-for="d in filteredDocs" :key="d.id"
-              class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/30 transition-all text-center relative">
-              <div class="text-3xl mb-1.5">{{ fileIcon(d.file_name) }}</div>
-              <div class="text-xs font-medium text-gray-700 truncate">{{ d.title }}</div>
-              <div class="text-[10px] text-gray-400 truncate">{{ d.file_name || 'No file' }}</div>
-              <div class="text-[9px] text-gray-300 mt-0.5">v{{ d.version }} · {{ formatDate(d.created_at) }}</div>
-              <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 flex gap-0.5">
-                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="p-1 bg-blue-500 text-white rounded text-[9px]" title="Download">⬇</a>
-                <button @click.stop="deleteDoc(d.id)" class="p-1 bg-red-500 text-white rounded text-[9px]" title="Delete">✕</button>
+        <!-- RIGHT: Preview Panel -->
+        <div v-if="previewDoc" class="w-[360px] shrink-0 border-l bg-gray-50/50 overflow-y-auto">
+          <div class="p-5">
+            <!-- Preview area -->
+            <div class="bg-white border rounded-xl p-4 mb-4 text-center min-h-[200px] flex items-center justify-center">
+              <div v-if="isPreviewImage(previewDoc.file_name)">
+                <img :src="apiBase + previewDoc.file_path" class="max-w-full max-h-[250px] rounded-lg mx-auto" @error="($event.target as HTMLImageElement).style.display='none'" />
+              </div>
+              <div v-else-if="isPreviewPdf(previewDoc.file_name)">
+                <iframe :src="apiBase + previewDoc.file_path" class="w-full h-[250px] rounded-lg border-0"></iframe>
+              </div>
+              <div v-else class="text-center">
+                <div class="text-6xl mb-3">{{ fileIcon(previewDoc.file_name) }}</div>
+                <div class="text-xs text-gray-400">{{ fileExt(previewDoc.file_name) }} file</div>
               </div>
             </div>
-          </div>
-          <div v-else class="space-y-1">
-            <div class="flex items-center gap-3 px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider font-medium border-b">
-              <span class="w-6"></span><span class="flex-1">Name</span><span class="w-20 text-right">Version</span><span class="w-24 text-right">Uploaded</span><span class="w-24 text-right">Uploader</span><span class="w-20"></span>
-            </div>
-            <div v-for="d in filteredDocs" :key="d.id"
-              class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50/50 group cursor-pointer">
-              <span class="text-xl w-6">{{ fileIcon(d.file_name) }}</span>
-              <div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-700 truncate">{{ d.title }}</div><div class="text-[10px] text-gray-400 truncate">{{ d.file_name }}</div></div>
-              <span class="text-[10px] text-gray-400 w-20 text-right">v{{ d.version }}</span>
-              <span class="text-[10px] text-gray-400 w-24 text-right">{{ formatDate(d.created_at) }}</span>
-              <span class="text-[10px] text-gray-400 w-24 text-right truncate">{{ d.uploader_name }}</span>
-              <div class="flex gap-1 w-20 justify-end opacity-0 group-hover:opacity-100">
-                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="text-blue-500 text-[10px] font-medium">⬇</a>
-                <button @click="deleteDoc(d.id)" class="text-red-400 text-[10px]">🗑️</button>
+
+            <!-- File info -->
+            <div class="space-y-3">
+              <div>
+                <div class="text-lg font-semibold text-gray-800 leading-tight">{{ previewDoc.title }}</div>
+                <div class="text-xs text-gray-400 mt-1 font-mono">{{ previewDoc.file_name || 'No file attached' }}</div>
+              </div>
+
+              <div class="border-t pt-3 space-y-2">
+                <div class="flex justify-between text-xs"><span class="text-gray-400">Type</span><span class="px-2 py-0.5 bg-sky-100 text-sky-700 rounded font-medium">{{ docFolderLabel(previewDoc.doc_type) }}</span></div>
+                <div class="flex justify-between text-xs"><span class="text-gray-400">Version</span><span class="text-gray-700 font-medium">v{{ previewDoc.version }}</span></div>
+                <div class="flex justify-between text-xs"><span class="text-gray-400">Uploaded</span><span class="text-gray-700">{{ formatDate(previewDoc.created_at) }}</span></div>
+                <div class="flex justify-between text-xs"><span class="text-gray-400">By</span><span class="text-gray-700">{{ previewDoc.uploader_name || '-' }}</span></div>
+                <div v-if="previewDoc.description" class="pt-2 border-t">
+                  <div class="text-[10px] text-gray-400 uppercase mb-1 font-medium">Description</div>
+                  <p class="text-xs text-gray-600">{{ previewDoc.description }}</p>
+                </div>
+              </div>
+
+              <!-- Actions -->
+              <div class="flex gap-2 pt-3 border-t">
+                <a v-if="previewDoc.file_path" :href="apiBase + previewDoc.file_path" target="_blank"
+                  class="flex-1 py-2 bg-blue-600 text-white text-center rounded-lg text-xs font-medium hover:bg-blue-700">⬇ Download</a>
+                <a v-if="previewDoc.file_path" :href="apiBase + previewDoc.file_path" target="_blank"
+                  class="px-3 py-2 border rounded-lg text-xs text-gray-600 hover:bg-gray-50">Open</a>
+                <button @click="deleteDoc(previewDoc.id); previewDoc = null" class="px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50">🗑️</button>
               </div>
             </div>
-          </div>
-          <div v-if="!filteredDocs.length" class="text-center py-16 text-gray-300">
-            <div class="text-4xl mb-2">📂</div>
-            <div class="text-sm">Empty folder</div>
           </div>
         </div>
       </div>
@@ -392,6 +396,12 @@ const fileIcon = (name: string) => {
   const map: Record<string, string> = { pdf:'📕', doc:'📘', docx:'📘', xls:'📗', xlsx:'📗', csv:'📗', ppt:'📙', pptx:'📙', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', gif:'🖼️', svg:'🖼️', zip:'📦', rar:'📦', '7z':'📦', mp4:'🎬', avi:'🎬', mov:'🎬', txt:'📝', md:'📝' };
   return map[ext] || '📄';
 };
+
+// Preview helpers
+const previewDoc = ref<any>(null);
+const isPreviewImage = (name: string) => { if(!name) return false; const e=name.split('.').pop()?.toLowerCase()||''; return ['jpg','jpeg','png','gif','svg','webp','bmp'].includes(e); };
+const isPreviewPdf = (name: string) => { if(!name) return false; return name.toLowerCase().endsWith('.pdf'); };
+const fileExt = (name: string) => name ? (name.split('.').pop()?.toUpperCase() || '???') : 'Unknown';
 
 const completedMilestones = computed(() => milestones.value.filter(m => m.status==='completed').length);
 const milestonePercent = computed(() => milestones.value.length ? Math.round(completedMilestones.value/milestones.value.length*100) : 0);
