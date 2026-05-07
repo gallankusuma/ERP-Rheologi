@@ -117,7 +117,7 @@
       <!-- Split Content -->
       <div class="flex border-x border-b rounded-b-xl bg-white overflow-hidden" style="min-height:450px">
         <!-- LEFT: File Explorer -->
-        <div class="flex-1 overflow-y-auto p-4 border-r" :class="previewDoc ? '' : 'border-r-0'">
+        <div class="flex-1 overflow-y-auto p-4" style="min-width:200px">
           <!-- Root: Folders + Recent -->
           <div v-if="!docCurrentFolder">
             <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-semibold">Folders</div>
@@ -167,16 +167,22 @@
           </div>
         </div>
 
+        <!-- Resize Handle -->
+        <div v-if="previewDoc" class="w-1.5 shrink-0 cursor-col-resize bg-gray-200 hover:bg-blue-400 active:bg-blue-500 transition-colors relative group" @mousedown="startResize">
+          <div class="absolute inset-y-0 -left-1 -right-1"></div>
+          <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-gray-400 group-hover:bg-white transition-colors"></div>
+        </div>
+
         <!-- RIGHT: Preview Panel -->
-        <div v-if="previewDoc" class="w-[360px] shrink-0 border-l bg-gray-50/50 overflow-y-auto">
+        <div v-if="previewDoc" class="shrink-0 bg-gray-50/50 overflow-y-auto" :style="{width: previewWidth + 'px'}">
           <div class="p-5">
             <!-- Preview area -->
-            <div class="bg-white border rounded-xl p-4 mb-4 text-center min-h-[200px] flex items-center justify-center">
-              <div v-if="isPreviewImage(previewDoc.file_name)">
-                <img :src="apiBase + previewDoc.file_path" class="max-w-full max-h-[250px] rounded-lg mx-auto" @error="($event.target as HTMLImageElement).style.display='none'" />
+            <div class="bg-white border rounded-xl p-4 mb-4 text-center flex items-center justify-center" :style="{minHeight: previewWidth > 400 ? '300px' : '180px'}">
+              <div v-if="isPreviewImage(previewDoc.file_name)" class="w-full">
+                <img :src="apiBase + previewDoc.file_path" class="max-w-full rounded-lg mx-auto" :style="{maxHeight: (previewWidth > 500 ? 400 : 220) + 'px'}" @error="($event.target as HTMLImageElement).style.display='none'" />
               </div>
-              <div v-else-if="isPreviewPdf(previewDoc.file_name)">
-                <iframe :src="apiBase + previewDoc.file_path" class="w-full h-[250px] rounded-lg border-0"></iframe>
+              <div v-else-if="isPreviewPdf(previewDoc.file_name)" class="w-full">
+                <iframe :src="apiBase + previewDoc.file_path" class="w-full rounded-lg border-0" :style="{height: (previewWidth > 500 ? 400 : 220) + 'px'}"></iframe>
               </div>
               <div v-else class="text-center">
                 <div class="text-6xl mb-3">{{ fileIcon(previewDoc.file_name) }}</div>
@@ -399,9 +405,25 @@ const fileIcon = (name: string) => {
 
 // Preview helpers
 const previewDoc = ref<any>(null);
+const previewWidth = ref(360);
 const isPreviewImage = (name: string) => { if(!name) return false; const e=name.split('.').pop()?.toLowerCase()||''; return ['jpg','jpeg','png','gif','svg','webp','bmp'].includes(e); };
 const isPreviewPdf = (name: string) => { if(!name) return false; return name.toLowerCase().endsWith('.pdf'); };
 const fileExt = (name: string) => name ? (name.split('.').pop()?.toUpperCase() || '???') : 'Unknown';
+
+function startResize(e: MouseEvent) {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startW = previewWidth.value;
+  const onMove = (ev: MouseEvent) => {
+    const delta = startX - ev.clientX;
+    previewWidth.value = Math.max(280, Math.min(800, startW + delta));
+  };
+  const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = ''; document.body.style.userSelect = ''; };
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
 
 const completedMilestones = computed(() => milestones.value.filter(m => m.status==='completed').length);
 const milestonePercent = computed(() => milestones.value.length ? Math.round(completedMilestones.value/milestones.value.length*100) : 0);
