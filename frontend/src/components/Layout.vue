@@ -391,6 +391,7 @@ const mainMenus: MenuItem[] = [
     icon: '🔬',
     submenus: [
       { id: 'rnd-projects', label: 'R&D Projects', route: '/rnd/projects' },
+      { id: 'rnd-kanban', label: 'Kanban Board', route: '/rnd/kanban' },
       { id: 'rnd-formulations', label: 'Formulations', route: '/rnd/formulations' },
       { id: 'rnd-lab-testing', label: 'Lab Testing', route: '/rnd/lab-testing' },
       { id: 'rnd-stability', label: 'Stability Studies', route: '/rnd/stability' },

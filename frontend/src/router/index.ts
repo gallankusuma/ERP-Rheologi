@@ -392,6 +392,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'R&D Project Detail' },
   },
   {
+    path: '/rnd/kanban',
+    name: 'RnDKanban',
+    component: () => import('../views/RnDKanban.vue'),
+    meta: { requiresAuth: true, title: 'R&D Kanban Board' },
+  },
+  {
     path: '/rnd/formulations',
     name: 'RnDFormulation',
     component: () => import('../views/RnDFormulation.vue'),
