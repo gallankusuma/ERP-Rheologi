@@ -89,34 +89,126 @@
       </div>
     </div>
 
-    <!-- Tab: Documents -->
+    <!-- Tab: Documents (Windows Explorer Style) -->
     <div v-if="activeTab === 'documents'">
-      <div class="flex justify-between items-center mb-4">
-        <h3 class="font-semibold text-gray-800">📁 Documents</h3>
-        <button @click="showDocModal = true; docForm = emptyDoc()" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm">+ Upload Document</button>
+      <!-- Toolbar -->
+      <div class="bg-white border rounded-t-xl px-4 py-2.5 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <button @click="docCurrentFolder = null" class="p-1.5 rounded hover:bg-gray-100" :class="!docCurrentFolder ? 'text-gray-300' : 'text-gray-600'" :disabled="!docCurrentFolder" title="Back">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          </button>
+          <!-- Breadcrumb -->
+          <div class="flex items-center text-sm">
+            <button @click="docCurrentFolder = null" class="text-blue-600 hover:underline font-medium">📁 All Documents</button>
+            <span v-if="docCurrentFolder" class="mx-1.5 text-gray-400">›</span>
+            <span v-if="docCurrentFolder" class="text-gray-700 font-medium">{{ docFolderLabel(docCurrentFolder) }}</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="flex border rounded-lg overflow-hidden">
+            <button @click="docViewMode = 'grid'" class="px-2.5 py-1.5" :class="docViewMode === 'grid' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-600'" title="Grid view">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+            </button>
+            <button @click="docViewMode = 'list'" class="px-2.5 py-1.5 border-l" :class="docViewMode === 'list' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-600'" title="List view">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2" rx="0.5"/><rect x="1" y="7" width="14" height="2" rx="0.5"/><rect x="1" y="12" width="14" height="2" rx="0.5"/></svg>
+            </button>
+          </div>
+          <span class="text-xs text-gray-400">{{ filteredDocs.length }} items</span>
+          <button @click="showDocModal = true; docForm = emptyDoc()" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Upload
+          </button>
+        </div>
       </div>
-      <div class="bg-white rounded-xl border overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50 border-b"><tr>
-            <th class="px-4 py-3 text-left">Title</th><th class="px-4 py-3 text-left">Type</th>
-            <th class="px-4 py-3 text-left">File</th><th class="px-4 py-3 text-left">Version</th>
-            <th class="px-4 py-3 text-left">Uploaded</th><th class="px-4 py-3 text-right">Actions</th>
-          </tr></thead>
-          <tbody>
-            <tr v-for="d in documents" :key="d.id" class="border-b hover:bg-gray-50">
-              <td class="px-4 py-3 font-medium">{{ d.title }}</td>
-              <td class="px-4 py-3"><span class="px-2 py-0.5 bg-sky-100 text-sky-700 rounded text-xs">{{ d.doc_type }}</span></td>
-              <td class="px-4 py-3 text-xs text-gray-500">{{ d.file_name || '-' }}</td>
-              <td class="px-4 py-3 text-xs">v{{ d.version }}</td>
-              <td class="px-4 py-3 text-xs text-gray-500">{{ d.uploader_name }} · {{ formatDate(d.created_at) }}</td>
-              <td class="px-4 py-3 text-right space-x-2">
-                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="text-blue-600 text-xs font-medium">Download</a>
-                <button @click="deleteDoc(d.id)" class="text-red-500 text-xs font-medium">Delete</button>
-              </td>
-            </tr>
-            <tr v-if="!documents.length"><td colspan="6" class="px-4 py-8 text-center text-gray-400">No documents uploaded</td></tr>
-          </tbody>
-        </table>
+
+      <!-- Content area -->
+      <div class="bg-white border-x border-b rounded-b-xl min-h-[400px] p-4">
+        <!-- Folder view (root) -->
+        <div v-if="!docCurrentFolder">
+          <div class="text-xs text-gray-400 uppercase tracking-wider mb-3 font-medium">Folders</div>
+          <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+            <div v-for="f in docFolders" :key="f.id"
+              @click="docCurrentFolder = f.id"
+              @dblclick="docCurrentFolder = f.id"
+              class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/50 transition-all text-center">
+              <div class="text-4xl mb-1.5">📁</div>
+              <div class="text-xs font-medium text-gray-700 group-hover:text-blue-700 truncate">{{ f.label }}</div>
+              <div class="text-[10px] text-gray-400 mt-0.5">{{ f.count }} files</div>
+            </div>
+          </div>
+          <!-- Recent files -->
+          <div v-if="documents.length" class="text-xs text-gray-400 uppercase tracking-wider mb-3 font-medium">Recent Files</div>
+          <div v-if="docViewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div v-for="d in documents.slice(0, 12)" :key="d.id"
+              class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/30 transition-all text-center relative">
+              <div class="text-3xl mb-1.5">{{ fileIcon(d.file_name) }}</div>
+              <div class="text-xs font-medium text-gray-700 truncate">{{ d.title }}</div>
+              <div class="text-[10px] text-gray-400 truncate">{{ d.file_name || 'No file' }}</div>
+              <div class="text-[9px] text-gray-300 mt-0.5">v{{ d.version }} · {{ formatDate(d.created_at) }}</div>
+              <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 flex gap-0.5">
+                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="p-1 bg-blue-500 text-white rounded text-[9px]" title="Download">⬇</a>
+                <button @click.stop="deleteDoc(d.id)" class="p-1 bg-red-500 text-white rounded text-[9px]" title="Delete">✕</button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="space-y-1">
+            <div v-for="d in documents.slice(0, 12)" :key="d.id"
+              class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50/50 group cursor-pointer">
+              <span class="text-xl">{{ fileIcon(d.file_name) }}</span>
+              <div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-700 truncate">{{ d.title }}</div><div class="text-[10px] text-gray-400 truncate">{{ d.file_name }}</div></div>
+              <span class="text-[10px] px-2 py-0.5 bg-sky-100 text-sky-700 rounded">{{ d.doc_type }}</span>
+              <span class="text-[10px] text-gray-400 w-16 text-right">v{{ d.version }}</span>
+              <span class="text-[10px] text-gray-400 w-20 text-right">{{ formatDate(d.created_at) }}</span>
+              <div class="flex gap-1 opacity-0 group-hover:opacity-100">
+                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="text-blue-500 text-[10px] font-medium">Download</a>
+                <button @click="deleteDoc(d.id)" class="text-red-400 text-[10px]">Delete</button>
+              </div>
+            </div>
+          </div>
+          <div v-if="!documents.length" class="text-center py-16 text-gray-300">
+            <div class="text-5xl mb-3">📂</div>
+            <div class="text-sm">No documents yet</div>
+            <div class="text-xs mt-1">Click "Upload" to add your first file</div>
+          </div>
+        </div>
+
+        <!-- Inside folder -->
+        <div v-else>
+          <div v-if="docViewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div v-for="d in filteredDocs" :key="d.id"
+              class="group cursor-pointer p-3 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50/30 transition-all text-center relative">
+              <div class="text-3xl mb-1.5">{{ fileIcon(d.file_name) }}</div>
+              <div class="text-xs font-medium text-gray-700 truncate">{{ d.title }}</div>
+              <div class="text-[10px] text-gray-400 truncate">{{ d.file_name || 'No file' }}</div>
+              <div class="text-[9px] text-gray-300 mt-0.5">v{{ d.version }} · {{ formatDate(d.created_at) }}</div>
+              <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 flex gap-0.5">
+                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="p-1 bg-blue-500 text-white rounded text-[9px]" title="Download">⬇</a>
+                <button @click.stop="deleteDoc(d.id)" class="p-1 bg-red-500 text-white rounded text-[9px]" title="Delete">✕</button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="space-y-1">
+            <div class="flex items-center gap-3 px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider font-medium border-b">
+              <span class="w-6"></span><span class="flex-1">Name</span><span class="w-20 text-right">Version</span><span class="w-24 text-right">Uploaded</span><span class="w-24 text-right">Uploader</span><span class="w-20"></span>
+            </div>
+            <div v-for="d in filteredDocs" :key="d.id"
+              class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50/50 group cursor-pointer">
+              <span class="text-xl w-6">{{ fileIcon(d.file_name) }}</span>
+              <div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-700 truncate">{{ d.title }}</div><div class="text-[10px] text-gray-400 truncate">{{ d.file_name }}</div></div>
+              <span class="text-[10px] text-gray-400 w-20 text-right">v{{ d.version }}</span>
+              <span class="text-[10px] text-gray-400 w-24 text-right">{{ formatDate(d.created_at) }}</span>
+              <span class="text-[10px] text-gray-400 w-24 text-right truncate">{{ d.uploader_name }}</span>
+              <div class="flex gap-1 w-20 justify-end opacity-0 group-hover:opacity-100">
+                <a v-if="d.file_path" :href="apiBase + d.file_path" target="_blank" class="text-blue-500 text-[10px] font-medium">⬇</a>
+                <button @click="deleteDoc(d.id)" class="text-red-400 text-[10px]">🗑️</button>
+              </div>
+            </div>
+          </div>
+          <div v-if="!filteredDocs.length" class="text-center py-16 text-gray-300">
+            <div class="text-4xl mb-2">📂</div>
+            <div class="text-sm">Empty folder</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -278,8 +370,32 @@ const emptyDoc = () => ({ title:'', doc_type:'other', version:'1.0', description
 const msForm = ref(emptyMs());
 const docForm = ref(emptyDoc());
 
+// Document Explorer state
+const docViewMode = ref<'grid'|'list'>('grid');
+const docCurrentFolder = ref<string|null>(null);
+
+const docTypeLabels: Record<string, string> = {
+  protocol: 'Protocols', lab_report: 'Lab Reports', certificate: 'Certificates',
+  sds: 'SDS / MSDS', specification: 'Specifications', approval_letter: 'Approvals',
+  photo: 'Photos', raw_data: 'Raw Data', regulatory: 'Regulatory', other: 'Other'
+};
+const docFolders = computed(() => {
+  const types = Object.keys(docTypeLabels);
+  return types.map(t => ({ id: t, label: docTypeLabels[t], count: documents.value.filter(d => d.doc_type === t).length }))
+    .filter(f => f.count > 0);
+});
+const filteredDocs = computed(() => docCurrentFolder.value ? documents.value.filter(d => d.doc_type === docCurrentFolder.value) : documents.value);
+const docFolderLabel = (id: string) => docTypeLabels[id] || id;
+const fileIcon = (name: string) => {
+  if (!name) return '📄';
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = { pdf:'📕', doc:'📘', docx:'📘', xls:'📗', xlsx:'📗', csv:'📗', ppt:'📙', pptx:'📙', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', gif:'🖼️', svg:'🖼️', zip:'📦', rar:'📦', '7z':'📦', mp4:'🎬', avi:'🎬', mov:'🎬', txt:'📝', md:'📝' };
+  return map[ext] || '📄';
+};
+
 const completedMilestones = computed(() => milestones.value.filter(m => m.status==='completed').length);
 const milestonePercent = computed(() => milestones.value.length ? Math.round(completedMilestones.value/milestones.value.length*100) : 0);
+
 
 const statusClass = (s:string) => ({draft:'bg-gray-100 text-gray-700',active:'bg-green-100 text-green-700',on_hold:'bg-yellow-100 text-yellow-700',completed:'bg-blue-100 text-blue-700',cancelled:'bg-red-100 text-red-700'}[s]||'bg-gray-100');
 const priorityClass = (p:string) => ({low:'bg-gray-100 text-gray-600',medium:'bg-blue-100 text-blue-700',high:'bg-orange-100 text-orange-700',critical:'bg-red-100 text-red-700'}[p]||'');
