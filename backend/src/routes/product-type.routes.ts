@@ -64,9 +64,11 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Code and Name are required' });
     }
 
+    const activeValue = active !== undefined ? (active ? 1 : 0) : 1;
+
     await dbRun(
-      'UPDATE product_types SET code = ?, name = ?, description = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [code, name, description || null, active ? 1 : 0, req.params.id]
+      'UPDATE product_types SET code = ?, name = ?, description = ?, active = ? WHERE id = ?',
+      [code, name, description || null, activeValue, req.params.id]
     );
 
     res.json({ message: 'Product type updated successfully' });

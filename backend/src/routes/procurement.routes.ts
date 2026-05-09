@@ -1606,21 +1606,51 @@ router.delete('/goods-receipts/:id', authMiddleware, async (req: Request, res: R
   try {
     const { id } = req.params;
 
-    // Get GRN detail to check status
-    const grn = await dbGet(`SELECT * FROM goods_receipts WHERE id = ?`, [id]);
-
+    const grn = await dbGet(`SELECT * FROM goods_receipts WHERE id = ?`, [id]) as any;
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
-    if (grn.status !== 'draft') {
-      return res.status(400).json({ error: 'Can only delete draft GRN. Current status: ' + grn.status });
+
+    // Safe cleanup helper
+    const safeCleanup = async (sql: string, params: any[], label: string) => {
+      try { await dbRun(sql, params); } catch (e: any) {
+        console.warn(`Warning cleaning ${label}:`, e.message?.substring(0, 120));
+      }
+    };
+
+    // If GRN was approved (inventory was updated), reverse the stock
+    if (Number(grn.approval_status) === 2) {
+      // Get items to reverse inventory
+      const grnItems = await dbAll(
+        'SELECT * FROM grn_items WHERE grn_id = ?', [id]
+      ) as any[];
+
+      for (const item of grnItems) {
+        if (item.product_id && (item.received_quantity || 0) > 0) {
+          // Reduce inventory
+          await safeCleanup(
+            'UPDATE inventory SET quantity_on_hand = GREATEST(0, quantity_on_hand - ?), quantity_available = GREATEST(0, quantity_available - ?) WHERE product_id = ?',
+            [item.received_quantity, item.received_quantity, item.product_id],
+            'inventory_reverse'
+          );
+        }
+      }
     }
 
-    // Delete the GRN
+    // 1. Delete stock movements referencing this GRN
+    await safeCleanup('DELETE FROM stock_movements WHERE reference_type = ? AND reference_id = ?', ['GRN', id], 'stock_movements');
+
+    // 2. Delete GRN items
+    await safeCleanup('DELETE FROM grn_items WHERE grn_id = ?', [id], 'grn_items');
+
+    // 3. Delete the GRN itself
     await dbRun(`DELETE FROM goods_receipts WHERE id = ?`, [id]);
 
     res.json({ message: 'Goods receipt deleted successfully' });
   } catch (error: any) {
     console.error('Error deleting goods receipt:', error);
-    res.status(500).json({ error: 'Failed to delete goods receipt' });
+    if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.errno === 1451) {
+      return res.status(400).json({ error: 'Tidak dapat menghapus GRN ini karena masih digunakan di modul lain.' });
+    }
+    res.status(500).json({ error: 'Failed to delete goods receipt: ' + (error.message || 'Unknown error') });
   }
 });
 
@@ -1720,10 +1750,11 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
     // If now fully approved, create stock movements and update inventory
     const updated = await dbGet('SELECT * FROM goods_receipts WHERE id = ?', [id]) as any;
     if (Number(updated.approval_status) === 2) {
-      const stockRef = `GRN-${updated.gr_number}`;
+      const grnId = Number(updated.id);
+      const grnNumber = updated.grn_number || updated.gr_number || `GRN-${grnId}`;
       const alreadyPostedStock = await dbGet(
         'SELECT COUNT(*) as cnt FROM stock_movements WHERE reference_type = ? AND reference_id = ?',
-        ['GRN', stockRef]
+        ['GRN', grnId]
       ) as any;
 
       if ((alreadyPostedStock?.cnt || 0) === 0) {
@@ -1737,10 +1768,10 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
                 item.product_id,
                 updated.warehouse_id,
                 'GRN',
-                stockRef,
+                grnId,
                 item.received_quantity,
                 'inbound',
-                `Receipt from ${updated.po_id}: ${item.remarks || 'OK'}`
+                `${grnNumber} - Receipt from PO ${updated.po_id}: ${item.remarks || 'OK'}`
               ]
             );
           }
@@ -1833,6 +1864,7 @@ async function applyGrnToInventory(grn: any, items: any[]) {
         inventoryId = insertResult.insertId;
       }
 
+      const grnLabel = grn.grn_number || grn.gr_number || `GRN-${grn.id}`;
       await dbRun(
         `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
         VALUES (?, ?, ?, 'inbound', 'GRN', ?, ?, CURRENT_TIMESTAMP)`,
@@ -1841,7 +1873,7 @@ async function applyGrnToInventory(grn: any, items: any[]) {
           grn.warehouse_id,
           qty,
           grn.id,
-          `GRN ${grn.gr_number}${item.remarks ? ' - ' + item.remarks : ''}`
+          `${grnLabel}${item.remarks ? ' - ' + item.remarks : ''}`
         ]
       );
     }
