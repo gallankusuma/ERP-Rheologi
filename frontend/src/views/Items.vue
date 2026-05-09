@@ -356,10 +356,20 @@ const toggleSelectAll = () => { if (isAllSelected.value) { selectedIds.value = [
 const bulkDelete = async () => {
   if (!confirm(`Delete ${selectedIds.value.length} items? This cannot be undone.`)) return;
   try {
-    for (const id of selectedIds.value) { await api.delete(`/products/${id}`); }
+    for (const id of selectedIds.value) { 
+      try {
+        await api.delete(`/products/${id}`); 
+      } catch (err: any) {
+        throw new Error(err.response?.data?.error || 'Some items failed to delete');
+      }
+    }
     selectedIds.value = [];
+  } catch (err: any) { 
+    alert(err.message); 
+    console.error(err); 
+  } finally {
     await fetchItems();
-  } catch (err) { alert('Some items failed to delete'); console.error(err); }
+  }
 };
 
 const { toggleSort, sortIcon, sortedData } = useTableSort(items);

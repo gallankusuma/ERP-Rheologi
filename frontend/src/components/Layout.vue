@@ -9,9 +9,8 @@
           <button @click="mobileMenuOpen = !mobileMenuOpen" class="md:hidden p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
           </button>
-          <span class="text-2xl hidden sm:inline">⚡</span>
-          <span class="text-2xl hidden sm:inline">💧</span>
-          <span class="font-bold text-cyan-700 dark:text-cyan-400 text-sm md:text-lg truncate">X-Lerate Manufacturing ERP</span>
+          <span class="text-2xl hidden sm:inline text-blue-500 font-bold">G</span>
+          <span class="font-bold text-cyan-700 dark:text-cyan-400 text-sm md:text-lg truncate">Genjaya ERP</span>
           <span class="text-gray-400 dark:text-gray-500 hidden lg:inline">|</span>
           <span class="text-sm md:text-base font-semibold text-gray-700 dark:text-gray-300 hidden lg:inline truncate">{{ companyName }}</span>
         </div>
@@ -52,6 +51,7 @@
             <div v-if="showUserMenu" class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
               <button @click="goToProfile" class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-600">👤 My Profile</button>
               <button @click="goToSettings" class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-600">⚙️ Settings</button>
+              <button @click="goToChangePassword" class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-600">🔑 Change Password</button>
               <button @click="handleLogout" class="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20">🚪 Logout</button>
             </div>
           </div>
@@ -605,6 +605,11 @@ const goToProfile = () => {
 const goToSettings = () => {
   showUserMenu.value = false;
   router.push('/admin/settings');
+};
+
+const goToChangePassword = () => {
+  showUserMenu.value = false;
+  router.push('/change-password');
 };
 
 </script>

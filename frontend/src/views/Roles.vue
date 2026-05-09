@@ -299,6 +299,7 @@ const moduleIcons: Record<string, string> = {
   'Dashboard': '📊',
   'Projects': '📁',
   'Estimator': '📐',
+  'R&D': '🔬',
   'Procurement': '🛒',
   'Inventory': '📦',
   'Production': '🏭',

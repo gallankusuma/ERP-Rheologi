@@ -513,22 +513,51 @@ router.delete('/purchase-requests/:id', authMiddleware, async (req: Request, res
   try {
     const { id } = req.params;
 
-    // Get PR detail to check status
+    // Get PR detail
     const pr = await dbGet(`SELECT * FROM purchase_requests WHERE id = ?`, [id]) as any;
-    
     if (!pr) return res.status(404).json({ error: 'PR not found' });
-    if (String(pr.status || '').toUpperCase() !== 'DRAFT') {
-      return res.status(400).json({ error: 'Can only delete draft PR. Current status: ' + pr.status });
+
+    // Check if any PO still references this PR
+    const linkedPO = await dbGet(
+      'SELECT id, po_number FROM purchase_orders WHERE pr_id = ? LIMIT 1',
+      [id]
+    ) as any;
+
+    if (linkedPO) {
+      return res.status(400).json({ 
+        error: `Tidak dapat menghapus PR ini karena masih terikat dengan PO ${linkedPO.po_number || linkedPO.id}. Hapus PO tersebut terlebih dahulu.` 
+      });
     }
 
-    // Delete the PR items first
-    await dbRun(`DELETE FROM purchase_request_items WHERE purchase_request_id = ?`, [id]);
+    // Safe cleanup helper
+    const safeCleanup = async (sql: string, params: any[], label: string) => {
+      try { await dbRun(sql, params); } catch (e: any) {
+        console.warn(`Warning cleaning ${label}:`, e.message?.substring(0, 120));
+      }
+    };
+
+    // 1. Delete bid items for all bids of this PR
+    await safeCleanup(
+      'DELETE FROM pr_bid_items WHERE bid_id IN (SELECT id FROM pr_bids WHERE pr_id = ?)', 
+      [id], 'pr_bid_items'
+    );
+
+    // 2. Delete bids (including winner) for this PR
+    await safeCleanup('DELETE FROM pr_bids WHERE pr_id = ?', [id], 'pr_bids');
+
+    // 3. Delete the PR items
+    await safeCleanup('DELETE FROM purchase_request_items WHERE purchase_request_id = ?', [id], 'pr_items');
+
+    // 4. Delete the PR itself
     await dbRun(`DELETE FROM purchase_requests WHERE id = ?`, [id]);
     
     res.json({ message: 'Purchase request deleted successfully' });
   } catch (error: any) {
     console.error('Error deleting purchase request:', error);
-    res.status(500).json({ error: 'Failed to delete purchase request' });
+    if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.errno === 1451) {
+      return res.status(400).json({ error: 'Tidak dapat menghapus PR ini karena masih digunakan di modul lain.' });
+    }
+    res.status(500).json({ error: 'Failed to delete purchase request: ' + (error.message || 'Unknown error') });
   }
 });
 

@@ -765,6 +765,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/AdminBackup.vue'),
     meta: { requiresAuth: true, title: 'Backup & Restore' },
   },
+  // User Profile
+  {
+    path: '/change-password',
+    name: 'ChangePassword',
+    component: () => import('../views/ChangePassword.vue'),
+    meta: { requiresAuth: true, title: 'Change Password' },
+  },
   ...placeholderRoutes,
 ];
 

@@ -95,10 +95,17 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 // DELETE /api/products/:id
 router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    await dbRun('DELETE FROM products WHERE id = ?', [req.params.id]);
+    const result = await dbRun('DELETE FROM products WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
     res.json({ message: 'Product deleted successfully' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error deleting product:', error);
+    // Check for MySQL foreign key constraint error
+    if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.errno === 1451) {
+      return res.status(400).json({ error: 'Tidak dapat menghapus item ini karena sudah digunakan dalam transaksi (misalnya di BOM, PO, atau Inventory).' });
+    }
     res.status(500).json({ error: 'Failed to delete product' });
   }
 });

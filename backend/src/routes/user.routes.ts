@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { hashPassword, validateEmail } from '../utils/auth.utils';
+import { hashPassword, verifyPassword, validateEmail } from '../utils/auth.utils';
 
 const router = Router();
 
@@ -50,6 +50,40 @@ router.get('/', authMiddleware, async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// PUT /users/change-password - Change own password
+router.put('/change-password', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { currentPassword, newPassword } = req.body || {};
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+
+    // Fetch current hashed password
+    const user = await dbGet('SELECT id, password FROM users WHERE id = ?', [userId]) as any;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Verify current password
+    const isValid = await verifyPassword(currentPassword, user.password);
+    if (!isValid) {
+      return res.status(403).json({ error: 'Current password is incorrect' });
+    }
+
+    // Hash and update
+    const hashed = await hashPassword(newPassword);
+    await dbRun('UPDATE users SET password = ? WHERE id = ?', [hashed, userId]);
+
+    res.json({ success: true, message: 'Password changed successfully' });
+  } catch (error: any) {
+    console.error('Error changing password:', error);
+    res.status(500).json({ error: error?.message || 'Failed to change password' });
   }
 });
 
