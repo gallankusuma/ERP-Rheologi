@@ -1,30 +1,84 @@
-// Placeholder for approval workflow composable
+// Composable for 2-stage approval workflow
+// approve_1 = Supervisor (step 1), approve_2 = Manager/Final (step 2)
 import { useAuthStore } from '../stores/auth';
 
 /**
  * Composable untuk mengelola approval workflow yang reusable
- * Digunakan untuk BOM, Inventory Transactions, dan Procurement
+ * Digunakan untuk BOM, Inventory Transactions, Procurement, Finance, Quality, dll.
  * 
  * Approval Levels:
  * 0/2 = Pending
- * 1/2 = Supervisor Approved
- * 2/2 = Manager Approved (Final)
+ * 1/2 = Supervisor Approved (approve_1)
+ * 2/2 = Manager Approved / Final (approve_2)
+ * 
+ * Permission-based:
+ * - approve_1: bisa approve status 0 → 1
+ * - approve_2: bisa approve status 1 → 2
+ * - approve (legacy): full approve (Director+)
+ * 
+ * Fallback: if no permissions data, fall back to user_level
  */
-export function useApprovalWorkflow() {
+export function useApprovalWorkflow(moduleResource?: string) {
   const authStore = useAuthStore();
 
   /**
-   * Check jika user bisa approve BOM/Document berdasarkan status saat ini
-   * Supervisor (Level 2): Hanya bisa approve status 0 → 1
-   * Manager (Level 3): Hanya bisa approve status 1 → 2
-   * Director/Master (Level 4+): Bisa approve langsung 0 → 2 atau 1 → 2 (DIRECT APPROVAL)
+   * Helper: check if user has a specific permission for this module
+   */
+  const hasPerm = (action: string): boolean => {
+    if (!moduleResource) return false;
+    return authStore.hasPermission(`${moduleResource}.${action}`);
+  };
+
+  /**
+   * Check jika user bisa approve dokumen berdasarkan status saat ini
+   * 
+   * Logic priority:
+   * 1. Master Admin (Level 10+): always can approve
+   * 2. If user has permissions data → check approve_1 / approve_2 / approve
+   * 3. Fallback to user_level if no permissions (backward compat)
    */
   const canApprove = (currentStatus: number) => {
     const userLevel = authStore.user?.user_level || 1;
+    const perms = authStore.user?.permissions;
     
-    // Director & Master Admin (Level 4+): DIRECT APPROVAL - bisa approve dari status apapun yang belum 2/2
+    // Master Admin: always can approve anything not yet fully approved
+    if (userLevel >= 10) {
+      return currentStatus < 2;
+    }
+
+    // ── Permission-based logic (preferred) ──
+    if (perms && perms.length > 0 && moduleResource) {
+      const hasApprove1 = hasPerm('approve_1');
+      const hasApprove2 = hasPerm('approve_2');
+      const hasFullApprove = hasPerm('approve');
+
+      // Full approve (legacy): can approve from any status < 2
+      if (hasFullApprove && !hasApprove1 && !hasApprove2) {
+        return currentStatus < 2;
+      }
+
+      // approve_1 only: can do step 0 → 1
+      if (hasApprove1 && currentStatus === 0) {
+        return true;
+      }
+
+      // approve_2 only: can do step 1 → 2
+      if (hasApprove2 && currentStatus === 1) {
+        return true;
+      }
+
+      // Has both approve_1 + approve_2 or full approve: Director-level
+      if ((hasApprove1 && hasApprove2) || hasFullApprove) {
+        return currentStatus < 2;
+      }
+
+      return false;
+    }
+
+    // ── Fallback: user_level based (backward compat) ──
+    // Director & Master Admin (Level 4+): DIRECT APPROVAL
     if (userLevel >= 4) {
-      return currentStatus < 2; // Bisa approve status 0 atau 1
+      return currentStatus < 2;
     }
     
     // Supervisor (Level 2): Hanya 0/2 → 1/2
@@ -42,24 +96,42 @@ export function useApprovalWorkflow() {
 
   /**
    * Check jika user bisa reject/reset approval
-   * Supervisor+ (Level 2): Bisa reject status 1 atau 2
-   * Director/Master (Level 4+): Bisa reject status 1 atau 2 untuk reset ke 0/2
-   * Status 0/2 (Pending): Tidak perlu reject, cukup delete
    */
   const canReject = (currentStatus: number) => {
     const userLevel = authStore.user?.user_level || 1;
+    const perms = authStore.user?.permissions;
     
-    // Jangan tampilkan reject untuk status 0 - gunakan delete saja
-    if (currentStatus === 0) {
+    // Don't show reject for pending items — use delete instead
+    if (currentStatus === 0) return false;
+
+    // Master Admin: always can reject
+    if (userLevel >= 10) {
+      return currentStatus === 1 || currentStatus === 2;
+    }
+
+    // Permission-based
+    if (perms && perms.length > 0 && moduleResource) {
+      const hasApprove1 = hasPerm('approve_1');
+      const hasApprove2 = hasPerm('approve_2');
+      const hasFullApprove = hasPerm('approve');
+
+      // Full approve or approve_2: can reject status 1 or 2
+      if (hasFullApprove || hasApprove2) {
+        return currentStatus === 1 || currentStatus === 2;
+      }
+
+      // approve_1 only: can reject status 1 (rollback own approval)
+      if (hasApprove1) {
+        return currentStatus === 1;
+      }
+
       return false;
     }
-    
-    // Director & Master Admin (Level 4+): Bisa reject status 1 atau 2
+
+    // Fallback: user_level
     if (userLevel >= 4) {
       return currentStatus === 1 || currentStatus === 2;
     }
-    
-    // Supervisor & Manager (Level 2-3): Hanya bisa reject status 1
     return userLevel >= 2 && currentStatus === 1;
   };
 
@@ -95,31 +167,60 @@ export function useApprovalWorkflow() {
   };
 
   /**
-   * Get warning message jika manager coba approve sebelum supervisor
-   * Director & Master Admin tidak dapat warning karena punya DIRECT APPROVAL
+   * Get warning message jika user coba approve tapi belum boleh
    */
   const getApprovalMessage = (currentStatus: number) => {
     const userLevel = authStore.user?.user_level || 1;
-    
-    // Director & Master Admin (Level 4+) tidak dapat warning - mereka bisa DIRECT APPROVAL
-    if (userLevel >= 4) {
+    const perms = authStore.user?.permissions;
+
+    // Master Admin: no warning
+    if (userLevel >= 10) return '';
+
+    // Permission-based check
+    if (perms && perms.length > 0 && moduleResource) {
+      const hasApprove1 = hasPerm('approve_1');
+      const hasApprove2 = hasPerm('approve_2');
+      const hasFullApprove = hasPerm('approve');
+
+      if (hasFullApprove || (hasApprove1 && hasApprove2)) return '';
+      
+      // User has approve_2 but status is 0 (need approve_1 first)
+      if (hasApprove2 && !hasApprove1 && currentStatus === 0) {
+        return 'Approval Level 1 (Supervisor) must be completed first';
+      }
+
       return '';
     }
-    
-    // Manager (Level 3) harus tunggu supervisor approve dulu
+
+    // Fallback
+    if (userLevel >= 4) return '';
     if (userLevel === 3 && currentStatus === 0) {
       return 'Approval 1/2 (Supervisor) must be completed first';
     }
-    
     return '';
   };
 
   /**
-   * Get approval level name berdasarkan user level
+   * Get approval level name berdasarkan user permissions/level
    */
   const getApprovalLevelName = () => {
     const userLevel = authStore.user?.user_level || 1;
+    const perms = authStore.user?.permissions;
+
     if (userLevel >= 10) return 'Master Admin';
+
+    // Permission-based
+    if (perms && perms.length > 0 && moduleResource) {
+      const hasApprove1 = hasPerm('approve_1');
+      const hasApprove2 = hasPerm('approve_2');
+      const hasFullApprove = hasPerm('approve');
+
+      if (hasFullApprove || (hasApprove1 && hasApprove2)) return 'Full Approver';
+      if (hasApprove2) return 'Level 2 Approver';
+      if (hasApprove1) return 'Level 1 Approver';
+    }
+
+    // Fallback
     if (userLevel >= 4) return 'Director';
     if (userLevel === 3) return 'Manager';
     if (userLevel === 2) return 'Supervisor';
@@ -131,22 +232,40 @@ export function useApprovalWorkflow() {
    */
   const getNextApprovalLevel = (currentStatus: number) => {
     const userLevel = authStore.user?.user_level || 1;
-    
-    // Director & Master Admin (Level 4+): DIRECT FULL APPROVAL
+    const perms = authStore.user?.permissions;
+
+    if (userLevel >= 10) {
+      return currentStatus < 2 ? 'DIRECT FULL APPROVAL (2/2 - FINAL)' : '';
+    }
+
+    // Permission-based
+    if (perms && perms.length > 0 && moduleResource) {
+      const hasApprove1 = hasPerm('approve_1');
+      const hasApprove2 = hasPerm('approve_2');
+      const hasFullApprove = hasPerm('approve');
+
+      if ((hasFullApprove || (hasApprove1 && hasApprove2)) && currentStatus < 2) {
+        return 'DIRECT FULL APPROVAL (2/2 - FINAL)';
+      }
+      if (hasApprove1 && currentStatus === 0) {
+        return '1/2 (Level 1 Approval)';
+      }
+      if (hasApprove2 && currentStatus === 1) {
+        return '2/2 (Level 2 Approval - Final)';
+      }
+      return '';
+    }
+
+    // Fallback
     if (userLevel >= 4 && currentStatus < 2) {
       return 'DIRECT FULL APPROVAL (2/2 - FINAL)';
     }
-    
-    // Supervisor (Level 2)
     if (userLevel === 2 && currentStatus === 0) {
       return '1/2 (Supervisor Approval)';
     }
-    
-    // Manager (Level 3)
     if (userLevel >= 3 && currentStatus === 1) {
       return '2/2 (Manager Approval - Final)';
     }
-    
     return '';
   };
 

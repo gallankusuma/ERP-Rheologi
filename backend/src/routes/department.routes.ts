@@ -9,13 +9,16 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const departments = await dbAll(
       `
-      SELECT d.* 
+      SELECT d.*, u.full_name as head_user_name
       FROM departments d 
+      LEFT JOIN users u ON d.head_user_id = u.id
       ORDER BY d.name ASC
       `,
       []
     );
-    res.json({ data: departments });
+    // Cast active to boolean for frontend
+    const mapped = departments.map((d: any) => ({ ...d, active: !!d.active }));
+    res.json({ data: mapped });
   } catch (error) {
     console.error('Error fetching departments:', error);
     res.status(500).json({ error: 'Failed to fetch departments' });

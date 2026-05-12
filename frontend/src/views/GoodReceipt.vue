@@ -330,7 +330,7 @@ interface GRItem {
 const store = useGoodReceiptStore();
 const warehouseStore = useWarehouseStore();
 const authStore = useAuthStore();
-const { canApprove, canReject } = useApprovalWorkflow();
+const { canApprove, canReject } = useApprovalWorkflow('procurement.grn');
 
 const showModal = ref(false);
 const isEditing = ref(false);

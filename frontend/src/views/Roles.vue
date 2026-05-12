@@ -153,7 +153,7 @@
                   class="text-center py-3 px-2 text-sm font-semibold text-gray-700 w-24"
                 >
                   <div class="flex flex-col items-center gap-1">
-                    <span class="capitalize">{{ action }}</span>
+                    <span class="capitalize text-xs">{{ actionLabels[action] || action }}</span>
                     <button
                       @click="toggleColumn(action)"
                       class="text-[10px] text-blue-500 hover:text-blue-700"
@@ -171,7 +171,7 @@
             <tbody class="divide-y divide-gray-100">
               <template v-for="(subModules, menuName) in groupedPermissions" :key="menuName">
                 <tr class="bg-gray-100/80 border-y border-gray-200">
-                  <td colspan="8" class="py-2 px-4 font-bold text-gray-800 text-sm">
+                  <td colspan="10" class="py-2 px-4 font-bold text-gray-800 text-sm">
                     <div class="flex items-center gap-2">
                       <span class="text-base">{{ moduleIcons[menuName as string] || '📁' }}</span>
                       {{ menuName }}
@@ -313,7 +313,18 @@ const moduleIcons: Record<string, string> = {
   'Admin': '⚙️',
 };
 
-const allActions = ['view', 'create', 'edit', 'delete', 'approve', 'export'];
+const actionLabels: Record<string, string> = {
+  'view': 'View',
+  'create': 'Create',
+  'edit': 'Edit',
+  'delete': 'Delete',
+  'approve': 'Approve',
+  'approve_1': 'Approve ①',
+  'approve_2': 'Approve ②',
+  'export': 'Export',
+};
+
+const allActions = ['view', 'create', 'edit', 'delete', 'approve', 'approve_1', 'approve_2', 'export'];
 
 const groupedPermissions = computed(() => {
   const grouped: Record<string, Record<string, Permission[]>> = {};

@@ -9,8 +9,8 @@
           <button @click="mobileMenuOpen = !mobileMenuOpen" class="md:hidden p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
           </button>
-          <span class="text-2xl hidden sm:inline text-blue-500 font-bold">G</span>
-          <span class="font-bold text-cyan-700 dark:text-cyan-400 text-sm md:text-lg truncate">Genjaya ERP</span>
+          <span class="text-2xl hidden sm:inline text-blue-500 font-bold">{{ appName.charAt(0) }}</span>
+          <span class="font-bold text-cyan-700 dark:text-cyan-400 text-sm md:text-lg truncate">{{ appName }}</span>
           <span class="text-gray-400 dark:text-gray-500 hidden lg:inline">|</span>
           <span class="text-sm md:text-base font-semibold text-gray-700 dark:text-gray-300 hidden lg:inline truncate">{{ companyName }}</span>
         </div>
@@ -195,6 +195,14 @@ const { isDark, toggleTheme, initTheme } = useTheme();
 
 const companyName = import.meta.env.VITE_COMPANY_NAME || 'Manufacturing Company';
 
+// Dynamic branding based on hostname
+const appName = computed(() => {
+  if (typeof window !== 'undefined' && window.location.hostname.includes('rheologi')) {
+    return 'Rheologi ERP';
+  }
+  return import.meta.env.VITE_APP_NAME || 'Genjaya ERP';
+});
+
 const showUserMenu = ref(false);
 const mobileMenuOpen = ref(false);
 
@@ -341,25 +349,17 @@ const activeSubmenuId = computed(() => {
 const mainMenus: MenuItem[] = [
   {
     id: 'projects',
-    label: 'Project',
-    icon: '📌',
+    label: 'CRM',
+    icon: '💼',
     submenus: [
-      { id: 'dashboard', label: 'Dashboard', route: '/dashboard' },
       { id: 'project-events', label: 'Events', route: '/project/events' },
       { id: 'clients', label: 'Clients', route: '/customers' },
       { id: 'projects', label: 'Projects', route: '/projects' },
       { id: 'tasks', label: 'Tasks', route: '/project/tasks' },
       { id: 'leads', label: 'Leads', route: '/leads' },
-      { id: 'sales', label: 'Sales', route: '/sales' },
       { id: 'prospects', label: 'Prospects', route: '/project/prospects' },
       { id: 'notes', label: 'Notes', route: '/project/notes' },
       { id: 'messages', label: 'Messages', route: '/notifications' },
-      { id: 'team', label: 'Team', route: '/users' },
-      { id: 'tickets', label: 'Tickets', route: '/quality' },
-      { id: 'expenses', label: 'Expenses', route: '/finance' },
-      { id: 'reports', label: 'Reports', route: '/project/reports' },
-      { id: 'help', label: 'Help & Support', route: '/project/help' },
-      { id: 'settings', label: 'Settings', route: '/system-settings' },
     ]
   },
   {

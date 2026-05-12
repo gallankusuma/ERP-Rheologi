@@ -26,34 +26,42 @@ api.interceptors.request.use((config) => {
 });
 
 // Response Interceptor: Handle errors
+let isRedirecting = false;
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     const status = error.response?.status;
     const data = error.response?.data as any;
-    const message = data?.message || error.message || 'An error occurred';
+    const message = data?.error || data?.message || error.message || 'An error occurred';
+    const url = error.config?.url || '';
 
     if (status === 401) {
-      // Unauthorized - clear token and redirect to login
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      // Only redirect to login if we truly have no valid session
+      // Check: is this a core auth-protected route (not a peripheral/optional endpoint)?
+      const isCoreRoute = ['/users', '/rnd/', '/departments', '/inventory', '/workorders', '/products', '/procurement/'].some(r => url.includes(r));
+      const isAuthRoute = url.includes('/auth/');
+      
+      if (!isAuthRoute && isCoreRoute && !isRedirecting) {
+        // Token is truly expired - redirect once
+        isRedirecting = true;
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      }
+      // For non-core routes or mutation requests, just reject so catch blocks work
+      return Promise.reject(error);
     } else if (status === 403) {
-      // Forbidden - user doesn't have permission
       if (errorCallback) {
         errorCallback('You do not have permission to perform this action');
       }
     } else if (status === 404) {
-      // Not found
       if (errorCallback) {
         errorCallback('Resource not found');
       }
     } else if (status === 500) {
-      // Server error
       if (errorCallback) {
         errorCallback('Server error. Please try again later');
       }
     } else {
-      // Other errors
       if (errorCallback) {
         errorCallback(message);
       }

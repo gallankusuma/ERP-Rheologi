@@ -219,6 +219,239 @@ const ensureProcurementPaymentSchema = async (connection: any) => {
   );
 };
 
+// ==================== R&D MODULE SCHEMA ====================
+const ensureRnDSchema = async (connection: any) => {
+  const statements = [
+    // 1. R&D Projects (core table)
+    `CREATE TABLE IF NOT EXISTS rnd_projects (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_code VARCHAR(50) NOT NULL UNIQUE,
+      name VARCHAR(255) NOT NULL,
+      project_type VARCHAR(50) DEFAULT 'new_product',
+      category VARCHAR(50) DEFAULT 'chemical',
+      description TEXT,
+      objectives TEXT,
+      expected_output TEXT,
+      status ENUM('draft','active','on_hold','completed','cancelled') DEFAULT 'draft',
+      priority ENUM('low','medium','high','critical') DEFAULT 'medium',
+      risk_level VARCHAR(50) DEFAULT 'medium',
+      confidentiality VARCHAR(50) DEFAULT 'internal',
+      regulatory_requirements TEXT,
+      target_market TEXT,
+      target_product TEXT,
+      project_leader_id INT,
+      department_id INT,
+      start_date DATE,
+      target_end_date DATE,
+      actual_end_date DATE,
+      budget DECIMAL(15,2) DEFAULT 0,
+      spent DECIMAL(15,2) DEFAULT 0,
+      tags TEXT,
+      notes TEXT,
+      created_by INT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_leader_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // Ensure missing columns on rnd_projects (may exist from old migration)
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS project_type VARCHAR(50) DEFAULT 'new_product'`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'chemical'`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS expected_output TEXT`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS risk_level VARCHAR(50) DEFAULT 'medium'`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS confidentiality VARCHAR(50) DEFAULT 'internal'`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS regulatory_requirements TEXT`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS target_market TEXT`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS target_product TEXT`,
+    `ALTER TABLE rnd_projects ADD COLUMN IF NOT EXISTS tags TEXT`,
+
+    // 2. Formulations
+    `CREATE TABLE IF NOT EXISTS rnd_formulations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      formula_code VARCHAR(50) NOT NULL UNIQUE,
+      name VARCHAR(255) NOT NULL,
+      version VARCHAR(20) DEFAULT '1.0',
+      project_id INT,
+      product_type_id INT,
+      status ENUM('draft','testing','approved','revision','obsolete') DEFAULT 'draft',
+      target_specs TEXT,
+      description TEXT,
+      notes TEXT,
+      approved_by INT,
+      approved_at DATETIME,
+      created_by INT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES rnd_projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 2b. Formulation Ingredients
+    `CREATE TABLE IF NOT EXISTS rnd_formulation_ingredients (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      formulation_id INT NOT NULL,
+      product_id INT,
+      ingredient_name VARCHAR(255) NOT NULL,
+      quantity DECIMAL(15,4) NOT NULL DEFAULT 0,
+      unit VARCHAR(50) DEFAULT 'kg',
+      percentage DECIMAL(8,4),
+      function_role VARCHAR(100),
+      notes TEXT,
+      sort_order INT DEFAULT 0,
+      FOREIGN KEY (formulation_id) REFERENCES rnd_formulations(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 3. Lab Tests
+    `CREATE TABLE IF NOT EXISTS rnd_lab_tests (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      test_code VARCHAR(50) NOT NULL UNIQUE,
+      test_name VARCHAR(255) NOT NULL,
+      formulation_id INT,
+      project_id INT,
+      batch_number VARCHAR(100),
+      test_type ENUM('physical','chemical','microbiological','stability','performance','other') DEFAULT 'chemical',
+      method VARCHAR(255),
+      equipment VARCHAR(255),
+      status ENUM('scheduled','in_progress','completed','failed','cancelled') DEFAULT 'scheduled',
+      test_date DATE,
+      tested_by INT,
+      parameters TEXT,
+      results TEXT,
+      conclusion ENUM('pass','fail','conditional','pending') DEFAULT 'pending',
+      attachments TEXT,
+      notes TEXT,
+      created_by INT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (formulation_id) REFERENCES rnd_formulations(id) ON DELETE SET NULL,
+      FOREIGN KEY (project_id) REFERENCES rnd_projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (tested_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 4. Stability Studies
+    `CREATE TABLE IF NOT EXISTS rnd_stability_studies (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      study_code VARCHAR(50) NOT NULL UNIQUE,
+      name VARCHAR(255) NOT NULL,
+      formulation_id INT,
+      batch_number VARCHAR(100),
+      status ENUM('planned','active','completed','cancelled') DEFAULT 'planned',
+      storage_condition VARCHAR(255) DEFAULT '25°C / 60% RH',
+      duration_months INT DEFAULT 12,
+      start_date DATE,
+      end_date DATE,
+      protocol TEXT,
+      conclusion TEXT,
+      created_by INT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (formulation_id) REFERENCES rnd_formulations(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 4b. Stability Checkpoints
+    `CREATE TABLE IF NOT EXISTS rnd_stability_checkpoints (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      study_id INT NOT NULL,
+      checkpoint_month INT NOT NULL DEFAULT 0,
+      scheduled_date DATE,
+      actual_date DATE,
+      status ENUM('pending','completed','skipped') DEFAULT 'pending',
+      parameters TEXT,
+      results TEXT,
+      pass_fail ENUM('pass','fail','pending') DEFAULT 'pending',
+      tested_by INT,
+      notes TEXT,
+      FOREIGN KEY (study_id) REFERENCES rnd_stability_studies(id) ON DELETE CASCADE,
+      FOREIGN KEY (tested_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 5. Milestones
+    `CREATE TABLE IF NOT EXISTS rnd_milestones (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      description TEXT,
+      phase VARCHAR(50) DEFAULT 'formulation_design',
+      status VARCHAR(20) DEFAULT 'pending',
+      due_date DATE,
+      completed_date DATE,
+      assigned_to INT,
+      deliverables TEXT,
+      sort_order INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES rnd_projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 6. Project Tasks (Kanban)
+    `CREATE TABLE IF NOT EXISTS rnd_project_tasks (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      description TEXT,
+      status VARCHAR(50) DEFAULT 'todo',
+      priority VARCHAR(20) DEFAULT 'medium',
+      assigned_to INT,
+      due_date DATE,
+      completed_date DATE,
+      tags TEXT,
+      sort_order INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES rnd_projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 7. Document Folders
+    `CREATE TABLE IF NOT EXISTS rnd_document_folders (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      color VARCHAR(20) DEFAULT '#3B82F6',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES rnd_projects(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // 8. Documents
+    `CREATE TABLE IF NOT EXISTS rnd_documents (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT,
+      formulation_id INT,
+      lab_test_id INT,
+      stability_study_id INT,
+      doc_type VARCHAR(50) DEFAULT 'other',
+      title VARCHAR(255) NOT NULL,
+      description TEXT,
+      file_name VARCHAR(255),
+      file_path VARCHAR(500),
+      file_size INT DEFAULT 0,
+      mime_type VARCHAR(100),
+      version VARCHAR(20) DEFAULT '1.0',
+      folder_id INT,
+      uploaded_by INT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES rnd_projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (formulation_id) REFERENCES rnd_formulations(id) ON DELETE SET NULL,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+    // Ensure folder_id column on rnd_documents
+    `ALTER TABLE rnd_documents ADD COLUMN IF NOT EXISTS folder_id INT NULL`,
+
+    // Fix ENUM → VARCHAR on tables created by old migrations
+    // (CREATE TABLE IF NOT EXISTS won't alter existing tables)
+    `ALTER TABLE rnd_milestones MODIFY COLUMN phase VARCHAR(50) DEFAULT 'formulation_design'`,
+    `ALTER TABLE rnd_milestones MODIFY COLUMN status VARCHAR(20) DEFAULT 'pending'`,
+    `ALTER TABLE rnd_documents MODIFY COLUMN doc_type VARCHAR(50) DEFAULT 'other'`,
+  ];
+
+  for (const statement of statements) {
+    await execSchemaEnsure(connection, statement);
+  }
+  console.log('✅ R&D module schema ensured');
+};
+
 // Helper functions for async/await query execution
 export const dbQuery = async (sql: string, params: any[] = []): Promise<any> => {
   const connection = await pool.getConnection();
@@ -251,6 +484,49 @@ export const dbRun = async (sql: string, params: any[] = []): Promise<{ insertId
   } finally {
     connection.release();
   }
+};
+
+// ==================== APPROVAL 2-STAGE PERMISSIONS ====================
+const ensureApprovalPermissions = async (connection: any) => {
+  // Ensure permissions table has module/name columns (production has them, dev may not)
+  await execSchemaEnsure(connection, `ALTER TABLE permissions ADD COLUMN IF NOT EXISTS module VARCHAR(100) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE permissions ADD COLUMN IF NOT EXISTS name VARCHAR(200) NULL`);
+
+  // Define modules that need 2-stage approval permissions
+  const approvalModules = [
+    { resource: 'procurement.purchase-requests', module: 'Procurement - Purchase Requests', label: 'Purchase Requests' },
+    { resource: 'procurement.purchase-orders', module: 'Procurement - Purchase Orders', label: 'Purchase Orders' },
+    { resource: 'procurement.grn', module: 'Procurement - Goods Receipt (GRN)', label: 'Goods Receipt' },
+    { resource: 'finance.fund-requests', module: 'Finance - Fund Requests', label: 'Fund Requests' },
+    { resource: 'finance.ap', module: 'Finance - Accounts Payable', label: 'Accounts Payable' },
+    { resource: 'finance.ar', module: 'Finance - Accounts Receivable', label: 'Accounts Receivable' },
+    { resource: 'quality.batch-release', module: 'Quality - Batch Release', label: 'Batch Release' },
+    { resource: 'quality.ncr', module: 'Quality - Non-Conformance', label: 'Non-Conformance' },
+    { resource: 'production.workorders', module: 'Production - Work Orders', label: 'Work Orders' },
+    { resource: 'production.fg-receipt', module: 'Production - FG Receipt', label: 'FG Receipt' },
+    { resource: 'inventory.stock-adjustment', module: 'Inventory - Stock Adjustment', label: 'Stock Adjustment' },
+    { resource: 'inventory.stock-transfer', module: 'Inventory - Stock Transfer', label: 'Stock Transfer' },
+    { resource: 'master_data.bom', module: 'Master Data - Bill of Materials', label: 'BOM' },
+    { resource: 'rnd.rnd-projects', module: 'R&D - R&D Projects', label: 'R&D Projects' },
+    { resource: 'rnd.rnd-formulations', module: 'R&D - Formulations', label: 'R&D Formulations' },
+  ];
+
+  for (const mod of approvalModules) {
+    // approve_1 = Supervisor Approval (step 1)
+    await execSchemaEnsure(connection,
+      `INSERT IGNORE INTO permissions (resource, action, module, name, description)
+       VALUES ('${mod.resource}', 'approve_1', '${mod.module}', '${mod.label} Approve Level 1',
+               'Supervisor-level approval (step 1 of 2)')`
+    );
+    // approve_2 = Manager/Final Approval (step 2)
+    await execSchemaEnsure(connection,
+      `INSERT IGNORE INTO permissions (resource, action, module, name, description)
+       VALUES ('${mod.resource}', 'approve_2', '${mod.module}', '${mod.label} Approve Level 2',
+               'Manager-level final approval (step 2 of 2)')`
+    );
+  }
+
+  console.log('✅ Approval 2-stage permissions ensured');
 };
 
 // Initialize database schema
@@ -290,6 +566,8 @@ export async function initializeDatabase() {
     }
 
     await ensureProcurementPaymentSchema(connection);
+    await ensureRnDSchema(connection);
+    await ensureApprovalPermissions(connection);
 
     connection.release();
 

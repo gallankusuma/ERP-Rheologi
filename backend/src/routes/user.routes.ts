@@ -179,6 +179,9 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
     res.json({ success: true });
   } catch (error: any) {
     console.error('Error deleting user:', error);
+    if (error?.message?.includes('foreign key constraint')) {
+      return res.status(400).json({ error: 'Cannot delete this user because they are linked to other data (e.g. proposals, approvals). Please deactivate the user instead.' });
+    }
     res.status(500).json({ error: error?.message || 'Failed to delete user' });
   }
 });

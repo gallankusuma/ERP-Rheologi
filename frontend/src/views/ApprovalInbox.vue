@@ -45,12 +45,56 @@
             </div>
           </div>
 
+          <!-- Entity summary for purchase_order -->
+          <div v-if="item.entity_type === 'purchase_order' && item.entity" class="mt-2 p-3 bg-blue-50 rounded border border-blue-200 text-sm">
+            <div class="font-medium text-gray-800">{{ item.entity.po_number }} <span v-if="item.entity.vendor_name" class="text-gray-500">— {{ item.entity.vendor_name }}</span></div>
+            <div class="text-gray-600 mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
+              <div><span class="text-gray-500">Total:</span> <span class="font-mono font-semibold">{{ formatMoney(item.entity.total_amount) }}</span></div>
+              <div><span class="text-gray-500">Date:</span> {{ formatDate(item.entity.order_date) }}</div>
+              <div><span class="text-gray-500">Items:</span> {{ item.entity.item_count }}</div>
+              <div v-if="item.entity.pr_number"><span class="text-gray-500">From PR:</span> {{ item.entity.pr_number }}</div>
+              <div><span class="text-gray-500">Approval:</span> {{ item.entity.approval_status }}/2</div>
+              <div v-if="item.entity.expected_date"><span class="text-gray-500">Expected:</span> {{ formatDate(item.entity.expected_date) }}</div>
+            </div>
+          </div>
+
+          <!-- Entity summary for purchase_request -->
+          <div v-if="item.entity_type === 'purchase_request' && item.entity" class="mt-2 p-3 bg-indigo-50 rounded border border-indigo-200 text-sm">
+            <div class="font-medium text-gray-800">{{ item.entity.pr_number }} <span v-if="item.entity.department" class="text-gray-500">— {{ item.entity.department }}</span></div>
+            <div class="text-gray-600 mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
+              <div><span class="text-gray-500">Est. Total:</span> <span class="font-mono font-semibold">{{ formatMoney(item.entity.estimated_total) }}</span></div>
+              <div><span class="text-gray-500">Date:</span> {{ formatDate(item.entity.request_date) }}</div>
+              <div><span class="text-gray-500">Items:</span> {{ item.entity.item_count }}</div>
+              <div v-if="item.entity.priority"><span class="text-gray-500">Priority:</span> {{ item.entity.priority }}</div>
+              <div><span class="text-gray-500">Approval:</span> {{ item.entity.approval_status }}/2</div>
+              <div v-if="item.entity.requester_name"><span class="text-gray-500">By:</span> {{ item.entity.requester_name }}</div>
+            </div>
+          </div>
+
+          <!-- Entity summary for GRN -->
+          <div v-if="item.entity_type === 'grn' && item.entity" class="mt-2 p-3 bg-emerald-50 rounded border border-emerald-200 text-sm">
+            <div class="font-medium text-gray-800">{{ item.entity.grn_number }} <span v-if="item.entity.vendor_name" class="text-gray-500">— {{ item.entity.vendor_name }}</span></div>
+            <div class="text-gray-600 mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
+              <div v-if="item.entity.po_number"><span class="text-gray-500">PO:</span> {{ item.entity.po_number }}</div>
+              <div><span class="text-gray-500">Received:</span> {{ formatDate(item.entity.received_date) }}</div>
+              <div><span class="text-gray-500">Items:</span> {{ item.entity.item_count }}</div>
+              <div><span class="text-gray-500">Total Qty:</span> {{ item.entity.total_qty_received }}</div>
+            </div>
+          </div>
+
           <p v-if="item.notes" class="text-sm text-gray-500 mt-1">{{ item.notes }}</p>
           <p class="text-xs text-gray-400 mt-1">Submitted: {{ formatDate(item.submitted_at) }}</p>
         </div>
         <div class="flex flex-col gap-2 ml-4">
           <template v-if="item.entity_type === 'fund_request'">
-            <button @click="openFundRequest(item)"
+            <button @click="openEntity(item)"
+              class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-sm ring-1 ring-inset ring-blue-700/20 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+              Open &amp; Review
+            </button>
+          </template>
+          <template v-else-if="item.entity_type === 'purchase_order' || item.entity_type === 'purchase_request' || item.entity_type === 'grn'">
+            <button @click="openEntity(item)"
               class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-sm ring-1 ring-inset ring-blue-700/20 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
               Open &amp; Review
@@ -113,8 +157,23 @@ const approve = async (item: any) => {
   }
 };
 
-const openFundRequest = (item: any) => {
-  router.push({ path: '/finance/fund-requests', query: { openId: item.entity_id } });
+const openEntity = (item: any) => {
+  switch (item.entity_type) {
+    case 'fund_request':
+      router.push({ path: '/finance/fund-requests', query: { openId: item.entity_id } });
+      break;
+    case 'purchase_order':
+      router.push({ path: '/procurement/purchase-orders', query: { openId: item.entity_id } });
+      break;
+    case 'purchase_request':
+      router.push({ path: '/procurement/purchase-requests', query: { openId: item.entity_id } });
+      break;
+    case 'grn':
+      router.push({ path: '/procurement/goods-receipt', query: { openId: item.entity_id } });
+      break;
+    default:
+      alert(`No viewer available for entity type: ${item.entity_type}`);
+  }
 };
 
 const openReject = (item: any) => {

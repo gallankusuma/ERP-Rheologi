@@ -512,8 +512,20 @@ async function submitMs() {
   } catch(e:any) { alert(e.response?.data?.error||e.message); }
 }
 async function completeMs(m:any) {
-  await api.put(`/rnd/milestones/${m.id}`, {...m, status:'completed', completed_date: new Date().toISOString().split('T')[0]});
-  await fetchMs();
+  try {
+    await api.put(`/rnd/milestones/${m.id}`, {
+      title: m.title,
+      description: m.description,
+      phase: m.phase,
+      status: 'completed',
+      due_date: m.due_date?.split('T')[0] || null,
+      completed_date: new Date().toISOString().split('T')[0],
+      assigned_to: m.assigned_to || null,
+      deliverables: m.deliverables,
+      sort_order: m.sort_order || 0,
+    });
+    await fetchMs();
+  } catch(e:any) { alert(e.response?.data?.error||e.message); }
 }
 async function deleteMs(id:number) { if(!confirm('Delete milestone?')) return; await api.delete(`/rnd/milestones/${id}`); await fetchMs(); }
 

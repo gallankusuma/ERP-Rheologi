@@ -125,7 +125,7 @@ import { useApprovalWorkflow } from '../composables/useApprovalWorkflow';
 import { formatCurrency } from '../utils/format';
 
 const store = useProcurementStore();
-const { canApprove, canReject } = useApprovalWorkflow();
+const { canApprove, canReject } = useApprovalWorkflow('procurement.purchase-orders');
 
 const statusFilter = ref('all');
 const vendorFilter = ref('');

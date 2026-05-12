@@ -409,7 +409,8 @@ router.get('/purchase-requests', authMiddleware, async (req: Request, res: Respo
     const prs = await dbAll(
       `SELECT pr.*, u.full_name as requester_name,
           pr.requestor_id as requester_id,
-          pr.created_at as request_date,
+          COALESCE(pr.request_date, DATE(pr.created_at)) as request_date,
+          pr.needed_by,
           cp.project_name, cp.project_number
        FROM purchase_requests pr
        LEFT JOIN users u ON pr.requestor_id = u.id
@@ -429,7 +430,8 @@ router.get('/purchase-requests/:id', authMiddleware, async (req: Request, res: R
     const pr = await dbGet(
       `SELECT pr.*, u.full_name as requester_name,
               pr.requestor_id as requester_id,
-              pr.created_at as request_date,
+              COALESCE(pr.request_date, DATE(pr.created_at)) as request_date,
+              pr.needed_by,
               cp.project_name, cp.project_number
        FROM purchase_requests pr
        LEFT JOIN users u ON pr.requestor_id = u.id
@@ -475,14 +477,16 @@ router.post('/purchase-requests', authMiddleware, async (req: Request, res: Resp
     console.log('Creating PR - requested by:', userIdFromToken, 'valid requestor:', validRequestor);
 
     const result = await dbRun(
-      `INSERT INTO purchase_requests (pr_number, requestor_id, project_id, status, notes)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO purchase_requests (pr_number, requestor_id, project_id, status, notes, request_date, needed_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         number,
         validRequestor,
         project_id || null,
         (status || 'DRAFT').toUpperCase(),
         notes || null,
+        normalizeDateOnly(request_date) || new Date().toISOString().slice(0, 10),
+        normalizeDateOnly(needed_by) || null,
       ]
     );
     res.status(201).json({ message: 'Purchase request created', data: { id: result.insertId, pr_number: number } });
@@ -498,8 +502,8 @@ router.put('/purchase-requests/:id', authMiddleware, async (req: Request, res: R
   try {
     const { status, notes, department, request_date, needed_by, reason, project_id, vendor_comparisons, selected_vendor_id } = req.body;
     await dbRun(
-      'UPDATE purchase_requests SET status = ?, notes = ?, project_id = ?, vendor_comparisons = ?, selected_vendor_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [(status || 'DRAFT').toUpperCase(), notes || null, project_id || null, vendor_comparisons ? JSON.stringify(vendor_comparisons) : null, selected_vendor_id || null, req.params.id]
+      'UPDATE purchase_requests SET status = ?, notes = ?, project_id = ?, request_date = ?, needed_by = ?, vendor_comparisons = ?, selected_vendor_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [(status || 'DRAFT').toUpperCase(), notes || null, project_id || null, normalizeDateOnly(request_date) || null, normalizeDateOnly(needed_by) || null, vendor_comparisons ? JSON.stringify(vendor_comparisons) : null, selected_vendor_id || null, req.params.id]
     );
     res.json({ message: 'Purchase request updated' });
   } catch (error) {
@@ -1001,7 +1005,14 @@ router.get('/purchase-orders', authMiddleware, async (req: Request, res: Respons
   try {
     const orders = await dbAll(
       `SELECT po.*, pr.pr_number, v.name as vendor_name,
-              cp.project_name, cp.project_number
+              cp.project_name, cp.project_number,
+              (SELECT GROUP_CONCAT(
+                COALESCE(p2.name, poi.notes, 'Item')
+                SEPARATOR ', ')
+               FROM purchase_order_items poi
+               LEFT JOIN products p2 ON poi.product_id = p2.id
+               WHERE poi.purchase_order_id = po.id
+              ) as items_description
        FROM purchase_orders po
        LEFT JOIN vendors v ON po.vendor_id = v.id
        LEFT JOIN purchase_requests pr ON po.pr_id = pr.id
@@ -1034,7 +1045,7 @@ router.get('/purchase-orders/:id', authMiddleware, async (req: Request, res: Res
     const items = await dbAll(
       `SELECT i.*, p.sku, p.name as product_name
        FROM purchase_order_items i
-       JOIN products p ON i.product_id = p.id
+       LEFT JOIN products p ON i.product_id = p.id
        WHERE i.purchase_order_id = ?`,
       [req.params.id]
     );
@@ -1117,18 +1128,24 @@ router.post('/purchase-orders', authMiddleware, async (req: Request, res: Respon
         [pr_id]
       ) as Array<{ product_id: number, allocated_qty: number }>;
       
-      const prQtyMap = new Map<number, number>();
+      // Build map: key -> total qty allowed from PR
+      // Use product_id when available, fallback to item name for items without product catalog link
+      const prQtyMap = new Map<string, number>();
       for (const item of prItems) {
         const pid = Number(item.product_id || item.productId);
         const qty = Number(item.quantity || item.qty);
-        if (pid && qty) {
-           prQtyMap.set(pid, (prQtyMap.get(pid) || 0) + qty);
+        // Use pid if it's a valid non-zero number, otherwise use item name as key
+        const key = (pid && Number.isFinite(pid)) ? `pid:${pid}` : `name:${(item as any).productName || (item as any).name || 'unknown'}`;
+        if (qty > 0) {
+           prQtyMap.set(key, (prQtyMap.get(key) || 0) + qty);
         }
       }
       
-      const allocatedQtyMap = new Map<number, number>();
+      const allocatedQtyMap = new Map<string, number>();
       for (const item of existingPOItems) {
-         allocatedQtyMap.set(Number(item.product_id), Number(item.allocated_qty));
+         const pid = Number(item.product_id);
+         const key = (pid && Number.isFinite(pid)) ? `pid:${pid}` : `pid:${pid}`;
+         allocatedQtyMap.set(key, Number(item.allocated_qty));
       }
       
       const overAllocated: Array<{ product_id: number, requested: number, remaining: number }> = [];
@@ -1136,12 +1153,18 @@ router.post('/purchase-orders', authMiddleware, async (req: Request, res: Respon
         const pid = Number(it.product_id);
         const newQty = Number(it.quantity);
         
-        const maxQty = prQtyMap.get(pid) || 0;
-        const alreadyAllocated = allocatedQtyMap.get(pid) || 0;
+        // Build lookup key matching the PR map
+        const key = (pid && Number.isFinite(pid)) ? `pid:${pid}` : null;
+        
+        // If we can't map this item to a PR item (no product_id), skip over-allocation check
+        if (!key) continue;
+        
+        const maxQty = prQtyMap.get(key) || 0;
+        const alreadyAllocated = allocatedQtyMap.get(key) || 0;
         const remaining = maxQty - alreadyAllocated;
         
-        // Use a small epsilon to prevent floating point issues, though qty should be integers usually
-        if (newQty > remaining + 0.001) {
+        // Use a small epsilon to prevent floating point issues
+        if (maxQty > 0 && newQty > remaining + 0.001) {
            overAllocated.push({ product_id: pid, requested: newQty, remaining: remaining });
         }
       }
@@ -1200,17 +1223,18 @@ router.post('/purchase-orders', authMiddleware, async (req: Request, res: Respon
       
       // Insert items
       for (const item of items) {
-        if (!item.product_id || !item.quantity) {
-          throw new Error('Invalid item: product_id and quantity are required');
+        if (!item.quantity || Number(item.quantity) <= 0) {
+          throw new Error('Invalid item: quantity is required and must be > 0');
         }
-        console.log(`[PO:create] Inserting item: product_id=${item.product_id}, qty=${item.quantity}, uom=${item.uom}, price=${item.unit_price}`);
+        const itemProductId = item.product_id || null;
+        console.log(`[PO:create] Inserting item: product_id=${itemProductId}, qty=${item.quantity}, uom=${item.uom}, price=${item.unit_price}`);
         try {
           await dbRun(
             'INSERT INTO purchase_order_items (purchase_order_id, po_id, product_id, quantity, uom, unit_price, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [poId, poId, item.product_id, item.quantity, item.uom || null, item.unit_price || 0, item.currency || currency || 'IDR', item.notes || null]
+            [poId, poId, itemProductId, item.quantity, item.uom || null, item.unit_price || 0, item.currency || currency || 'IDR', item.notes || null]
           );
         } catch (insertErr: any) {
-          console.error(`[PO:create] Failed inserting product_id=${item.product_id}:`, insertErr.message);
+          console.error(`[PO:create] Failed inserting product_id=${itemProductId}:`, insertErr.message);
           throw insertErr;
         }
       }
@@ -1682,8 +1706,8 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
     // Parse items from notes
     let items: any[] = [];
     try {
-      const notes = JSON.parse(grn.notes || '{}');
-      items = notes.items || [];
+      const parsedNotes = JSON.parse(grn.notes || '{}');
+      items = parsedNotes.items || [];
     } catch (e) {
       items = [];
     }

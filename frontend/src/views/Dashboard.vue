@@ -146,7 +146,6 @@ import { useWorkOrderStore } from '../stores/workorders';
 import { useInventoryStore } from '../stores/inventory';
 import { useWarehouseStore } from '../stores/warehouse';
 import { api } from '../lib/api';
-import axios from 'axios';
 
 const authStore = useAuthStore();
 const productStore = useProductStore();
@@ -292,12 +291,7 @@ const runSimulation = async () => {
 const fetchClientMetrics = async () => {
   try {
     clientLoading.value = true;
-    const token = localStorage.getItem('auth_token');
-    const response = await axios.get('/api/clients/dashboard', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const response = await api.get('/clients/dashboard');
     clientMetrics.value = response.data.data;
   } catch (error: any) {
     console.error('Failed to fetch client metrics:', error);

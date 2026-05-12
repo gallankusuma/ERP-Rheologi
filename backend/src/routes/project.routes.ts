@@ -103,8 +103,8 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         start_date, end_date, budget, assigned_to, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      client_id, projectNumber, title, description, status || 'open',
-      start_date, deadline, price || 0, assigned_to, (req as any).user.userId
+      client_id || null, projectNumber, title, description || null, status || 'open',
+      start_date || null, deadline || null, price || 0, assigned_to || null, (req as any).user?.userId || null
     ]);
 
     res.status(201).json({ id: result.insertId, message: 'Project created' });
@@ -138,7 +138,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
         assigned_to = ?
       WHERE id = ?
     `, [
-      title, description, status, start_date, deadline, price, assigned_to, req.params.id
+      title || null, description || null, status || null, start_date || null, deadline || null, price || null, assigned_to || null, req.params.id
     ]);
 
     res.json({ message: 'Project updated' });
@@ -148,14 +148,61 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// Delete project
+// Delete project (cascade child records)
 router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    await dbRun('DELETE FROM client_projects WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Project deleted' });
-  } catch (error) {
+    const projectId = req.params.id;
+
+    // Check if real project exists
+    const project = await dbGet('SELECT id, project_name FROM client_projects WHERE id = ?', [projectId]) as any;
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check for blocking references (PO/PR that are in-progress)
+    try {
+      const linkedPOs = await dbAll(
+        `SELECT id, po_number FROM purchase_orders WHERE project_id = ? AND status NOT IN ('draft', 'cancelled')`,
+        [projectId]
+      ) as any[];
+      if (linkedPOs && linkedPOs.length > 0) {
+        return res.status(400).json({
+          error: `Cannot delete: project has ${linkedPOs.length} active Purchase Order(s). Cancel or complete them first.`
+        });
+      }
+    } catch { /* table may not exist */ }
+
+    // Safe cascade delete helper
+    const safeDelete = async (sql: string, params: any[]) => {
+      try { await dbRun(sql, params); } catch (e: any) {
+        console.warn(`Warning during cascade delete: ${e.message?.substring(0, 100)}`);
+      }
+    };
+
+    // Cascade delete child records (order matters for FK)
+    await safeDelete('DELETE FROM project_activities WHERE project_id = ?', [projectId]);
+    await safeDelete('DELETE FROM project_files WHERE project_id = ?', [projectId]);
+    await safeDelete('DELETE FROM project_members WHERE project_id = ?', [projectId]);
+    await safeDelete('DELETE FROM project_tasks WHERE project_id = ?', [projectId]);
+    await safeDelete('DELETE FROM project_milestones WHERE project_id = ?', [projectId]);
+    await safeDelete('DELETE FROM project_expenses WHERE project_id = ?', [projectId]);
+    // Unlink POs/PRs (set project_id to NULL instead of blocking)
+    await safeDelete('UPDATE purchase_orders SET project_id = NULL WHERE project_id = ?', [projectId]);
+    await safeDelete('UPDATE purchase_requests SET project_id = NULL WHERE project_id = ?', [projectId]);
+    // Unlink other nullable references
+    await safeDelete('UPDATE proposals SET project_id = NULL WHERE project_id = ?', [projectId]);
+    await safeDelete('UPDATE client_events SET project_id = NULL WHERE project_id = ?', [projectId]);
+    await safeDelete('UPDATE client_invoices SET project_id = NULL WHERE project_id = ?', [projectId]);
+    await safeDelete('UPDATE fund_requests SET project_id = NULL WHERE project_id = ?', [projectId]);
+
+    // Finally delete the project
+    await dbRun('DELETE FROM client_projects WHERE id = ?', [projectId]);
+
+    console.log(`✅ Project #${projectId} "${project.project_name}" deleted with all child records.`);
+    res.json({ message: 'Project deleted successfully' });
+  } catch (error: any) {
     console.error('Error deleting project:', error);
-    res.status(500).json({ error: 'Failed to delete project' });
+    res.status(500).json({ error: error?.message || 'Failed to delete project' });
   }
 });
 
@@ -204,15 +251,15 @@ router.post('/:id/tasks', authMiddleware, async (req: Request, res: Response) =>
         start_date, due_date, assigned_to, milestone_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      req.params.id, title, description, status || 'To Do', priority || 'Medium',
-      start_date, due_date, assigned_to, milestone_id
+      req.params.id, title, description || null, status || 'To Do', priority || 'Medium',
+      start_date || null, due_date || null, assigned_to || null, milestone_id || null
     ]);
 
     // Log Activity
     await dbRun(`
       INSERT INTO project_activities (project_id, user_id, action_type, description)
       VALUES (?, ?, 'created_task', ?)
-    `, [req.params.id, (req as any).user.userId, `Created task: ${title}`]);
+    `, [req.params.id, (req as any).user?.userId || null, `Created task: ${title}`]);
 
     res.status(201).json({ id: result.insertId, message: 'Task created' });
   } catch (error) {
@@ -247,8 +294,8 @@ router.put('/tasks/:taskId', authMiddleware, async (req: Request, res: Response)
         milestone_id = ?
       WHERE id = ?
     `, [
-      title, description, status, priority, 
-      start_date, due_date, assigned_to, milestone_id, 
+      title || null, description || null, status || null, priority || null, 
+      start_date || null, due_date || null, assigned_to || null, milestone_id || null, 
       req.params.taskId
     ]);
 
@@ -305,7 +352,7 @@ router.post('/:id/milestones', authMiddleware, async (req: Request, res: Respons
     await dbRun(`
       INSERT INTO project_activities (project_id, user_id, action_type, description)
       VALUES (?, ?, 'created_milestone', ?)
-    `, [req.params.id, (req as any).user.userId, `Created milestone: ${title}`]);
+    `, [req.params.id, (req as any).user?.userId || null, `Created milestone: ${title}`]);
 
     res.status(201).json({ id: result.insertId, message: 'Milestone created' });
   } catch (error) {
@@ -322,7 +369,7 @@ router.put('/milestones/:milestoneId', authMiddleware, async (req: Request, res:
       UPDATE project_milestones SET 
         title = ?, description = ?, due_date = ?, status = ?, amount = ?
       WHERE id = ?
-    `, [title, description, due_date, status, amount, req.params.milestoneId]);
+    `, [title || null, description || null, due_date || null, status || null, amount || null, req.params.milestoneId]);
 
     res.json({ message: 'Milestone updated' });
   } catch (error) {
@@ -669,6 +716,24 @@ router.get('/:id/purchase-orders', authMiddleware, async (req: Request, res: Res
   } catch (error) {
     console.error('Error fetching project POs:', error);
     res.status(500).json({ error: 'Failed to fetch project POs' });
+  }
+});
+
+// List Fund Requests linked to a project
+router.get('/:id/fund-requests', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const fundRequests = await dbAll(`
+      SELECT fr.*, u.full_name as requester_name,
+        (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id) AS item_count
+      FROM fund_requests fr
+      LEFT JOIN users u ON fr.requester_id = u.id
+      WHERE fr.project_id = ?
+      ORDER BY fr.created_at DESC
+    `, [req.params.id]);
+    res.json({ data: fundRequests || [] });
+  } catch (error) {
+    console.error('Error fetching project fund requests:', error);
+    res.status(500).json({ error: 'Failed to fetch project fund requests' });
   }
 });
 

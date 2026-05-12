@@ -99,12 +99,47 @@ router.patch('/projects/:id/status', authMiddleware, async (req: Request, res: R
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE project
+// DELETE project (safe cascade for cancelled projects)
 router.delete('/projects/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    await pool.query('DELETE FROM rnd_projects WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Deleted' });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    const projectId = req.params.id;
+    const [[project]]: any = await pool.query('SELECT id, name, status FROM rnd_projects WHERE id = ?', [projectId]);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Only allow delete for cancelled/draft projects
+    if (project.status !== 'cancelled' && project.status !== 'draft') {
+      return res.status(400).json({ 
+        error: `Cannot delete project with status "${project.status}". Only cancelled or draft projects can be deleted.` 
+      });
+    }
+
+    // Cascade delete all child records safely
+    await pool.query('DELETE FROM rnd_project_tasks WHERE project_id = ?', [projectId]);
+    await pool.query('DELETE FROM rnd_milestones WHERE project_id = ?', [projectId]);
+    // Delete document files from disk
+    const [docs]: any = await pool.query('SELECT file_path FROM rnd_documents WHERE project_id = ?', [projectId]);
+    const path = require('path');
+    const fs = require('fs');
+    for (const doc of docs) {
+      if (doc.file_path) {
+        const fullPath = path.join(__dirname, '../..', doc.file_path);
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      }
+    }
+    await pool.query('DELETE FROM rnd_documents WHERE project_id = ?', [projectId]);
+    await pool.query('DELETE FROM rnd_document_folders WHERE project_id = ?', [projectId]);
+    // Unlink formulations & lab tests (set project_id NULL instead of deleting)
+    await pool.query('UPDATE rnd_formulations SET project_id = NULL WHERE project_id = ?', [projectId]);
+    await pool.query('UPDATE rnd_lab_tests SET project_id = NULL WHERE project_id = ?', [projectId]);
+
+    // Finally delete the project
+    await pool.query('DELETE FROM rnd_projects WHERE id = ?', [projectId]);
+    console.log(`✅ R&D Project #${projectId} "${project.name}" deleted with all child records.`);
+    res.json({ message: 'Project deleted successfully' });
+  } catch (err: any) { 
+    console.error('Error deleting R&D project:', err.message);
+    res.status(500).json({ error: err.message }); 
+  }
 });
 
 // ==================== FORMULATIONS ====================
@@ -436,26 +471,34 @@ router.get('/projects/:projectId/milestones', authMiddleware, async (req: Reques
 // POST create milestone
 router.post('/projects/:projectId/milestones', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { title, description, phase, status, due_date, assigned_to, deliverables, sort_order } = req.body;
+    const b = req.body;
+    const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
     const [result] = await pool.query<ResultSetHeader>(
       `INSERT INTO rnd_milestones (project_id, title, description, phase, status, due_date, assigned_to, deliverables, sort_order)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.projectId, title, description, phase || 'formulation_design', status || 'pending', due_date, assigned_to, deliverables, sort_order || 0]
+      [req.params.projectId, b.title, toNull(b.description), b.phase || 'formulation_design', b.status || 'pending', toNull(b.due_date), toNull(b.assigned_to), toNull(b.deliverables), b.sort_order || 0]
     );
     res.status(201).json({ data: { id: result.insertId }, message: 'Milestone created' });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) {
+    console.error('Milestone create error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT update milestone
 router.put('/milestones/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { title, description, phase, status, due_date, completed_date, assigned_to, deliverables, sort_order } = req.body;
+    const b = req.body;
+    const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
     await pool.query(
       `UPDATE rnd_milestones SET title=?, description=?, phase=?, status=?, due_date=?, completed_date=?, assigned_to=?, deliverables=?, sort_order=? WHERE id=?`,
-      [title, description, phase, status, due_date, completed_date, assigned_to, deliverables, sort_order, req.params.id]
+      [b.title, toNull(b.description), toNull(b.phase) || 'formulation_design', b.status || 'pending', toNull(b.due_date), toNull(b.completed_date), toNull(b.assigned_to), toNull(b.deliverables), b.sort_order ?? 0, req.params.id]
     );
     res.json({ message: 'Milestone updated' });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) {
+    console.error('Milestone update error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE milestone

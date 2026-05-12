@@ -202,7 +202,7 @@ router.get('/profitability', authMiddleware, async (req: Request, res: Response)
       `SELECT p.*, pr.sku, pr.name as product_name
        FROM profitability_tracking p
        LEFT JOIN products pr ON p.product_id = pr.id
-       ORDER BY p.period DESC`
+       ORDER BY p.period_date DESC`
     );
     res.json({ data: profitability });
   } catch (error) {
@@ -344,10 +344,9 @@ router.post('/accounts-payable', authMiddleware, async (req: Request, res: Respo
 router.get('/accounts-receivable', authMiddleware, async (req: Request, res: Response) => {
   try {
     const ar = await dbAll(
-      `SELECT ar.*, inv.invoice_number, c.name as customer_name, inv.amount
+      `SELECT ar.*, inv.invoice_number, inv.total_amount as amount
        FROM accounts_receivable ar
        LEFT JOIN invoices inv ON ar.invoice_id = inv.id
-       LEFT JOIN customers c ON inv.customer_id = c.id
        ORDER BY ar.due_date ASC`
     );
     res.json({ data: ar });
@@ -517,7 +516,6 @@ router.get('/margin-analysis/summary', authMiddleware, async (req: Request, res:
     res.status(500).json({ error: 'Failed to fetch margin summary' });
   }
 });
-
 // ===== FUND REQUESTS =====
 
 router.get('/fund-requests', authMiddleware, async (req: Request, res: Response) => {
@@ -526,6 +524,7 @@ router.get('/fund-requests', authMiddleware, async (req: Request, res: Response)
     let sql = `
       SELECT fr.*, po.po_number, v.name as vendor_name,
              ps.schedule_no, ps.label as schedule_label, ps.trigger_type,
+             cp.project_name, cp.project_number,
              (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id) AS item_count,
              (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id AND fri.status = 'pending') AS pending_count,
              (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id AND fri.status = 'approved') AS approved_count,
@@ -534,6 +533,7 @@ router.get('/fund-requests', authMiddleware, async (req: Request, res: Response)
       LEFT JOIN purchase_orders po ON fr.po_id = po.id
       LEFT JOIN vendors v ON fr.vendor_id = v.id
       LEFT JOIN purchase_order_payment_schedules ps ON fr.po_schedule_id = ps.id
+      LEFT JOIN client_projects cp ON fr.project_id = cp.id
       WHERE 1 = 1
     `;
     const params: any[] = [];
@@ -541,6 +541,12 @@ router.get('/fund-requests', authMiddleware, async (req: Request, res: Response)
     if (status) {
       sql += ' AND fr.status = ?';
       params.push(String(status));
+    }
+
+    const { project_id } = req.query;
+    if (project_id) {
+      sql += ' AND fr.project_id = ?';
+      params.push(Number(project_id));
     }
 
     sql += ' ORDER BY fr.created_at DESC';
@@ -556,11 +562,13 @@ router.get('/fund-requests/:id', authMiddleware, async (req: Request, res: Respo
   try {
     const row = await dbGet(
       `SELECT fr.*, po.po_number, v.name as vendor_name,
-              ps.schedule_no, ps.label as schedule_label, ps.trigger_type
+              ps.schedule_no, ps.label as schedule_label, ps.trigger_type,
+              cp.project_name, cp.project_number
        FROM fund_requests fr
        LEFT JOIN purchase_orders po ON fr.po_id = po.id
        LEFT JOIN vendors v ON fr.vendor_id = v.id
        LEFT JOIN purchase_order_payment_schedules ps ON fr.po_schedule_id = ps.id
+       LEFT JOIN client_projects cp ON fr.project_id = cp.id
        WHERE fr.id = ?`,
       [req.params.id]
     );
@@ -590,6 +598,7 @@ router.post('/fund-requests', authMiddleware, async (req: Request, res: Response
       po_id,
       po_schedule_id,
       vendor_id,
+      project_id,
       amount,
       needed_date,
       purpose,
@@ -681,15 +690,16 @@ router.post('/fund-requests', authMiddleware, async (req: Request, res: Response
     const number = generateFinanceCode('FR');
     const result = await dbRun(
       `INSERT INTO fund_requests (
-         request_number, request_date, po_id, po_schedule_id, vendor_id, amount, needed_date,
+         request_number, request_date, po_id, po_schedule_id, vendor_id, project_id, amount, needed_date,
          purpose, status, requester_id, notes, cash_account, cash_account_note
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         number,
         request_date || new Date().toISOString().slice(0, 10),
         headerPoId,
         headerScheduleId,
         headerVendorId,
+        project_id || null,
         totalAmount,
         needed_date,
         String(purpose).trim(),

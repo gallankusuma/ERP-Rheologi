@@ -313,9 +313,9 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
     const code = `${prefix}-${String(seq).padStart(4, '0')}`;
 
     const result = await dbRun(
-      `INSERT INTO clients (code, client_type, name, organization, address, city, province, postal_code, phone, website, client_group_id) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [code, typeVal, name || null, organization || null, address || null, city || null, province || null, postal_code || null, phone || null, website || null, client_group_id || null]
+      `INSERT INTO clients (code, name, organization, address, city, province, postal_code, phone, website, client_group_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [code, name || null, organization || null, address || null, city || null, province || null, postal_code || null, phone || null, website || null, client_group_id || null]
     );
 
     res.status(201).json({ message: 'Client created successfully', id: result.insertId, code });
@@ -339,7 +339,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
        SET name = ?, organization = ?, address = ?, city = ?, province = ?, postal_code = ?, 
            phone = ?, website = ?, client_group_id = ?
        WHERE id = ?`,
-      [name, organization, address, city, province, postal_code, phone, website, client_group_id, req.params.id]
+      [name || null, organization || null, address || null, city || null, province || null, postal_code || null, phone || null, website || null, client_group_id || null, req.params.id]
     );
 
     res.json({ message: 'Client updated successfully' });
@@ -468,7 +468,7 @@ router.post('/:id/contacts', authMiddleware, async (req: Request, res: Response)
     const result = await dbRun(
       `INSERT INTO contacts (client_id, name, job_title, email, phone, mobile, is_primary) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.id, name, job_title, email, phone, mobile, is_primary ? 1 : 0]
+      [req.params.id, name || null, job_title || null, email || null, phone || null, mobile || null, is_primary ? 1 : 0]
     );
 
     // Update client's primary_contact_id if this is primary
@@ -767,7 +767,7 @@ router.put('/:id/contacts/:contactId', authMiddleware, async (req: Request, res:
       `UPDATE contacts 
        SET name = ?, job_title = ?, email = ?, phone = ?, mobile = ?, is_primary = ?
        WHERE id = ? AND client_id = ?`,
-      [name, job_title, email, phone, mobile, is_primary ? 1 : 0, req.params.contactId, req.params.id]
+      [name || null, job_title || null, email || null, phone || null, mobile || null, is_primary ? 1 : 0, req.params.contactId, req.params.id]
     );
     res.json({ message: 'Contact updated successfully' });
   } catch (error) {

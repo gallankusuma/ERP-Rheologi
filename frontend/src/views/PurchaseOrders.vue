@@ -442,14 +442,19 @@
                       />
                     </td>
                     <td class="px-2 py-2">
-                      <input
-                        :value="formatNumberInput(item.unit_price)"
-                        @input="onItemMoneyInput(item, 'unit_price', $event)"
-                        inputmode="numeric"
-                        pattern="[0-9\.]*"
-                        class="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-                        :disabled="isEditing && !editModeEnabled"
-                      />
+                      <div class="relative">
+                        <input
+                          :value="formatNumberInput(item.unit_price)"
+                          @input="onItemMoneyInput(item, 'unit_price', $event)"
+                          inputmode="numeric"
+                          pattern="[0-9\.]*"
+                          class="w-full border rounded px-2 py-1 text-xs"
+                          :class="item.priceLocked ? 'border-green-400 bg-green-50 font-semibold text-green-800' : 'border-gray-300'"
+                          :disabled="(isEditing && !editModeEnabled) || item.priceLocked"
+                        />
+                        <span v-if="item.priceLocked" class="absolute right-1 top-1/2 -translate-y-1/2 text-green-600 text-[10px]" title="Harga terkunci dari bid pemenang">🔒</span>
+                      </div>
+                      <div v-if="item.priceLocked" class="text-[9px] text-green-600 mt-0.5">Bid winner price</div>
                     </td>
                     <td class="px-2 py-2 text-right text-xs font-semibold">{{ formatCurrency(calcLineTotal(item)) }}</td>
                     <td class="px-2 py-2">
@@ -876,6 +881,23 @@
       </div>
     </div>
   </div>
+
+    <!-- Generic Confirm Modal -->
+    <div v-if="confirmModal.show" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center" :class="confirmModal.type === 'danger' ? 'bg-red-100' : 'bg-blue-100'">
+            <span class="text-xl">{{ confirmModal.type === 'danger' ? '⚠️' : '❓' }}</span>
+          </div>
+          <h3 class="text-lg font-semibold text-gray-900">{{ confirmModal.title }}</h3>
+        </div>
+        <p class="text-gray-600 mb-6">{{ confirmModal.message }}</p>
+        <div class="flex justify-end gap-3">
+          <button @click="confirmModal.show = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700">Cancel</button>
+          <button @click="confirmModal.onConfirm(); confirmModal.show = false" class="px-4 py-2 rounded-lg text-white" :class="confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'" :disabled="submitting">{{ confirmModal.confirmText || 'Confirm' }}</button>
+        </div>
+      </div>
+    </div>
 </template>
 
 <script setup lang="ts">
@@ -884,7 +906,7 @@ import { api } from '../lib/api';
 import { useApprovalWorkflow } from '../composables/useApprovalWorkflow';
 import { formatCurrency } from '../utils/format';
 
-const { canApprove, canReject } = useApprovalWorkflow();
+const { canApprove, canReject } = useApprovalWorkflow('procurement.purchase-orders');
 const loading = ref(false);
 const submitting = ref(false);
 const error = ref('');
@@ -892,6 +914,11 @@ const successMsg = ref('');
 const showModal = ref(false);
 const isEditing = ref(false);
 const editModeEnabled = ref(false);
+
+const confirmModal = ref({ show: false, title: '', message: '', type: 'danger' as 'danger' | 'info', confirmText: '', onConfirm: () => {} });
+function showConfirm(title: string, message: string, onConfirm: () => void, type: 'danger' | 'info' = 'info', confirmText = 'Confirm') {
+  confirmModal.value = { show: true, title, message, type, confirmText, onConfirm };
+}
 
 const purchaseOrders = ref<any[]>([]);
 const approvedPRs = ref<any[]>([]);
@@ -905,6 +932,8 @@ const prSummary = ref<any[]>([]);
 const prVerificationItems = ref<any[]>([]);
 const prSearchQuery = ref('');
 const prDropdownOpen = ref(false);
+// Map: item_index -> { unit_price, item_name } from the winning bid
+const winnerBidPrices = ref<Map<number, { unit_price: number; item_name: string }>>(new Map());
 
 // ── AI Price Check state ──────────────────────────────────────────────────────
 const aiChecking = ref(false);
@@ -1235,6 +1264,9 @@ watch(
 watch(
   () => form.value.pr_id,
   async (newPrId) => {
+    // Skip when viewing/editing an existing PO — items come from PO data, not PR
+    if (isEditing.value) return;
+    
     if (newPrId) {
       await loadPRItems();
       // Auto-inherit project_id from selected PR
@@ -1409,7 +1441,10 @@ async function loadPRItems() {
 }
 
 function addItemToPO(item: any) {
-  // Add the selected item to formItems array
+  // Find the item_index in prVerificationItems to match with winner bid prices
+  const itemIdx = prVerificationItems.value.findIndex((v: any) => v.product_id === item.product_id);
+  const winnerPrice = winnerBidPrices.value.get(itemIdx);
+  
   const newItem = {
     product_id: item.product_id,
     productName: item.productName,
@@ -1419,25 +1454,13 @@ function addItemToPO(item: any) {
     remaining_qty: item.remaining_qty,
     rcv_qty: 0,
     uom: item.uom,
-    unit_price: item.unit_price || 0,
-    remark: '',
+    unit_price: winnerPrice ? winnerPrice.unit_price : (item.unit_price || 0),
+    priceLocked: !!winnerPrice,
+    remark: winnerPrice ? `Bid winner price` : '',
     notes: '',
     isAllocated: false,
     lead_time_days: null as number | null,
   };
-  
-  // If vendor is already selected, load pricing details
-  if (form.value.vendor_id) {
-    api.get(`/procurement/vendor-price-details/${form.value.vendor_id}/${item.product_id}`)
-      .then(res => {
-        const pricing = res.data.data;
-        if (pricing) {
-          newItem.unit_price = pricing.price || newItem.unit_price;
-          newItem.lead_time_days = pricing.lead_time_days || null;
-        }
-      })
-      .catch(_err => console.warn(`No pricing for vendor ${form.value.vendor_id} and product ${item.product_id}`));
-  }
   
   formItems.value.push(newItem);
 
@@ -1486,7 +1509,13 @@ function syncVerificationFromFormItems() {
 
 function openCreateModal() {
   if (approvedPRs.value.length === 0) {
-    alert('Tidak ada PR yang sudah approved 2/2. Buat dan approve PR terlebih dahulu.');
+    showConfirm(
+      'Tidak Bisa Buat PO',
+      'Tidak ada PR yang sudah approved (2/2) dengan bid/harga. Pastikan:\n1. PR sudah diapprove Supervisor & Manager\n2. PR sudah ada vendor bid dengan harga.',
+      () => {},
+      'info',
+      'OK'
+    );
     return;
   }
   
@@ -1532,6 +1561,7 @@ function closeModal() {
   async function selectPR(pr: any) {
     form.value.pr_id = pr.id;
     prDropdownOpen.value = false;
+    winnerBidPrices.value = new Map();
     await loadPRItems();
     
     // Auto-fill from bid winner
@@ -1542,21 +1572,26 @@ function closeModal() {
         // Auto-set vendor
         form.value.vendor_id = data.winner.vendor_id;
         
-        // Auto-fill prices from winner bid items
+        // Store winner bid prices by item_index for locking
         if (data.items && data.items.length > 0) {
           for (const winItem of data.items) {
-            const matchingFormItem = formItems.value.find((fi: any) => 
-              fi.name === winItem.item_name || fi.product_name === winItem.item_name
-            );
-            if (matchingFormItem && winItem.unit_price > 0) {
-              matchingFormItem.unit_price = winItem.unit_price;
+            if (winItem.unit_price > 0) {
+              winnerBidPrices.value.set(winItem.item_index, {
+                unit_price: Number(winItem.unit_price),
+                item_name: winItem.item_name,
+              });
             }
           }
         }
         
-        // Show info
-        const msg = `✅ Vendor pemenang bidding: ${data.winner.vendor_name}\nHarga otomatis terisi dari hasil bidding.`;
-        alert(msg);
+        // Show info via modal
+        showConfirm(
+          '✅ Vendor Pemenang Ditemukan',
+          `Vendor pemenang bidding: ${data.winner.vendor_name}\n\nHarga otomatis akan terisi dan terkunci dari hasil bidding saat item ditambahkan ke PO.`,
+          () => {},
+          'info',
+          'OK'
+        );
       }
     } catch { /* no winner, user picks manually */ }
   }
@@ -1615,12 +1650,12 @@ async function submitPO() {
       items: formItems.value
         .filter(item => !item.isAllocated && (item.quantity || 0) > 0)
         .map(item => ({
-          product_id: item.product_id,
+          product_id: item.product_id || null,
           quantity: item.quantity,
           uom: item.uom,
           unit_price: item.unit_price || 0,
           currency: form.value.currency,
-          notes: item.remark || '',
+          notes: item.product_id ? (item.remark || '') : (item.productName || item.remark || ''),
         })),
     };
     
@@ -1651,8 +1686,8 @@ async function viewPO(po: any) {
     
     form.value = {
       po_number: poData.po_number || '',
-      po_date: poData.po_date || '',
-      expected_date: poData.expected_date || '',
+      po_date: poData.po_date ? String(poData.po_date).slice(0, 10) : '',
+      expected_date: poData.expected_date ? String(poData.expected_date).slice(0, 10) : '',
       currency: poData.currency || 'IDR',
       payment_term: poData.payment_term || '',
       payment_term_2: poData.payment_term_2 || '',
@@ -1664,9 +1699,9 @@ async function viewPO(po: any) {
       delivery_to: poData.delivery_to || '',
       pr_id: poData.pr_id,
       project_id: poData.project_id || null,
-      advance_payment: Number(poData.advance_payment) || 0,
-      discount_percent: Number((poData as any).discount_percent ?? poData.discount) || 0,
-      ppn_percent: Number(poData.ppn_percent) || 11,
+      advance_payment: Number(poData.advance_payment ?? 0),
+      discount_percent: Number(poData.discount_percent ?? poData.discount ?? 0),
+      ppn_percent: poData.ppn_percent != null ? Number(poData.ppn_percent) : 11,
       notes: '',
     };
 
@@ -1678,13 +1713,17 @@ async function viewPO(po: any) {
       }
     })();
     form.value.notes = parsedNotes.user_notes || '';
+    if (parsedNotes.item_type) {
+      form.value.item_type = parsedNotes.item_type;
+    }
     
     formItems.value = (poData.items || []).map((item: any) => ({
       product_id: item.product_id,
-      productName: item.product_name || '',
+      productName: item.product_name || item.notes || 'Unnamed item',
       quantity: item.quantity,
       uom: item.uom,
       unit_price: item.unit_price,
+      remark: item.notes || '',
       notes: item.notes || '',
     }));
     paymentSchedules.value = poData.payment_schedules || [];
@@ -1698,7 +1737,9 @@ async function viewPO(po: any) {
 }
 
 async function approvePO(id: number) {
-  if (!confirm('Approve PO? Pastikan semua data sudah benar.')) return;
+  showConfirm('Approve PO', 'Approve PO? Pastikan semua data sudah benar.', () => doApprovePO(id), 'info', 'Approve');
+}
+async function doApprovePO(id: number) {
   
   submitting.value = true;
   error.value = '';
@@ -1719,7 +1760,9 @@ async function approvePO(id: number) {
 }
 
 async function rejectPO(id: number) {
-  if (!confirm('Reject dan kembalikan PO ke pending?')) return;
+  showConfirm('Reject PO', 'Reject dan kembalikan PO ke pending?', () => doRejectPO(id), 'danger', 'Reject');
+}
+async function doRejectPO(id: number) {
   
   submitting.value = true;
   error.value = '';
@@ -1740,7 +1783,9 @@ async function rejectPO(id: number) {
 }
 
 async function handleDeletePO(id: number) {
-  if (!confirm('Delete this PO? This action cannot be undone.')) return;
+  showConfirm('Delete PO', 'Delete this PO? This action cannot be undone.', () => doDeletePO(id), 'danger', 'Delete');
+}
+async function doDeletePO(id: number) {
   
   submitting.value = true;
   error.value = '';

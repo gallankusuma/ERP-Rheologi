@@ -254,7 +254,7 @@ import { ref, computed, onMounted } from 'vue';
 import { api } from '../lib/api';
 import { useApprovalWorkflow } from '../composables/useApprovalWorkflow';
 
-const { canApprove, canReject, getApprovalStatusText, getApprovalStatusClass, getApprovalMessage, isFullyApproved: isFullyApprovedFn } = useApprovalWorkflow();
+const { canApprove, canReject, getApprovalStatusText, getApprovalStatusClass, getApprovalMessage, isFullyApproved: isFullyApprovedFn } = useApprovalWorkflow('inventory.stock-transfer');
 
 interface StockTransfer {
   id: number;

@@ -516,6 +516,39 @@
     </div>
   </div>
 
+    <!-- PR Delete Confirmation Modal -->
+    <div v-if="showDeletePRModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </div>
+          <h3 class="text-lg font-semibold text-gray-900">Delete Draft PR</h3>
+        </div>
+        <p class="text-gray-600 mb-6">Delete this draft PR? This action cannot be undone.</p>
+        <div class="flex justify-end gap-3">
+          <button @click="showDeletePRModal = false; deletePRTargetId = null" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700">Cancel</button>
+          <button @click="confirmDeletePR" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700" :disabled="submitting">{{ submitting ? 'Deleting...' : 'Delete' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generic Confirm Modal -->
+    <div v-if="confirmModal.show" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center" :class="confirmModal.type === 'danger' ? 'bg-red-100' : 'bg-blue-100'">
+            <span class="text-xl">{{ confirmModal.type === 'danger' ? '⚠️' : '❓' }}</span>
+          </div>
+          <h3 class="text-lg font-semibold text-gray-900">{{ confirmModal.title }}</h3>
+        </div>
+        <p class="text-gray-600 mb-6">{{ confirmModal.message }}</p>
+        <div class="flex justify-end gap-3">
+          <button @click="confirmModal.show = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700">Cancel</button>
+          <button @click="confirmModal.onConfirm(); confirmModal.show = false" class="px-4 py-2 rounded-lg text-white" :class="confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'" :disabled="submitting">{{ confirmModal.confirmText || 'Confirm' }}</button>
+        </div>
+      </div>
+    </div>
 
 </template>
 
@@ -545,8 +578,13 @@ type PRItem = {
 const store = useProcurementStore();
 const authStore = useAuthStore();
 const productStore = useProductStore();
-const { canApprove, canReject } = useApprovalWorkflow();
+const { canApprove, canReject } = useApprovalWorkflow('procurement.purchase-requests');
 const router = useRouter();
+
+const confirmModal = ref({ show: false, title: '', message: '', type: 'danger' as 'danger' | 'info', confirmText: '', onConfirm: () => {} });
+function showConfirm(title: string, message: string, onConfirm: () => void, type: 'danger' | 'info' = 'info', confirmText = 'Confirm') {
+  confirmModal.value = { show: true, title, message, type, confirmText, onConfirm };
+}
 
 const projects = ref<any[]>([]);
 const loadProjects = async () => {
@@ -561,6 +599,8 @@ const isEditing = ref(false);
 const submitting = ref(false);
 const successMsg = ref('');
 const currentPR = ref<any>(null);
+const showDeletePRModal = ref(false);
+const deletePRTargetId = ref<number | null>(null);
 
 const vendors = ref<any[]>([]);
 const prBids = ref<any[]>([]);
@@ -698,7 +738,9 @@ const saveBids = async () => {
 
 const selectBidWinner = async (bid: any) => {
   if (!currentPR.value?.id) return;
-  if (!confirm(`Pilih "${bid.vendor_name}" sebagai vendor pemenang?`)) return;
+  showConfirm('Select Winner', `Pilih "${bid.vendor_name}" sebagai vendor pemenang?`, () => doSelectBidWinner(bid), 'info', 'Select');
+};
+const doSelectBidWinner = async (bid: any) => {
   try {
     // Auto-save prices first if dirty
     if (bidsDirty.value) {
@@ -719,7 +761,9 @@ const selectBidWinner = async (bid: any) => {
 
 const removeBid = async (bid: any) => {
   if (!currentPR.value?.id) return;
-  if (!confirm(`Hapus bid dari "${bid.vendor_name}"?`)) return;
+  showConfirm('Delete Bid', `Hapus bid dari "${bid.vendor_name}"?`, () => doRemoveBid(bid), 'danger', 'Delete');
+};
+const doRemoveBid = async (bid: any) => {
   try {
     await api.delete(`/procurement/purchase-requests/${currentPR.value.id}/bids/${bid.id}`);
     await loadBids(currentPR.value.id);
@@ -767,6 +811,9 @@ const formatDate = (dateStr: string | null | undefined) => {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleDateString('id-ID');
 };
+
+
+
 
 
 
@@ -863,8 +910,8 @@ const viewPR = async (pr: any) => {
   form.value = {
     pr_number: pr.pr_number || '',
     department: pr.department || '',
-    request_date: pr.request_date || '',
-    needed_by: pr.needed_by || '',
+    request_date: pr.request_date ? (pr.request_date.toString().includes('T') ? pr.request_date.toString().split('T')[0] : pr.request_date) : '',
+    needed_by: pr.needed_by ? (pr.needed_by.toString().includes('T') ? pr.needed_by.toString().split('T')[0] : pr.needed_by) : '',
     reason: pr.reason || parsed.noteText || '',
     notes: parsed.noteText || '',
     project_id: pr.project_id || null,
@@ -976,7 +1023,10 @@ const updatePR = async () => {
   }
 
 
-  if (!confirm('Save changes to this PR?')) return;
+  showConfirm('Save Changes', 'Save changes to this PR?', () => doSaveChanges(), 'info', 'Save');
+  return;
+};
+const doSaveChanges = async () => {
 
   submitting.value = true;
   try {
@@ -1013,11 +1063,18 @@ const updatePR = async () => {
   }
 };
 
-const deletePR = async (id: number) => {
-  if (!confirm('Delete this draft PR? This action cannot be undone.')) return;
+const deletePR = (id: number) => {
+  deletePRTargetId.value = id;
+  showDeletePRModal.value = true;
+};
+
+const confirmDeletePR = async () => {
+  if (!deletePRTargetId.value) return;
   submitting.value = true;
   try {
-    await api.delete(`/procurement/purchase-requests/${id}`);
+    await api.delete(`/procurement/purchase-requests/${deletePRTargetId.value}`);
+    showDeletePRModal.value = false;
+    deletePRTargetId.value = null;
     successMsg.value = 'PR deleted successfully.';
   } catch (error: any) {
     console.error('Delete PR error:', error);
@@ -1028,8 +1085,10 @@ const deletePR = async (id: number) => {
   }
 };
 
-const approvePR = async (id: number) => {
-  if (!confirm('Approve PR? Pastikan semua data sudah benar.')) return;
+const approvePR = (id: number) => {
+  showConfirm('Approve PR', 'Approve PR? Pastikan semua data sudah benar.', () => doApprovePR(id), 'info', 'Approve');
+};
+const doApprovePR = async (id: number) => {
   submitting.value = true;
   try {
     const res = await api.post(`/procurement/purchase-requests/${id}/approve`);
@@ -1043,8 +1102,10 @@ const approvePR = async (id: number) => {
   }
 };
 
-const rejectPR = async (id: number) => {
-  if (!confirm('Reject dan kembalikan PR ke pending?')) return;
+const rejectPR = (id: number) => {
+  showConfirm('Reject PR', 'Reject dan kembalikan PR ke pending?', () => doRejectPR(id), 'danger', 'Reject');
+};
+const doRejectPR = async (id: number) => {
   submitting.value = true;
   try {
     const res = await api.post(`/procurement/purchase-requests/${id}/reject`);

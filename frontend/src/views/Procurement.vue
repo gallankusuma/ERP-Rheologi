@@ -208,7 +208,7 @@ import api from '../config/api';
 const store = useProcurementStore();
 const productStore = useProductStore();
 const warehouseStore = useWarehouseStore();
-const { canApprove, canReject, getApprovalStatusClass, getApprovalStatusText, getApprovalMessage } = useApprovalWorkflow();
+const { canApprove, canReject, getApprovalStatusClass, getApprovalStatusText, getApprovalMessage } = useApprovalWorkflow('procurement.purchase-orders');
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString();
 

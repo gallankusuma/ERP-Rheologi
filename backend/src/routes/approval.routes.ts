@@ -17,6 +17,7 @@ const generateCode = (prefix: string) => {
 router.get('/inbox', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
+    const userLevel = Number((req as any).user?.userLevel || 0);
     const { module, entity_type } = req.query;
 
     let sql = `
@@ -27,23 +28,52 @@ router.get('/inbox', authMiddleware, async (req: Request, res: Response) => {
     `;
     const params: any[] = [];
 
-    // Filter by approver: check if current user is the approver at the current step
-    // Also include items where no specific approver is set (role-based)
-    sql += ` AND (
-      EXISTS (
-        SELECT 1 FROM approval_rule_steps ars
-        JOIN approval_rules arl ON ars.rule_id = arl.id
-        WHERE arl.module = ar.module
-          AND ars.step_order = ar.current_step
-          AND (ars.approver_user_id = ? OR ars.approver_user_id IS NULL)
-      )
-      OR NOT EXISTS (
-        SELECT 1 FROM approval_rule_steps ars
-        JOIN approval_rules arl ON ars.rule_id = arl.id
-        WHERE arl.module = ar.module
-      )
-    )`;
-    params.push(userId);
+    // ── Permission-based inbox filtering ──
+    // Master Admin (level 10+) sees everything.
+    // Other users see items only if they have the correct approve/approve_1/approve_2 permission
+    // for the module, OR if no rules/permissions exist for that module (fallback: visible to all).
+    if (userLevel < 10) {
+      // Get all permission resources the user can approve (via role)
+      const userRow = await dbGet('SELECT role_id FROM users WHERE id = ?', [userId]) as any;
+      const roleId = userRow?.role_id;
+
+      if (roleId) {
+        // Get resources this user can approve (approve, approve_1, or approve_2)
+        const approvePerms = await dbAll(
+          `SELECT DISTINCT p.resource FROM permissions p
+           JOIN role_permissions rp ON p.id = rp.permission_id
+           WHERE rp.role_id = ? AND p.action IN ('approve', 'approve_1', 'approve_2')`,
+          [roleId]
+        ) as any[];
+
+        if (approvePerms.length > 0) {
+          // Map module names to permission resource patterns
+          // approval_requests.module is like 'finance', 'procurement', etc.
+          // We check if ANY of the user's approve permissions matches the module
+          sql += ` AND (
+            EXISTS (
+              SELECT 1 FROM approval_rule_steps ars
+              JOIN approval_rules arl ON ars.rule_id = arl.id
+              WHERE arl.module = ar.module
+                AND ars.step_order = ar.current_step
+                AND (ars.approver_user_id = ? OR ars.approver_user_id IS NULL)
+            )
+            OR NOT EXISTS (
+              SELECT 1 FROM approval_rule_steps ars
+              JOIN approval_rules arl ON ars.rule_id = arl.id
+              WHERE arl.module = ar.module
+            )
+          )`;
+          params.push(userId);
+        } else {
+          // User has no approve permissions at all — show nothing
+          sql += ' AND 1 = 0';
+        }
+      } else {
+        // No role assigned — show nothing
+        sql += ' AND 1 = 0';
+      }
+    }
 
     if (module) {
       sql += ' AND ar.module = ?';
@@ -58,18 +88,69 @@ router.get('/inbox', authMiddleware, async (req: Request, res: Response) => {
 
     const requests = await dbAll(sql, params) as any[];
 
-    // Enrich with entity details where possible (currently: fund_request)
+    // ── Enrich with entity details ──
     for (const r of requests) {
-      if (r.entity_type === 'fund_request') {
-        const fr = await dbGet(
-          `SELECT fr.id, fr.request_number, fr.purpose, fr.amount, fr.needed_date, fr.status,
-                  fr.cash_account, fr.cash_account_note,
-                  (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id) AS item_count,
-                  (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id AND fri.status = 'pending') AS pending_count
-           FROM fund_requests fr WHERE fr.id = ?`,
-          [r.entity_id]
-        );
-        r.entity = fr || null;
+      try {
+        if (r.entity_type === 'fund_request') {
+          const fr = await dbGet(
+            `SELECT fr.id, fr.request_number, fr.purpose, fr.amount, fr.needed_date, fr.status,
+                    fr.cash_account, fr.cash_account_note,
+                    u.full_name AS requester_name,
+                    (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id) AS item_count,
+                    (SELECT COUNT(*) FROM fund_request_items fri WHERE fri.fund_request_id = fr.id AND fri.status = 'pending') AS pending_count
+             FROM fund_requests fr
+             LEFT JOIN users u ON fr.requester_id = u.id
+             WHERE fr.id = ?`,
+            [r.entity_id]
+          );
+          r.entity = fr || null;
+
+        } else if (r.entity_type === 'purchase_order') {
+          const po = await dbGet(
+            `SELECT po.id, po.po_number, po.order_date, po.total_amount, po.status,
+                    po.approval_status, po.notes, po.expected_date,
+                    v.name AS vendor_name,
+                    (SELECT COUNT(*) FROM purchase_order_items poi WHERE poi.po_id = po.id) AS item_count,
+                    pr.pr_number
+             FROM purchase_orders po
+             LEFT JOIN vendors v ON po.vendor_id = v.id
+             LEFT JOIN purchase_requests pr ON po.pr_id = pr.id
+             WHERE po.id = ?`,
+            [r.entity_id]
+          );
+          r.entity = po || null;
+
+        } else if (r.entity_type === 'purchase_request') {
+          const pr = await dbGet(
+            `SELECT pr.id, pr.pr_number, pr.request_date, pr.status, pr.approval_status,
+                    pr.department, pr.notes, pr.priority,
+                    u.full_name AS requester_name,
+                    (SELECT COUNT(*) FROM purchase_request_items pri WHERE pri.purchase_request_id = pr.id) AS item_count,
+                    (SELECT COALESCE(SUM(pri.quantity * pri.estimated_price), 0) FROM purchase_request_items pri WHERE pri.purchase_request_id = pr.id) AS estimated_total
+             FROM purchase_requests pr
+             LEFT JOIN users u ON pr.requester_id = u.id
+             WHERE pr.id = ?`,
+            [r.entity_id]
+          );
+          r.entity = pr || null;
+
+        } else if (r.entity_type === 'grn') {
+          const grn = await dbGet(
+            `SELECT g.id, g.grn_number, g.received_date, g.status, g.notes,
+                    po.po_number, v.name AS vendor_name,
+                    (SELECT COUNT(*) FROM grn_items gi WHERE gi.grn_id = g.id) AS item_count,
+                    (SELECT COALESCE(SUM(gi.quantity_received), 0) FROM grn_items gi WHERE gi.grn_id = g.id) AS total_qty_received
+             FROM goods_receipts g
+             LEFT JOIN purchase_orders po ON g.po_id = po.id
+             LEFT JOIN vendors v ON po.vendor_id = v.id
+             WHERE g.id = ?`,
+            [r.entity_id]
+          );
+          r.entity = grn || null;
+        }
+      } catch (enrichErr) {
+        console.warn(`Failed to enrich entity ${r.entity_type}#${r.entity_id}:`, (enrichErr as any)?.message);
+        r.entity = null;
       }
     }
 

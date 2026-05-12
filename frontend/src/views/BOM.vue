@@ -357,7 +357,7 @@ import { api } from '../lib/api';
 const store = useBOMStore();
 const productStore = useProductStore();
 const authStore = useAuthStore();
-const { getApprovalStatusText, getApprovalStatusClass } = useApprovalWorkflow();
+const { getApprovalStatusText, getApprovalStatusClass } = useApprovalWorkflow('master_data.bom');
 
 const showModal = ref(false);
 const isEditing = ref(false);

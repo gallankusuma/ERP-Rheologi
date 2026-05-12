@@ -194,6 +194,23 @@
         </div>
       </div>
     </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div v-if="showDeleteModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+            <span class="text-xl">⚠️</span>
+          </div>
+          <h3 class="text-lg font-semibold text-gray-900">Delete Supplier</h3>
+        </div>
+        <p class="text-gray-600 mb-6">Are you sure you want to delete this supplier? This action cannot be undone.</p>
+        <div class="flex justify-end gap-3">
+          <button @click="showDeleteModal = false; deleteTargetId = null" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700">Cancel</button>
+          <button @click="confirmDeleteSupplier" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Delete</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -223,6 +240,8 @@ const loading = ref(false);
 const saving = ref(false);
 const codeLoading = ref(false);
 const error = ref<string | null>(null);
+const showDeleteModal = ref(false);
+const deleteTargetId = ref<number | null>(null);
 
 const form = ref({ 
   code: '', 
@@ -378,9 +397,13 @@ const saveSupplier = async () => {
   }
 };
 
-const deleteSupplier = async (id: number) => {
-  if (!confirm('Are you sure you want to delete this supplier?')) return;
+const deleteSupplier = (id: number) => {
+  deleteTargetId.value = id;
+  showDeleteModal.value = true;
+};
 
+const confirmDeleteSupplier = async () => {
+  if (!deleteTargetId.value) return;
   try {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -388,9 +411,11 @@ const deleteSupplier = async (id: number) => {
       return;
     }
 
-    await api.delete(`/procurement/vendors/${id}`, {
+    await api.delete(`/procurement/vendors/${deleteTargetId.value}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
+    showDeleteModal.value = false;
+    deleteTargetId.value = null;
     alert('✅ Supplier deleted successfully');
     await loadSuppliers();
   } catch (err: any) {

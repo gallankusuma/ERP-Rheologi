@@ -203,7 +203,7 @@
                 <button class="text-gray-400 hover:text-blue-600 mx-1" title="View Details">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                 </button>
-                <button class="text-gray-400 hover:text-red-600 mx-1" title="Delete Project" @click.stop>
+                <button class="text-gray-400 hover:text-red-600 mx-1" title="Delete Project" @click.stop="deleteProject(project.id)">
                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                 </button>
               </td>
@@ -270,6 +270,23 @@
         </form>
       </div>
     </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div v-if="showDeleteModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </div>
+          <h3 class="text-lg font-semibold text-gray-900">Delete Project</h3>
+        </div>
+        <p class="text-gray-600 mb-6">Are you sure you want to delete this project? This action cannot be undone.</p>
+        <div class="flex justify-end gap-3">
+          <button @click="showDeleteModal = false; deleteTargetId = null" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700">Cancel</button>
+          <button @click="confirmDelete" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700" :disabled="deleting">{{ deleting ? 'Deleting...' : 'Delete' }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -285,6 +302,9 @@ const clients = ref<any[]>([]);
 const users = ref<any[]>([]);
 const loading = ref(true);
 const showCreateModal = ref(false);
+const showDeleteModal = ref(false);
+const deleteTargetId = ref<number | null>(null);
+const deleting = ref(false);
 
 const searchQuery = ref('');
 const statusFilter = ref('');
@@ -306,114 +326,13 @@ const loadProjects = async () => {
   loading.value = true;
   try {
     const { data } = await api.get('/projects');
-    projects.value = data && data.length > 0 ? data : mockProjects();
+    projects.value = Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('Failed to load projects:', error);
-    projects.value = mockProjects();
+    projects.value = [];
   } finally {
     loading.value = false;
   }
-};
-
-const mockProjects = () => {
-  return [
-    { 
-      id: 1, 
-      title: 'Mobile App Development', 
-      client_name: 'Tech Startup Inc', 
-      client_id: 1,
-      project_number: 'PRJ-001',
-      status: 'in_progress', 
-      progress: 65,
-      price: 25000,
-      start_date: '2026-01-10',
-      deadline: '2026-06-30',
-      created_at: '2026-01-10',
-      description: 'Develop a cross-platform mobile application',
-      assigned_to: 1,
-      manager_name: 'John Doe'
-    },
-    { 
-      id: 2, 
-      title: 'Website Redesign', 
-      client_name: 'Fashion Boutique Co', 
-      client_id: 2,
-      project_number: 'PRJ-002',
-      status: 'in_progress', 
-      progress: 45,
-      price: 15000,
-      start_date: '2026-02-01',
-      deadline: '2026-04-15',
-      created_at: '2026-02-01',
-      description: 'Complete redesign of e-commerce website',
-      assigned_to: 2,
-      manager_name: 'Jane Smith'
-    },
-    { 
-      id: 3, 
-      title: 'Cloud Migration', 
-      client_name: 'Enterprise Solutions Ltd', 
-      client_id: 3,
-      project_number: 'PRJ-003',
-      status: 'open', 
-      progress: 0,
-      price: 50000,
-      start_date: '2026-03-01',
-      deadline: '2026-08-31',
-      created_at: '2026-02-15',
-      description: 'Migrate on-premise infrastructure to cloud',
-      assigned_to: 3,
-      manager_name: 'Mike Johnson'
-    },
-    { 
-      id: 4, 
-      title: 'Data Analytics Dashboard', 
-      client_name: 'Analytics Corp', 
-      client_id: 4,
-      project_number: 'PRJ-004',
-      status: 'completed', 
-      progress: 100,
-      price: 18000,
-      start_date: '2025-11-15',
-      deadline: '2026-01-31',
-      created_at: '2025-11-15',
-      description: 'Build real-time analytics dashboard',
-      assigned_to: 1,
-      manager_name: 'John Doe'
-    },
-    { 
-      id: 5, 
-      title: 'API Integration', 
-      client_name: 'Financial Services Corp', 
-      client_id: 5,
-      project_number: 'PRJ-005',
-      status: 'in_progress', 
-      progress: 30,
-      price: 12000,
-      start_date: '2026-01-20',
-      deadline: '2026-05-20',
-      created_at: '2026-01-20',
-      description: 'Integrate third-party payment APIs',
-      assigned_to: 2,
-      manager_name: 'Jane Smith'
-    },
-    { 
-      id: 6, 
-      title: 'Security Audit', 
-      client_name: 'HealthCare Systems Inc', 
-      client_id: 6,
-      project_number: 'PRJ-006',
-      status: 'open', 
-      progress: 15,
-      price: 8500,
-      start_date: '2026-02-10',
-      deadline: '2026-03-31',
-      created_at: '2026-02-10',
-      description: 'Comprehensive security assessment',
-      assigned_to: 4,
-      manager_name: 'Sarah Wilson'
-    }
-  ];
 };
 
 const loadMetadata = async () => {
@@ -422,33 +341,19 @@ const loadMetadata = async () => {
       api.get('/clients'),
       api.get('/users')
     ]);
-    clients.value = clientsRes.data && clientsRes.data.length > 0 ? clientsRes.data : mockClients();
-    users.value = usersRes.data && usersRes.data.length > 0 ? usersRes.data : mockUsers();
+    // /clients returns { data: [...], pagination: {...} }
+    const clientsPayload = clientsRes.data;
+    clients.value = Array.isArray(clientsPayload) ? clientsPayload 
+      : Array.isArray(clientsPayload?.data) ? clientsPayload.data : [];
+    // /users returns { data: [...] }
+    const usersPayload = usersRes.data;
+    users.value = Array.isArray(usersPayload) ? usersPayload 
+      : Array.isArray(usersPayload?.data) ? usersPayload.data : [];
   } catch (error) {
     console.error('Failed to load metadata:', error);
-    clients.value = mockClients();
-    users.value = mockUsers();
+    clients.value = [];
+    users.value = [];
   }
-};
-
-const mockClients = () => {
-  return [
-    { id: 1, name: 'Tech Startup Inc' },
-    { id: 2, name: 'Fashion Boutique Co' },
-    { id: 3, name: 'Enterprise Solutions Ltd' },
-    { id: 4, name: 'Analytics Corp' },
-    { id: 5, name: 'Financial Services Corp' },
-    { id: 6, name: 'HealthCare Systems Inc' }
-  ];
-};
-
-const mockUsers = () => {
-  return [
-    { id: 1, name: 'John Doe' },
-    { id: 2, name: 'Jane Smith' },
-    { id: 3, name: 'Mike Johnson' },
-    { id: 4, name: 'Sarah Wilson' }
-  ];
 };
 
 const createProject = async () => {
@@ -479,6 +384,27 @@ const openCreateModal = () => {
 
 const goToDetail = (id: number) => {
   router.push(`/projects/${id}`);
+};
+
+const deleteProject = (id: number) => {
+  deleteTargetId.value = id;
+  showDeleteModal.value = true;
+};
+
+const confirmDelete = async () => {
+  if (!deleteTargetId.value) return;
+  deleting.value = true;
+  try {
+    await api.delete(`/projects/${deleteTargetId.value}`);
+    showDeleteModal.value = false;
+    deleteTargetId.value = null;
+    await loadProjects();
+  } catch (error: any) {
+    console.error('Delete failed:', error);
+    alert(error?.response?.data?.error || 'Failed to delete project');
+  } finally {
+    deleting.value = false;
+  }
 };
 
 const filteredProjects = computed(() => {
