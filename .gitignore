@@ -35,6 +35,13 @@ backups/erp-full-backup-*
 # === Build artifacts ===
 backend/dist/
 
+# === Maintenance scripts (ad-hoc SQL, scrapers, etc.) ===
+maintenance/
+
 # === Temp/scratch files ===
 *.bak
 *.old.bak
+
+# === Shell/test scripts at root ===
+*.sh
+backend/*.sh
