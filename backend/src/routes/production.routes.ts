@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 
 const router = Router();
@@ -436,7 +437,7 @@ router.get('/issue-material/wo/:woId', authMiddleware, async (req: Request, res:
   }
 });
 
-router.post('/issue-material', authMiddleware, async (req: Request, res: Response) => {
+router.post('/issue-material', authMiddleware, requirePermission('production.workorders', 'issue_material'), async (req: Request, res: Response) => {
   try {
     const { wo_material_id, quantity, warehouse_id, batch_number } = req.body;
     if (!wo_material_id || !quantity) {
@@ -992,7 +993,7 @@ router.get('/fg-receipt', authMiddleware, async (_req: Request, res: Response) =
   }
 });
 
-router.post('/fg-receipt', authMiddleware, async (req: Request, res: Response) => {
+router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-receipt', 'create'), async (req: Request, res: Response) => {
   try {
     const { wo_id, warehouse_id, quantity, batch_number, idempotency_key } = req.body;
     if (!wo_id || !warehouse_id || !quantity) {
