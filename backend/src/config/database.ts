@@ -493,6 +493,32 @@ export const dbRun = async (sql: string, params: any[] = []): Promise<{ insertId
   }
 };
 
+/**
+ * Execute multiple queries within a single database transaction.
+ * Provides BEGIN/COMMIT/ROLLBACK semantics with automatic cleanup.
+ * 
+ * Usage:
+ *   await dbTransaction(async (conn) => {
+ *     await conn.execute('SELECT ... FOR UPDATE', [id]); // row lock
+ *     await conn.execute('UPDATE ...', [newQty, id]);
+ *     await conn.execute('INSERT INTO stock_movements ...', [...]);
+ *   });
+ */
+export const dbTransaction = async <T>(callback: (conn: any) => Promise<T>): Promise<T> => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await callback(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 // ==================== APPROVAL 2-STAGE PERMISSIONS ====================
 const ensureApprovalPermissions = async (connection: any) => {
   // Ensure permissions table has module/name columns (production has them, dev may not)

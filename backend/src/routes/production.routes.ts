@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 
 const router = Router();
 
@@ -443,38 +443,61 @@ router.post('/issue-material', authMiddleware, async (req: Request, res: Respons
       return res.status(400).json({ error: 'wo_material_id and quantity are required' });
     }
 
-    const mat = await dbGet('SELECT * FROM wo_materials WHERE id = ?', [wo_material_id]);
-    if (!mat) return res.status(404).json({ error: 'WO material not found' });
-
-    const newIssued = (mat.quantity_issued || 0) + quantity;
-    if (newIssued > mat.quantity_required) {
-      return res.status(400).json({ error: 'Issue quantity exceeds required quantity' });
-    }
-
     const userId = (req as any).user?.userId;
-    await dbRun(
-      `UPDATE wo_materials SET quantity_issued=?, warehouse_id=?, batch_number=?, issued_at=CURRENT_TIMESTAMP, issued_by=? WHERE id=?`,
-      [newIssued, warehouse_id || mat.warehouse_id, batch_number || null, userId, wo_material_id]
-    );
 
-    // Record stock movement
-    await dbRun(
-      `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
-       VALUES (?, ?, ?, 'out', ?, 'work_order', ?, 'Material issued to WO', ?)`,
-      [warehouse_id || mat.warehouse_id, mat.product_id, batch_number || null, quantity, mat.wo_id, userId]
-    );
+    await dbTransaction(async (conn) => {
+      // 1. Lock and validate WO material
+      const [matRows] = await conn.execute(
+        'SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [wo_material_id]
+      );
+      const mat = matRows[0];
+      if (!mat) throw new Error('WO material not found');
 
-    // Reduce inventory stock
-    await dbRun(
-      `UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP
-       WHERE product_id = ? AND warehouse_id = ?`,
-      [quantity, mat.product_id, warehouse_id || mat.warehouse_id]
-    );
+      const newIssued = (mat.quantity_issued || 0) + quantity;
+      if (newIssued > mat.quantity_required) {
+        throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${mat.quantity_required}). Already issued: ${mat.quantity_issued || 0}`);
+      }
+
+      const effectiveWarehouseId = warehouse_id || mat.warehouse_id || 1;
+
+      // 2. Lock and validate inventory stock — prevent negative stock
+      const [stockRows] = await conn.execute(
+        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? FOR UPDATE',
+        [mat.product_id, effectiveWarehouseId]
+      );
+      const stock = stockRows[0];
+      const currentQty = stock ? (stock.quantity || 0) : 0;
+
+      if (currentQty < quantity) {
+        throw new Error(`Insufficient stock. Available: ${currentQty}, Requested: ${quantity}`);
+      }
+
+      // 3. Update WO material issued quantity
+      await conn.execute(
+        `UPDATE wo_materials SET quantity_issued=?, warehouse_id=?, batch_number=?, issued_at=CURRENT_TIMESTAMP, issued_by=? WHERE id=?`,
+        [newIssued, effectiveWarehouseId, batch_number || null, userId, wo_material_id]
+      );
+
+      // 4. Deduct inventory stock
+      await conn.execute(
+        `UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
+        [quantity, stock.id]
+      );
+
+      // 5. Record stock movement for audit trail
+      await conn.execute(
+        `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
+         VALUES (?, ?, ?, 'out', ?, 'work_order', ?, 'Material issued to WO', ?)`,
+        [effectiveWarehouseId, mat.product_id, batch_number || null, quantity, mat.wo_id, userId]
+      );
+    });
 
     res.json({ success: true, message: 'Material issued successfully' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error issuing material:', error);
-    res.status(500).json({ error: 'Failed to issue material' });
+    const msg = error.message || 'Failed to issue material';
+    const status = msg.includes('Insufficient stock') || msg.includes('exceed') ? 400 : 500;
+    res.status(status).json({ error: msg });
   }
 });
 
@@ -971,54 +994,99 @@ router.get('/fg-receipt', authMiddleware, async (_req: Request, res: Response) =
 
 router.post('/fg-receipt', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { wo_id, warehouse_id, quantity, batch_number } = req.body;
+    const { wo_id, warehouse_id, quantity, batch_number, idempotency_key } = req.body;
     if (!wo_id || !warehouse_id || !quantity) {
       return res.status(400).json({ error: 'wo_id, warehouse_id, and quantity are required' });
     }
 
-    const wo = await dbGet(
-      `SELECT w.*, p.name AS product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ?`, [wo_id]
-    );
-    if (!wo) return res.status(404).json({ error: 'Work order not found' });
-
     const userId = (req as any).user?.userId;
 
-    // Add to inventory
-    const existing = await dbGet(
-      'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ?',
-      [wo.product_id, warehouse_id]
-    );
-    if (existing) {
-      await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
-        [quantity, existing.id]);
-    } else {
-      await dbRun('INSERT INTO inventory_stocks (warehouse_id, product_id, quantity) VALUES (?, ?, ?)',
-        [warehouse_id, wo.product_id, quantity]);
-    }
+    await dbTransaction(async (conn) => {
+      // 1. Lock and validate Work Order
+      const [woRows] = await conn.execute(
+        `SELECT w.*, p.name AS product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ? FOR UPDATE`, [wo_id]
+      );
+      const wo = woRows[0];
+      if (!wo) throw new Error('Work order not found');
 
-    // Record stock movement
-    await dbRun(
-      `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
-       VALUES (?, ?, ?, 'in', ?, 'fg_receipt', ?, ?, ?)`,
-      [warehouse_id, wo.product_id, batch_number || null, quantity, wo_id, `FG receipt from ${wo.wo_number || 'WO-' + wo_id}`, userId]
-    );
+      // Validate WO status — must be in_progress or completed
+      const allowedStatuses = ['in_progress', 'completed', 'IN_PROGRESS', 'COMPLETED'];
+      if (!allowedStatuses.includes(wo.status)) {
+        throw new Error(`Cannot receive FG for WO with status '${wo.status}'. WO must be in_progress or completed.`);
+      }
 
-    // Create batch if batch_number provided
-    if (batch_number) {
-      const batchExists = await dbGet('SELECT id FROM batches WHERE batch_number = ?', [batch_number]);
-      if (!batchExists) {
-        await dbRun(
-          `INSERT INTO batches (batch_number, product_id, quantity, manufacture_date, status, warehouse_id)
-           VALUES (?, ?, ?, CURDATE(), 'released', ?)`,
-          [batch_number, wo.product_id, quantity, warehouse_id]
+      // 2. Idempotency check — prevent double-click creating duplicate receipts
+      if (idempotency_key) {
+        const [dupRows] = await conn.execute(
+          `SELECT id FROM stock_movements WHERE reference_type = 'fg_receipt' AND reference_id = ? AND notes LIKE ?`,
+          [wo_id, `%${idempotency_key}%`]
+        );
+        if (dupRows.length > 0) {
+          throw new Error('Duplicate receipt detected. This FG receipt has already been processed.');
+        }
+      }
+
+      // 3. Validate total receipt does not exceed WO quantity
+      const [existingReceipts] = await conn.execute(
+        `SELECT COALESCE(SUM(quantity), 0) as total_received FROM stock_movements 
+         WHERE reference_type = 'fg_receipt' AND reference_id = ? AND movement_type = 'in'`,
+        [wo_id]
+      );
+      const alreadyReceived = Number(existingReceipts[0]?.total_received || 0);
+      if (alreadyReceived + quantity > wo.quantity * 1.1) { // Allow 10% over for yield variance
+        throw new Error(`Total receipt (${alreadyReceived + quantity}) would exceed WO quantity (${wo.quantity}). Already received: ${alreadyReceived}`);
+      }
+
+      // 4. Update inventory stock (with row lock)
+      const [stockRows] = await conn.execute(
+        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? FOR UPDATE',
+        [wo.product_id, warehouse_id]
+      );
+      if (stockRows[0]) {
+        await conn.execute(
+          'UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+          [quantity, stockRows[0].id]
+        );
+      } else {
+        await conn.execute(
+          'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity) VALUES (?, ?, ?)',
+          [warehouse_id, wo.product_id, quantity]
         );
       }
-    }
+
+      // 5. Record stock movement
+      const receiptNotes = `FG receipt from ${wo.wo_number || 'WO-' + wo_id}${idempotency_key ? ' [key:' + idempotency_key + ']' : ''}`;
+      await conn.execute(
+        `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
+         VALUES (?, ?, ?, 'in', ?, 'fg_receipt', ?, ?, ?)`,
+        [warehouse_id, wo.product_id, batch_number || null, quantity, wo_id, receiptNotes, userId]
+      );
+
+      // 6. Update WO completed_quantity
+      await conn.execute(
+        'UPDATE work_orders SET completed_quantity = COALESCE(completed_quantity, 0) + ? WHERE id = ?',
+        [quantity, wo_id]
+      );
+
+      // 7. Create batch if batch_number provided
+      if (batch_number) {
+        const [batchRows] = await conn.execute('SELECT id FROM batches WHERE batch_number = ?', [batch_number]);
+        if (batchRows.length === 0) {
+          await conn.execute(
+            `INSERT INTO batches (batch_number, product_id, quantity, manufacture_date, status, warehouse_id)
+             VALUES (?, ?, ?, CURDATE(), 'released', ?)`,
+            [batch_number, wo.product_id, quantity, warehouse_id]
+          );
+        }
+      }
+    });
 
     res.json({ success: true, message: 'FG received into warehouse' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error receiving FG:', error);
-    res.status(500).json({ error: 'Failed to receive FG' });
+    const msg = error.message || 'Failed to receive FG';
+    const status = msg.includes('Cannot receive') || msg.includes('exceed') || msg.includes('Duplicate') ? 400 : 500;
+    res.status(status).json({ error: msg });
   }
 });
 

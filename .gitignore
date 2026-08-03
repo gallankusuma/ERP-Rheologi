@@ -1,20 +1,40 @@
 node_modules/
 dist/
-.env
 *.log
 .DS_Store
 .vscode/
 .idea/
 
-# Large files excluded from GitHub
-bom_data.json
-backups/erp-full-backup-*.tar.gz
+# === SECURITY: Credentials & Secrets ===
+.env
+.env.*
+.env.production
+.env.local
+backend/.env*
+frontend/.env*
+CREDENTIALS.txt
+**/CREDENTIALS.txt
+
+# === SECURITY: Database dumps & backups ===
+*.sql.gz
+database_backup.sql
 backups/*.sql
+backup/**/database/
+deploy/data-dump.sql
+deploy/ahsp_map_dump.sql
+backend/binlog.txt
+**/binlog.txt
+
+# === Large files (GitHub 100MB limit) ===
+bom_data.json
+*.tar.gz
 frontend/dist.tar
 frontend/dist.zip
-database_backup.sql
-*.tar.gz
+backups/erp-full-backup-*
 
-# Env files with secrets
-backend/.env*
-.env*
+# === Build artifacts ===
+backend/dist/
+
+# === Temp/scratch files ===
+*.bak
+*.old.bak
