@@ -327,7 +327,7 @@ const fetchTransfers = async () => {
   try {
     loading.value = true;
     error.value = '';
-    const response = await api.get('/api/inventory/stock-transfers');
+    const response = await api.get('/inventory/stock-transfers');
     transfers.value = response.data.data || [];
   } catch (err: any) {
     error.value = err.response?.data?.error || 'Failed to fetch stock transfers';
@@ -339,7 +339,7 @@ const fetchTransfers = async () => {
 
 const fetchProducts = async () => {
   try {
-    const response = await api.get('/api/products');
+    const response = await api.get('/products');
     products.value = response.data.data || [];
   } catch (err) {
     console.error('Error fetching products:', err);
@@ -348,7 +348,7 @@ const fetchProducts = async () => {
 
 const fetchWarehouses = async () => {
   try {
-    const response = await api.get('/api/warehouses');
+    const response = await api.get('/warehouses');
     warehouses.value = response.data.data || [];
   } catch (err) {
     console.error('Error fetching warehouses:', err);
@@ -413,7 +413,7 @@ const saveTransfer = async () => {
 
   try {
     loading.value = true;
-    await api.post('/api/inventory/stock-transfers', formData.value);
+    await api.post('/inventory/stock-transfers', formData.value);
     closeModal();
     await fetchTransfers();
   } catch (err: any) {

@@ -308,6 +308,11 @@ onMounted(async () => {
     warehouseStore.fetchWarehouses(),
     fetchClientMetrics(),
   ]);
+  
+  // Background check for document expiry (silently fail if error)
+  if (authStore.user?.role === 'Admin') {
+    api.get('/docs/check-expiry').catch(() => {});
+  }
 });
 </script>
 

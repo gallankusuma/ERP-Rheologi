@@ -5,3 +5,16 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# Large files excluded from GitHub
+bom_data.json
+backups/erp-full-backup-*.tar.gz
+backups/*.sql
+frontend/dist.tar
+frontend/dist.zip
+database_backup.sql
+*.tar.gz
+
+# Env files with secrets
+backend/.env*
+.env*

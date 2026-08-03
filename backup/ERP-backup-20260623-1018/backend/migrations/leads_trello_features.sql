@@ -1,0 +1,82 @@
+ALTER TABLE leads ADD COLUMN due_date DATE DEFAULT NULL;
+ALTER TABLE leads ADD COLUMN description TEXT DEFAULT NULL;
+ALTER TABLE leads ADD COLUMN cover_image VARCHAR(255) DEFAULT NULL;
+
+CREATE TABLE IF NOT EXISTS lead_checklists (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  lead_id INT NOT NULL,
+  title VARCHAR(255) NOT NULL DEFAULT 'Checklist',
+  position INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS lead_checklist_items (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  checklist_id INT NOT NULL,
+  text VARCHAR(500) NOT NULL,
+  is_checked TINYINT(1) DEFAULT 0,
+  position INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (checklist_id) REFERENCES lead_checklists(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS lead_labels (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  color VARCHAR(20) NOT NULL DEFAULT '#3b82f6',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS lead_label_assignments (
+  lead_id INT NOT NULL,
+  label_id INT NOT NULL,
+  PRIMARY KEY (lead_id, label_id),
+  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+  FOREIGN KEY (label_id) REFERENCES lead_labels(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS lead_comments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  lead_id INT NOT NULL,
+  user_id INT,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_activities (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  lead_id INT NOT NULL,
+  user_id INT,
+  action VARCHAR(100) NOT NULL,
+  details TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_attachments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  lead_id INT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_path VARCHAR(255) NOT NULL,
+  file_type VARCHAR(50),
+  file_size INT,
+  uploaded_by INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+INSERT IGNORE INTO lead_labels (name, color) VALUES
+  ('Hot Lead', '#ef4444'),
+  ('Warm', '#f97316'),
+  ('Cold', '#3b82f6'),
+  ('Enterprise', '#8b5cf6'),
+  ('SME', '#06b6d4'),
+  ('Priority', '#eab308'),
+  ('Follow Up', '#22c55e'),
+  ('On Hold', '#6b7280');

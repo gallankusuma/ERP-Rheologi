@@ -21,6 +21,10 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
         p.end_date as deadline, 
         p.budget as price, 
         p.created_at,
+        p.client_id,
+        p.product_id,
+        p.quantity,
+        p.uom,
         c.name as client_name,
         u.full_name as manager_name,
         (SELECT COUNT(*) FROM project_tasks t WHERE t.project_id = p.id AND t.status = 'Done') * 100 / 
@@ -41,6 +45,26 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching projects:', error);
     res.status(500).json({ error: 'Failed to fetch projects' });
+  }
+});
+
+// GET products that have active BOM (for PPIC integration)
+// IMPORTANT: Must be before /:id route to avoid being caught as dynamic param
+router.get('/products-with-bom', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const products = await dbAll(`
+      SELECT p.id, p.sku, p.name, p.description, p.selling_price, p.selling_price as price, p.standard_cost,
+        u.code as uom,
+        bh.id as bom_id, bh.product_name as bom_name, bh.status as bom_status
+      FROM products p
+      INNER JOIN bom_headers bh ON bh.product_id = p.id AND bh.status = 'ACTIVE'
+      LEFT JOIN uom u ON p.unit_of_measure_id = u.id
+      ORDER BY p.name ASC
+    `) as any[];
+    res.json(products);
+  } catch (error) {
+    console.error('Error fetching products with BOM:', error);
+    res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
@@ -92,7 +116,10 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       deadline, 
       price, 
       priority,
-      assigned_to 
+      assigned_to,
+      product_id,
+      quantity,
+      uom
     } = req.body;
 
     const projectNumber = `PRJ-${Date.now()}`; // Simple auto-generation
@@ -100,11 +127,13 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
     const result = await dbRun(`
       INSERT INTO client_projects (
         client_id, project_number, project_name, description, status, 
-        start_date, end_date, budget, assigned_to, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        start_date, end_date, budget, assigned_to, created_by,
+        product_id, quantity, uom
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       client_id || null, projectNumber, title, description || null, status || 'open',
-      start_date || null, deadline || null, price || 0, assigned_to || null, (req as any).user?.userId || null
+      start_date || null, deadline || null, price || 0, assigned_to || null, (req as any).user?.userId || null,
+      product_id || null, quantity || 0, uom || null
     ]);
 
     res.status(201).json({ id: result.insertId, message: 'Project created' });
@@ -124,8 +153,18 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
       start_date, 
       deadline, 
       price, 
-      assigned_to 
+      assigned_to,
+      product_id,
+      quantity,
+      uom
     } = req.body;
+
+    // Convert ISO timestamps to date-only format for MySQL DATE columns
+    const formatDate = (d: any) => {
+      if (!d) return null;
+      const s = String(d);
+      return s.includes('T') ? s.split('T')[0] : s;
+    };
 
     await dbRun(`
       UPDATE client_projects SET 
@@ -135,10 +174,14 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
         start_date = ?, 
         end_date = ?, 
         budget = ?, 
-        assigned_to = ?
+        assigned_to = ?,
+        product_id = ?,
+        quantity = ?,
+        uom = ?
       WHERE id = ?
     `, [
-      title || null, description || null, status || null, start_date || null, deadline || null, price || null, assigned_to || null, req.params.id
+      title || null, description || null, status || null, formatDate(start_date), formatDate(deadline), price || null, assigned_to || null,
+      product_id || null, quantity || 0, uom || null, req.params.id
     ]);
 
     res.json({ message: 'Project updated' });
@@ -409,13 +452,16 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
+});
 
 // Get all files for a project
 router.get('/:id/files', authMiddleware, async (req: Request, res: Response) => {
   try {
     const files = await dbAll(`
-      Select f.*, u.full_name as uploader_name
+      SELECT f.*, u.full_name as uploader_name
       FROM project_files f
       LEFT JOIN users u ON f.uploaded_by = u.id
       WHERE f.project_id = ?
@@ -444,10 +490,11 @@ router.post('/:id/files', authMiddleware, upload.single('file'), async (req: Req
     else if (mimetype.includes('sheet') || mimetype.includes('excel')) fileType = 'excel';
     else if (mimetype.includes('document') || mimetype.includes('word')) fileType = 'word';
 
+    const folder_id = req.body?.folder_id || null;
     const result = await dbRun(`
-      INSERT INTO project_files (project_id, file_name, file_path, file_type, file_size, uploaded_by, uploaded_at)
-      VALUES (?, ?, ?, ?, ?, ?, NOW())
-    `, [req.params.id, originalname, filename, fileType, size, (req as any).user.userId]);
+      INSERT INTO project_files (project_id, file_name, file_path, file_type, file_size, uploaded_by, uploaded_at, folder_id)
+      VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
+    `, [req.params.id, originalname, filename, fileType, size, (req as any).user.userId, folder_id]);
 
     // Log Activity
     await dbRun(`
@@ -734,6 +781,184 @@ router.get('/:id/fund-requests', authMiddleware, async (req: Request, res: Respo
   } catch (error) {
     console.error('Error fetching project fund requests:', error);
     res.status(500).json({ error: 'Failed to fetch project fund requests' });
+  }
+});
+
+// ===== PROJECT FOLDERS =====
+
+// List folders for a project
+router.get('/:id/folders', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const folders = await dbAll(`
+      SELECT pf.*, 
+        (SELECT COUNT(*) FROM project_files f WHERE f.folder_id = pf.id) as file_count
+      FROM project_document_folders pf
+      WHERE pf.project_id = ?
+      ORDER BY pf.name ASC
+    `, [req.params.id]);
+    res.json({ data: folders });
+  } catch (error) {
+    console.error('Error fetching project folders:', error);
+    res.status(500).json({ error: 'Failed to fetch folders' });
+  }
+});
+
+// Create folder
+router.post('/:id/folders', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, color } = req.body;
+    if (!name) return res.status(400).json({ error: 'Folder name is required' });
+    const result = await dbRun(
+      'INSERT INTO project_document_folders (project_id, name, color) VALUES (?, ?, ?)',
+      [req.params.id, name, color || '#3B82F6']
+    );
+    res.status(201).json({ id: result.insertId, message: 'Folder created' });
+  } catch (error) {
+    console.error('Error creating folder:', error);
+    res.status(500).json({ error: 'Failed to create folder' });
+  }
+});
+
+// Update folder
+router.put('/folders/:folderId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, color } = req.body;
+    await dbRun(
+      'UPDATE project_document_folders SET name = ?, color = ? WHERE id = ?',
+      [name, color || '#3B82F6', req.params.folderId]
+    );
+    res.json({ message: 'Folder updated' });
+  } catch (error) {
+    console.error('Error updating folder:', error);
+    res.status(500).json({ error: 'Failed to update folder' });
+  }
+});
+
+// Delete folder (move files to root)
+router.delete('/folders/:folderId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await dbRun('UPDATE project_files SET folder_id = NULL WHERE folder_id = ?', [req.params.folderId]);
+    await dbRun('DELETE FROM project_document_folders WHERE id = ?', [req.params.folderId]);
+    res.json({ message: 'Folder deleted' });
+  } catch (error) {
+    console.error('Error deleting folder:', error);
+    res.status(500).json({ error: 'Failed to delete folder' });
+  }
+});
+
+// ===== PROJECT NOTES =====
+
+// Get all notes for a project
+router.get('/:id/notes', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const notes = await dbAll(`
+      SELECT n.*, u.full_name as author_name
+      FROM project_notes n
+      LEFT JOIN users u ON n.created_by = u.id
+      WHERE n.project_id = ?
+      ORDER BY n.updated_at DESC
+    `, [req.params.id]);
+    res.json(notes);
+  } catch (error) {
+    console.error('Error fetching notes:', error);
+    res.status(500).json({ error: 'Failed to fetch notes' });
+  }
+});
+
+// Create note
+router.post('/:id/notes', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { title, content, color } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title is required' });
+    const userId = (req as any).user?.userId || null;
+    const result = await dbRun(`
+      INSERT INTO project_notes (project_id, title, content, color, created_by)
+      VALUES (?, ?, ?, ?, ?)
+    `, [req.params.id, title, content || null, color || 'yellow', userId]);
+    res.status(201).json({ id: result.insertId, message: 'Note created' });
+  } catch (error) {
+    console.error('Error creating note:', error);
+    res.status(500).json({ error: 'Failed to create note' });
+  }
+});
+
+// Update note
+router.put('/notes/:noteId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { title, content, color } = req.body;
+    await dbRun(`
+      UPDATE project_notes SET title = ?, content = ?, color = ? WHERE id = ?
+    `, [title, content || null, color || 'yellow', req.params.noteId]);
+    res.json({ message: 'Note updated' });
+  } catch (error) {
+    console.error('Error updating note:', error);
+    res.status(500).json({ error: 'Failed to update note' });
+  }
+});
+
+// Delete note
+router.delete('/notes/:noteId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await dbRun('DELETE FROM project_notes WHERE id = ?', [req.params.noteId]);
+    res.json({ message: 'Note deleted' });
+  } catch (error) {
+    console.error('Error deleting note:', error);
+    res.status(500).json({ error: 'Failed to delete note' });
+  }
+});
+
+// ===== PROJECT COMMENTS =====
+
+// Get all comments for a project
+router.get('/:id/comments', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const comments = await dbAll(`
+      SELECT c.*, u.full_name as user_name
+      FROM project_comments c
+      LEFT JOIN users u ON c.user_id = u.id
+      WHERE c.project_id = ?
+      ORDER BY c.created_at ASC
+    `, [req.params.id]);
+    res.json(comments);
+  } catch (error) {
+    console.error('Error fetching comments:', error);
+    res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+// Create comment
+router.post('/:id/comments', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { content } = req.body;
+    if (!content || !content.trim()) return res.status(400).json({ error: 'Content is required' });
+    const userId = (req as any).user?.userId || null;
+    const result = await dbRun(`
+      INSERT INTO project_comments (project_id, user_id, content)
+      VALUES (?, ?, ?)
+    `, [req.params.id, userId, content.trim()]);
+
+    // Return comment with user info
+    const comment = await dbGet(`
+      SELECT c.*, u.full_name as user_name
+      FROM project_comments c
+      LEFT JOIN users u ON c.user_id = u.id
+      WHERE c.id = ?
+    `, [result.insertId]);
+    res.status(201).json(comment);
+  } catch (error) {
+    console.error('Error creating comment:', error);
+    res.status(500).json({ error: 'Failed to create comment' });
+  }
+});
+
+// Delete comment
+router.delete('/comments/:commentId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await dbRun('DELETE FROM project_comments WHERE id = ?', [req.params.commentId]);
+    res.json({ message: 'Comment deleted' });
+  } catch (error) {
+    console.error('Error deleting comment:', error);
+    res.status(500).json({ error: 'Failed to delete comment' });
   }
 });
 

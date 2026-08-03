@@ -1,0 +1,857 @@
+import sqlite3 from 'sqlite3';
+import path from 'path';
+import bcrypt from 'bcrypt';
+
+const dbPath = path.join(__dirname, '..', '..', 'erp.db');
+
+// Initialize database with sqlite3
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error('Database connection error:', err);
+  } else {
+    console.log('Connected to SQLite database');
+  }
+});
+
+// Enable foreign keys
+db.run('PRAGMA foreign_keys = ON');
+
+// Promisify db methods for async/await
+function dbRun(sql: string, params: any[] = []): Promise<any> {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function(err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+}
+
+function dbGet<T>(sql: string, params: any[] = []): Promise<T | undefined> {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row as T | undefined);
+    });
+  });
+}
+
+function dbAll<T>(sql: string, params: any[] = []): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve((rows || []) as T[]);
+    });
+  });
+}
+
+// Create tables
+export async function initializeDatabase() {
+  try {
+    // Departments table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS departments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        head_user_id INTEGER,
+        active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (head_user_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `);
+
+    // Roles/Positions table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        level INTEGER DEFAULT 0,
+        active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Users table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        name TEXT NOT NULL,
+        department_id INTEGER,
+        role_id INTEGER,
+        user_level INTEGER DEFAULT 1,
+        phone TEXT,
+        address TEXT,
+        is_active INTEGER DEFAULT 1,
+        last_login DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE SET NULL
+      )
+    `);
+
+    // Permissions table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        module TEXT,
+        action TEXT,
+        description TEXT,
+        active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Role Permissions (mapping)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        role_id INTEGER NOT NULL,
+        permission_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (role_id, permission_id),
+        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+        FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Products table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sku TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        unit_of_measure TEXT,
+        category TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Categories table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Product Types table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS product_types (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Bill of Materials (BOM) table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS bom (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        component_product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT,
+        notes TEXT,
+        loss_percent REAL DEFAULT 0,
+        is_sub_bom INTEGER DEFAULT 0,
+        approval_status INTEGER DEFAULT 0,
+        approved_by_supervisor_id INTEGER,
+        approved_by_manager_id INTEGER,
+        approved_at_supervisor DATETIME,
+        approved_at_manager DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        FOREIGN KEY (component_product_id) REFERENCES products(id),
+        FOREIGN KEY (approved_by_supervisor_id) REFERENCES users(id),
+        FOREIGN KEY (approved_by_manager_id) REFERENCES users(id)
+      )
+    `);
+
+    // Work Orders table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS work_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        status TEXT DEFAULT 'pending',
+        priority TEXT DEFAULT 'normal',
+        scheduled_start DATETIME,
+        scheduled_end DATETIME,
+        actual_start DATETIME,
+        actual_end DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      )
+    `);
+
+    // Inventory table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        quantity_on_hand REAL DEFAULT 0,
+        quantity_reserved REAL DEFAULT 0,
+        quantity_available REAL DEFAULT 0,
+        location TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Inventory Transactions table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS inventory_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inventory_id INTEGER NOT NULL,
+        transaction_type TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        reference_type TEXT,
+        reference_id INTEGER,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (inventory_id) REFERENCES inventory(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Warehouses
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS warehouses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        address TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Warehouse locations (Rack/Row/Bin)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS warehouse_locations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        warehouse_id INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(warehouse_id, code),
+        FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Batches (for traceability)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_number TEXT UNIQUE NOT NULL,
+        product_id INTEGER NOT NULL,
+        work_order_id INTEGER,
+        quantity REAL DEFAULT 0,
+        uom TEXT,
+        mfg_date DATETIME,
+        exp_date DATETIME,
+        location_id INTEGER,
+        status TEXT DEFAULT 'open',
+        qc_status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        FOREIGN KEY (work_order_id) REFERENCES work_orders(id),
+        FOREIGN KEY (location_id) REFERENCES warehouse_locations(id)
+      )
+    `);
+
+    // Stock movements
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        warehouse_id INTEGER NOT NULL,
+        location_id INTEGER,
+        batch_id INTEGER,
+        movement_type TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        uom TEXT,
+        reference_type TEXT,
+        reference_id INTEGER,
+        notes TEXT,
+        moved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY (location_id) REFERENCES warehouse_locations(id),
+        FOREIGN KEY (batch_id) REFERENCES batches(id)
+      )
+    `);
+
+    // Vendors
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS vendors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        contact TEXT,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Vendor Price List
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS vendor_prices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        vendor_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        price REAL NOT NULL,
+        currency TEXT DEFAULT 'IDR',
+        effective_date DATE NOT NULL,
+        valid_until DATE,
+        min_order_qty REAL,
+        lead_time_days INTEGER,
+        notes TEXT,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `);
+
+    // Units of Measure (UOM)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS units_of_measure (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        abbreviation TEXT,
+        description TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Item Types
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS item_types (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        track_inventory INTEGER DEFAULT 1,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Purchase Requests (PR)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS purchase_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pr_number TEXT UNIQUE NOT NULL,
+        requester_id INTEGER,
+        department TEXT,
+        request_date DATE,
+        needed_by DATE,
+        reason TEXT,
+        status TEXT DEFAULT 'draft',
+        approval_status INTEGER DEFAULT 0,
+        approved_by_supervisor_id INTEGER,
+        approved_by_manager_id INTEGER,
+        approved_at_supervisor DATETIME,
+        approved_at_manager DATETIME,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (requester_id) REFERENCES users(id),
+        FOREIGN KEY (approved_by_supervisor_id) REFERENCES users(id),
+        FOREIGN KEY (approved_by_manager_id) REFERENCES users(id)
+      )
+    `);
+
+    // Purchase Request Items
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS purchase_request_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pr_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        uom TEXT,
+        estimated_price REAL,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (pr_id) REFERENCES purchase_requests(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      )
+    `);
+
+    // Purchase Orders (PO)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS purchase_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_number TEXT UNIQUE NOT NULL,
+        vendor_id INTEGER NOT NULL,
+        pr_id INTEGER,
+        status TEXT DEFAULT 'draft',
+        approval_status INTEGER DEFAULT 0,
+        approved_by_supervisor_id INTEGER,
+        approved_by_manager_id INTEGER,
+        approved_at_supervisor DATETIME,
+        approved_at_manager DATETIME,
+        expected_date DATETIME,
+        currency TEXT DEFAULT 'IDR',
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (vendor_id) REFERENCES vendors(id),
+        FOREIGN KEY (pr_id) REFERENCES purchase_requests(id),
+        FOREIGN KEY (approved_by_supervisor_id) REFERENCES users(id),
+        FOREIGN KEY (approved_by_manager_id) REFERENCES users(id)
+      )
+    `);
+
+    // Purchase Order Items
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS purchase_order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        uom TEXT,
+        unit_price REAL,
+        currency TEXT DEFAULT 'IDR',
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      )
+    `);
+
+    // Goods Receipts (GRN) table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS goods_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        gr_number TEXT UNIQUE NOT NULL,
+        po_id INTEGER,
+        warehouse_id INTEGER,
+        received_by INTEGER,
+        status TEXT DEFAULT 'draft',
+        approval_status INTEGER DEFAULT 0,
+        approved_by_supervisor_id INTEGER,
+        approved_by_manager_id INTEGER,
+        approved_at_supervisor DATETIME,
+        approved_at_manager DATETIME,
+        received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
+        FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY (received_by) REFERENCES users(id),
+        FOREIGN KEY (approved_by_supervisor_id) REFERENCES users(id),
+        FOREIGN KEY (approved_by_manager_id) REFERENCES users(id)
+      )
+    `);
+
+    // Customers
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        contact TEXT,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Sales Orders (SO)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS sales_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        so_number TEXT UNIQUE NOT NULL,
+        customer_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'draft',
+        expected_ship_date DATETIME,
+        currency TEXT DEFAULT 'IDR',
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id)
+      )
+    `);
+
+    // Sales Order Items
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS sales_order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        so_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        uom TEXT,
+        unit_price REAL,
+        currency TEXT DEFAULT 'IDR',
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (so_id) REFERENCES sales_orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      )
+    `);
+
+    // Deliveries (DO)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS deliveries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        do_number TEXT UNIQUE NOT NULL,
+        so_id INTEGER,
+        warehouse_id INTEGER,
+        status TEXT DEFAULT 'draft',
+        shipped_at DATETIME,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (so_id) REFERENCES sales_orders(id),
+        FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+      )
+    `);
+
+    // Invoices
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_number TEXT UNIQUE NOT NULL,
+        so_id INTEGER,
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'IDR',
+        status TEXT DEFAULT 'unpaid',
+        issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        due_at DATETIME,
+        notes TEXT,
+        FOREIGN KEY (so_id) REFERENCES sales_orders(id)
+      )
+    `);
+
+    // QC Tests
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS qc_tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // QC Results
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS qc_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER NOT NULL,
+        test_id INTEGER NOT NULL,
+        result TEXT,
+        status TEXT DEFAULT 'pending',
+        tested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        tester_id INTEGER,
+        notes TEXT,
+        FOREIGN KEY (batch_id) REFERENCES batches(id),
+        FOREIGN KEY (test_id) REFERENCES qc_tests(id),
+        FOREIGN KEY (tester_id) REFERENCES users(id)
+      )
+    `);
+
+    // User roles mapping
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS user_roles (
+        user_id INTEGER NOT NULL,
+        role_id INTEGER NOT NULL,
+        PRIMARY KEY (user_id, role_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Approval rules
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS approval_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        module TEXT NOT NULL,
+        min_amount REAL,
+        max_amount REAL,
+        approver_role_id INTEGER,
+        sequence INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (approver_role_id) REFERENCES roles(id)
+      )
+    `);
+
+    // Audit log
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        action TEXT NOT NULL,
+        entity TEXT,
+        entity_id INTEGER,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `);
+
+    await seedDefaults();
+  } catch (error) {
+    console.error('Error initializing database:', error);
+    throw error;
+  }
+}
+
+async function seedDefaults() {
+  // Seed departments
+  const deptCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM departments');
+  if (!deptCount || deptCount.cnt === 0) {
+    const departments = [
+      { code: 'RD', name: 'Research & Development', description: 'R&D and innovation' },
+      { code: 'PROD', name: 'Production', description: 'Manufacturing and production' },
+      { code: 'QA', name: 'Quality Assurance', description: 'Quality control and testing' },
+      { code: 'PROC', name: 'Procurement', description: 'Purchasing and supplier management' },
+      { code: 'FIN', name: 'Finance', description: 'Financial management' },
+      { code: 'SAL', name: 'Sales', description: 'Sales and customer management' },
+      { code: 'HR', name: 'Human Resources', description: 'HR and administration' },
+      { code: 'OPS', name: 'Operations', description: 'General operations' },
+    ];
+    for (const d of departments) {
+      await dbRun('INSERT INTO departments (code, name, description, active) VALUES (?, ?, ?, 1)', [d.code, d.name, d.description]);
+    }
+  }
+
+  // Seed roles
+  const roleCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM roles');
+  if (!roleCount || roleCount.cnt === 0) {
+    const roles = [
+      { code: 'ADMIN', name: 'Administrator', description: 'System administrator', level: 5 },
+      { code: 'DIR', name: 'Director', description: 'Department director', level: 4 },
+      { code: 'MGR', name: 'Manager', description: 'Department manager', level: 3 },
+      { code: 'SUP', name: 'Supervisor', description: 'Team supervisor', level: 2 },
+      { code: 'OFF', name: 'Officer', description: 'Staff officer', level: 1 },
+      { code: 'OPR', name: 'Operator', description: 'Machine/Process operator', level: 0 },
+    ];
+    for (const r of roles) {
+      await dbRun('INSERT INTO roles (code, name, description, level, active) VALUES (?, ?, ?, ?, 1)', [r.code, r.name, r.description, r.level]);
+    }
+  }
+
+  // Seed permissions
+  const permCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM permissions');
+  if (!permCount || permCount.cnt === 0) {
+    const permissions = [
+      { code: 'user_create', name: 'Create User', module: 'users', action: 'create' },
+      { code: 'user_read', name: 'View Users', module: 'users', action: 'read' },
+      { code: 'user_update', name: 'Update User', module: 'users', action: 'update' },
+      { code: 'user_delete', name: 'Delete User', module: 'users', action: 'delete' },
+      { code: 'product_create', name: 'Create Product', module: 'products', action: 'create' },
+      { code: 'product_read', name: 'View Products', module: 'products', action: 'read' },
+      { code: 'product_update', name: 'Update Product', module: 'products', action: 'update' },
+      { code: 'product_delete', name: 'Delete Product', module: 'products', action: 'delete' },
+      { code: 'bom_create', name: 'Create BOM', module: 'products', action: 'create_bom' },
+      { code: 'bom_read', name: 'View BOM', module: 'products', action: 'read_bom' },
+      { code: 'bom_update', name: 'Update BOM', module: 'products', action: 'update_bom' },
+      { code: 'bom_delete', name: 'Delete BOM', module: 'products', action: 'delete_bom' },
+      { code: 'inventory_view', name: 'View Inventory', module: 'inventory', action: 'read' },
+      { code: 'inventory_manage', name: 'Manage Inventory', module: 'inventory', action: 'manage' },
+      { code: 'warehouse_manage', name: 'Manage Warehouses', module: 'inventory', action: 'manage_warehouse' },
+      { code: 'procurement_create', name: 'Create Purchase Request', module: 'procurement', action: 'create' },
+      { code: 'procurement_read', name: 'View Procurement', module: 'procurement', action: 'read' },
+      { code: 'procurement_manage', name: 'Manage Procurement', module: 'procurement', action: 'manage' },
+      { code: 'workorder_create', name: 'Create Work Order', module: 'production', action: 'create_workorder' },
+      { code: 'workorder_read', name: 'View Work Orders', module: 'production', action: 'read_workorder' },
+      { code: 'workorder_manage', name: 'Manage Work Orders', module: 'production', action: 'manage_workorder' },
+      { code: 'batch_create', name: 'Create Batch', module: 'production', action: 'create_batch' },
+      { code: 'batch_read', name: 'View Batches', module: 'production', action: 'read_batch' },
+      { code: 'batch_manage', name: 'Manage Batches', module: 'production', action: 'manage_batch' },
+      { code: 'quality_view', name: 'View Quality Tests', module: 'quality', action: 'read' },
+      { code: 'quality_manage', name: 'Manage Quality Tests', module: 'quality', action: 'manage' },
+      { code: 'sales_create', name: 'Create Sales Order', module: 'sales', action: 'create' },
+      { code: 'sales_read', name: 'View Sales Orders', module: 'sales', action: 'read' },
+      { code: 'sales_manage', name: 'Manage Sales Orders', module: 'sales', action: 'manage' },
+      { code: 'finance_view_cogs', name: 'View COGS Tracking', module: 'finance', action: 'read_cogs' },
+      { code: 'finance_manage_cogs', name: 'Manage COGS Tracking', module: 'finance', action: 'manage_cogs' },
+      { code: 'finance_view_profit', name: 'View Profitability', module: 'finance', action: 'read_profit' },
+      { code: 'finance_manage_profit', name: 'Manage Profitability', module: 'finance', action: 'manage_profit' },
+      { code: 'finance_view_summary', name: 'View Monthly Summary', module: 'finance', action: 'read_summary' },
+      { code: 'finance_manage_summary', name: 'Manage Monthly Summary', module: 'finance', action: 'manage_summary' },
+      { code: 'report_view', name: 'View Reports', module: 'reports', action: 'read' },
+      { code: 'report_export', name: 'Export Reports', module: 'reports', action: 'export' },
+      { code: 'datamaster_manage', name: 'Manage Data Master', module: 'datamaster', action: 'manage' },
+      { code: 'admin_manage_roles', name: 'Manage Roles', module: 'administration', action: 'manage_roles' },
+      { code: 'admin_manage_departments', name: 'Manage Departments', module: 'administration', action: 'manage_departments' },
+      { code: 'admin_manage_permissions', name: 'Manage Permissions', module: 'administration', action: 'manage_permissions' },
+    ];
+    for (const p of permissions) {
+      await dbRun('INSERT INTO permissions (code, name, module, action) VALUES (?, ?, ?, ?)', [p.code, p.name, p.module, p.action]);
+    }
+  }
+
+  // Seed default admin user
+  const adminUser = await dbGet('SELECT id FROM users WHERE email = ?', ['admin@erp.com']);
+  if (!adminUser) {
+    const hashed = bcrypt.hashSync('password123', 10);
+    const adminDept = await dbGet<{ id: number }>('SELECT id FROM departments WHERE code = ?', ['HR']);
+    const adminRole = await dbGet<{ id: number }>('SELECT id FROM roles WHERE code = ?', ['ADMIN']);
+    
+    await dbRun(
+      'INSERT INTO users (email, password, name, department_id, role_id, user_level, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)',
+      ['admin@erp.com', hashed, 'System Administrator', adminDept?.id || null, adminRole?.id || null, 5]
+    );
+
+    // Map admin role to all permissions
+    const adminRoleId = (await dbGet<{ id: number }>('SELECT id FROM roles WHERE code = ?', ['ADMIN']))?.id;
+    if (adminRoleId) {
+      const permissions = await dbAll<{ id: number }>('SELECT id FROM permissions');
+      for (const p of permissions) {
+        await dbRun('INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)', [adminRoleId, p.id]);
+      }
+    }
+  }
+
+  // Seed sample users per department
+  const userCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM users');
+  if (userCount && userCount.cnt <= 1) {
+    const sampleUsers = [
+      { email: 'director.prod@company.com', name: 'John Director', dept: 'PROD', level: 4 },
+      { email: 'manager.prod@company.com', name: 'Jane Manager', dept: 'PROD', level: 3 },
+      { email: 'officer.qa@company.com', name: 'Mike Officer', dept: 'QA', level: 2 },
+      { email: 'manager.sales@company.com', name: 'Sarah Sales', dept: 'SAL', level: 3 },
+      { email: 'officer.proc@company.com', name: 'David Procurement', dept: 'PROC', level: 1 },
+    ];
+
+    for (const user of sampleUsers) {
+      const dept = await dbGet<{ id: number }>('SELECT id FROM departments WHERE code = ?', [user.dept]);
+      const hashed = bcrypt.hashSync('Password123!', 10);
+      await dbRun(
+        'INSERT INTO users (email, password, name, department_id, user_level, is_active) VALUES (?, ?, ?, ?, ?, 1)',
+        [user.email, hashed, user.name, dept?.id || null, user.level]
+      );
+    }
+  }
+
+  // Seed warehouses
+  const whCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM warehouses');
+  if (!whCount || whCount.cnt === 0) {
+    const warehouses = [
+      { code: 'WH-A', name: 'Central Warehouse', address: 'Main Site - Raw & Packaging' },
+      { code: 'WH-B', name: 'Finished Goods Warehouse', address: 'Dispatch Area - FG' },
+    ];
+    for (const w of warehouses) {
+      await dbRun('INSERT INTO warehouses (code, name, address) VALUES (?, ?, ?)', [w.code, w.name, w.address]);
+    }
+  }
+
+  // Seed warehouse locations
+  const locCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM warehouse_locations');
+  if (!locCount || locCount.cnt === 0) {
+    const whA = await dbGet<{ id: number }>('SELECT id FROM warehouses WHERE code = ?', ['WH-A']);
+    const whB = await dbGet<{ id: number }>('SELECT id FROM warehouses WHERE code = ?', ['WH-B']);
+    if (whA && whB) {
+      const locations = [
+        { warehouse_id: whA.id, code: 'A-RA-01', description: 'Raw Material - Bulk' },
+        { warehouse_id: whA.id, code: 'A-PK-01', description: 'Packaging' },
+        { warehouse_id: whA.id, code: 'A-QC-01', description: 'QC Hold' },
+        { warehouse_id: whB.id, code: 'B-FG-01', description: 'Finished Goods - Pallet' },
+        { warehouse_id: whB.id, code: 'B-FG-02', description: 'Finished Goods - Reserve' },
+      ];
+      for (const l of locations) {
+        await dbRun(
+          'INSERT INTO warehouse_locations (warehouse_id, code, description) VALUES (?, ?, ?)',
+          [l.warehouse_id, l.code, l.description]
+        );
+      }
+    }
+  }
+
+  // Seed products
+  const prodCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM products');
+  if (!prodCount || prodCount.cnt === 0) {
+    const products = [
+      { sku: 'RM-GLUCOSE', name: 'Glucose Syrup', uom: 'KG', category: 'Ingredients' },
+      { sku: 'RM-ETHANOL', name: 'Ethanol 96%', uom: 'L', category: 'Ingredients' },
+      { sku: 'PK-BOTTLE500', name: 'Bottle 500ml', uom: 'PCS', category: 'Packaging' },
+      { sku: 'FG-ENERGY-500', name: 'Energy Drink 500ml', uom: 'PCS', category: 'Finished Goods' },
+    ];
+    for (const p of products) {
+      await dbRun(
+        'INSERT INTO products (sku, name, unit_of_measure, category) VALUES (?, ?, ?, ?)',
+        [p.sku, p.name, p.uom, p.category]
+      );
+    }
+  }
+
+  // Seed categories
+  const catCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM categories');
+  if (!catCount || catCount.cnt === 0) {
+    const categories = [
+      { name: 'Raw Materials', description: 'Basic raw materials and ingredients' },
+      { name: 'Ingredients', description: 'Food and beverage ingredients' },
+      { name: 'Packaging', description: 'Packaging materials and supplies' },
+      { name: 'Finished Goods', description: 'Ready-to-sell finished products' },
+      { name: 'Semi-Finished', description: 'Work in progress or sub-assemblies' },
+    ];
+    for (const c of categories) {
+      await dbRun('INSERT INTO categories (name, description, active) VALUES (?, ?, 1)', [c.name, c.description]);
+    }
+  }
+
+  // Seed product types
+  const typeCount = await dbGet<{ cnt: number }>('SELECT COUNT(*) as cnt FROM product_types');
+  if (!typeCount || typeCount.cnt === 0) {
+    const types = [
+      { code: 'RM', name: 'Raw Material', description: 'Raw materials and ingredients' },
+      { code: 'FG', name: 'Finished Goods', description: 'Ready-to-sell finished products' },
+      { code: 'PK', name: 'Packaging', description: 'Packaging materials and containers' },
+      { code: 'SF', name: 'Semi-Finished', description: 'Work in progress or sub-assemblies' },
+    ];
+    for (const t of types) {
+      await dbRun('INSERT INTO product_types (code, name, description, active) VALUES (?, ?, ?, 1)', [t.code, t.name, t.description]);
+    }
+  }
+
+  console.log('✅ Database seeding completed');
+}
+
+export { dbRun, dbGet, dbAll };
+export default db;

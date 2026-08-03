@@ -1,82 +1,144 @@
 <template>
-  <div class="min-h-screen bg-gray-50 p-6">
-    <div class="max-w-7xl mx-auto flex flex-col gap-4">
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+  <div class="min-h-screen bg-slate-50">
+    <div class="bg-gradient-to-r from-violet-700 to-purple-600 px-6 py-4 text-white shadow-lg">
+      <div class="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
         <div>
-          <p class="text-sm text-gray-500">Inventory</p>
-          <h2 class="text-2xl font-bold text-gray-900">Batch / Lot Tracking</h2>
-          <p class="text-sm text-gray-600">Traceability batch dari GRN → produksi → penjualan.</p>
-        </div>
-        <div class="flex gap-3">
-          <select v-model="status" class="rounded-md border border-gray-300 px-3 py-2 text-sm">
-            <option value="">All status</option>
-            <option value="open">Open</option>
-            <option value="released">Released</option>
-            <option value="blocked">Blocked</option>
-          </select>
-          <input v-model="search" type="text" placeholder="Cari batch / produk" class="rounded-md border border-gray-300 px-3 py-2 text-sm" />
+          <h1 class="text-xl font-bold">🔍 Batch Tracking</h1>
+          <p class="text-violet-200 text-sm mt-0.5">Traceability batch material dari masuk hingga terpakai di produksi</p>
         </div>
       </div>
+    </div>
 
-      <div class="bg-white rounded-md shadow-sm border border-gray-200 overflow-hidden">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Batch</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Product</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Qty</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">MFG</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">EXP</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Location</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Action</th>
-            </tr>
-          </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
-            <tr v-if="filtered.length === 0">
-              <td colspan="8" class="px-4 py-6 text-center text-gray-500">No batches found</td>
-            </tr>
-            <tr v-for="b in filtered" :key="b.id">
-              <td class="px-4 py-3 text-sm font-semibold text-gray-900">{{ b.batch_number }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ b.product_name }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ b.quantity }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ formatDate(b.mfg_date) }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ formatDate(b.exp_date) || '-' }}</td>
-              <td class="px-4 py-3 text-sm">
-                <span class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold" :class="statusClass(b.status)">{{ b.status }}</span>
-              </td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ b.location_code || '-' }}</td>
-              <td class="px-4 py-3 text-right text-sm">
-                <button class="text-blue-600 hover:text-blue-800" @click="viewTrace(b)">Trace</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+    <div class="max-w-7xl mx-auto px-4 py-6 space-y-5">
+      <!-- Search -->
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 px-4 py-3 flex gap-3">
+        <input v-model="search" @input="debouncedLoad" type="text" placeholder="Cari nomor batch, nama produk, atau SKU..."
+          class="flex-1 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400" />
+        <button @click="loadBatches" class="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+          🔍 Cari
+        </button>
       </div>
 
-      <div v-if="trace" class="bg-white rounded-md border border-gray-200 shadow-sm p-4">
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <h3 class="text-lg font-semibold text-gray-900">Trace {{ trace.batch_number }}</h3>
-            <p class="text-sm text-gray-600">Product: {{ trace.product_name }}</p>
+      <!-- List + Detail split -->
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <!-- Batch List -->
+        <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100">
+          <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h2 class="font-bold text-gray-800">Daftar Batch</h2>
+            <span class="text-xs text-gray-400">{{ batches.length }} batch</span>
           </div>
-          <button class="text-gray-500 hover:text-gray-700" @click="trace = null">&times;</button>
+          <div v-if="loading" class="p-8 text-center">
+            <div class="w-7 h-7 border-4 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          </div>
+          <div v-else class="overflow-y-auto max-h-[65vh] divide-y divide-gray-50">
+            <div v-for="b in batches" :key="b.id"
+              @click="selectBatch(b)"
+              class="px-5 py-3.5 cursor-pointer hover:bg-violet-50 transition-colors"
+              :class="selected?.id === b.id ? 'bg-violet-50 border-l-4 border-violet-500' : ''">
+              <div class="flex items-start justify-between">
+                <div class="flex-1">
+                  <div class="font-mono text-sm font-bold text-violet-700">{{ b.batch_number }}</div>
+                  <div class="text-sm text-gray-700 mt-0.5">{{ b.product_name }}</div>
+                  <div class="text-xs text-gray-400 mt-0.5">{{ b.product_sku }} · {{ b.warehouse_name || '—' }}</div>
+                </div>
+                <div class="text-right ml-2">
+                  <div class="text-sm font-bold text-gray-800">{{ fmtN(b.quantity) }}</div>
+                  <span class="text-xs px-1.5 py-0.5 rounded font-semibold"
+                    :class="b.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">
+                    {{ b.status }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="b.expiry_date" class="mt-1.5 text-xs"
+                :class="daysLeft(b.expiry_date) < 0 ? 'text-red-600' : daysLeft(b.expiry_date) < 30 ? 'text-orange-500' : 'text-gray-400'">
+                Exp: {{ b.expiry_date }} ({{ daysLeft(b.expiry_date) < 0 ? 'Expired' : daysLeft(b.expiry_date) + 'd' }})
+              </div>
+              <div class="text-xs text-gray-400 mt-1">{{ b.movement_count || 0 }} pergerakan</div>
+            </div>
+            <div v-if="!batches.length" class="p-8 text-center text-gray-400">
+              <div class="text-3xl mb-2">📦</div>
+              Tidak ada batch ditemukan
+            </div>
+          </div>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
-          <div class="border rounded-md p-3">
-            <p class="font-semibold text-gray-900 mb-2">Lifecycle</p>
-            <ul class="space-y-1 list-disc list-inside">
-              <li>GRN / receipt reference: TBD</li>
-              <li>WO usage / issue: TBD</li>
-              <li>Delivery / sales: TBD</li>
-            </ul>
-            <p class="text-xs text-gray-500 mt-2">Integrasi detail referensi akan dihubungkan ke stock movements ketika tersedia.</p>
+
+        <!-- Batch Detail -->
+        <div class="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-gray-100">
+          <div v-if="!selected" class="flex flex-col items-center justify-center h-full py-20 text-gray-400">
+            <div class="text-5xl mb-3">🔍</div>
+            <p class="font-semibold">Pilih batch untuk melihat detail</p>
+            <p class="text-sm mt-1">Klik salah satu batch di sebelah kiri</p>
           </div>
-          <div class="border rounded-md p-3">
-            <p class="font-semibold text-gray-900 mb-2">QC Status</p>
-            <p class="text-sm">{{ trace.qc_status || 'pending' }}</p>
-            <p class="text-xs text-gray-500">Update rilis batch via modul QC.</p>
-          </div>
+          <template v-else>
+            <div class="px-5 py-4 border-b border-gray-100">
+              <div class="flex items-start justify-between">
+                <div>
+                  <div class="font-mono font-bold text-violet-700 text-lg">{{ selected.batch_number }}</div>
+                  <div class="font-semibold text-gray-900 mt-0.5">{{ selected.product_name }}</div>
+                </div>
+                <span class="px-3 py-1 rounded-full text-xs font-bold"
+                  :class="selected.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">
+                  {{ selected.status }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Info Grid -->
+            <div class="p-5 grid grid-cols-2 gap-3">
+              <div class="bg-gray-50 rounded-xl p-3">
+                <div class="text-xs text-gray-500 uppercase font-semibold">Qty Tersisa</div>
+                <div class="text-xl font-black text-gray-900 mt-0.5">{{ fmtN(selected.quantity) }}</div>
+              </div>
+              <div class="bg-gray-50 rounded-xl p-3">
+                <div class="text-xs text-gray-500 uppercase font-semibold">Gudang</div>
+                <div class="text-sm font-bold text-gray-800 mt-0.5">{{ selected.warehouse_name || '—' }}</div>
+              </div>
+              <div class="bg-gray-50 rounded-xl p-3">
+                <div class="text-xs text-gray-500 uppercase font-semibold">Tgl Produksi</div>
+                <div class="text-sm font-bold text-gray-800 mt-0.5">{{ selected.manufacture_date || '—' }}</div>
+              </div>
+              <div class="rounded-xl p-3"
+                :class="selected.expiry_date && daysLeft(selected.expiry_date) < 0 ? 'bg-red-50' : selected.expiry_date && daysLeft(selected.expiry_date) < 30 ? 'bg-orange-50' : 'bg-gray-50'">
+                <div class="text-xs text-gray-500 uppercase font-semibold">Kadaluarsa</div>
+                <div class="text-sm font-bold mt-0.5"
+                  :class="selected.expiry_date && daysLeft(selected.expiry_date) < 0 ? 'text-red-600' : 'text-gray-800'">
+                  {{ selected.expiry_date || '—' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Movement History -->
+            <div class="px-5 pb-5">
+              <h4 class="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                📋 Riwayat Pergerakan
+                <span class="text-xs text-gray-400 font-normal">({{ movements.length }} transaksi)</span>
+              </h4>
+              <div v-if="loadingMov" class="text-center py-4">
+                <div class="w-5 h-5 border-3 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+              </div>
+              <div v-else-if="!movements.length" class="text-sm text-gray-400 text-center py-4">Tidak ada riwayat pergerakan</div>
+              <div v-else class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <div v-for="m in movements" :key="m.id"
+                  class="flex items-start gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
+                  <div class="mt-0.5 w-6 h-6 flex items-center justify-center rounded-full text-xs"
+                    :class="m.movement_type === 'in' || m.movement_type === 'receipt' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'">
+                    {{ m.movement_type === 'in' || m.movement_type === 'receipt' ? '↓' : '↑' }}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between">
+                      <span class="text-xs font-bold uppercase"
+                        :class="m.movement_type === 'in' || m.movement_type === 'receipt' ? 'text-emerald-600' : 'text-red-600'">
+                        {{ m.movement_type }}
+                      </span>
+                      <span class="text-sm font-bold text-gray-800">{{ fmtN(m.quantity) }}</span>
+                    </div>
+                    <div class="text-xs text-gray-500 truncate mt-0.5">{{ m.notes || m.reference_type || '—' }}</div>
+                    <div class="text-xs text-gray-400 mt-0.5">{{ m.created_by_name || '—' }} · {{ fmtDate(m.created_at) }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -84,40 +146,55 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { useInventoryStore } from '@/stores/inventory';
+import { ref, onMounted } from 'vue';
+import { api } from '../lib/api';
 
-const inventoryStore = useInventoryStore();
+const loading = ref(false);
+const loadingMov = ref(false);
+const batches = ref<any[]>([]);
+const selected = ref<any>(null);
+const movements = ref<any[]>([]);
 const search = ref('');
-const status = ref('');
-const trace = ref<any | null>(null);
+let debounce: any = null;
 
-onMounted(async () => {
-  await inventoryStore.fetchBatches();
-});
-
-const filtered = computed(() => {
-  const term = search.value.toLowerCase();
-  return inventoryStore.batches
-    .filter((b: any) => (!status.value ? true : (b.status || '').toLowerCase() === status.value.toLowerCase()))
-    .filter((b: any) =>
-      !term ||
-      (b.batch_number || '').toLowerCase().includes(term) ||
-      (b.product_name || '').toLowerCase().includes(term) ||
-      (b.sku || '').toLowerCase().includes(term)
-    );
-});
-
-const statusClass = (value: string) => {
-  const v = (value || '').toLowerCase();
-  if (v === 'released') return 'bg-emerald-50 text-emerald-700';
-  if (v === 'blocked') return 'bg-red-50 text-red-700';
-  return 'bg-amber-50 text-amber-700';
+const fmtN = (v: any) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+const fmtDate = (d: string) => d ? new Date(d).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+const daysLeft = (date: string) => {
+  const diff = new Date(date).getTime() - Date.now();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 };
 
-const formatDate = (d?: string) => (d ? new Date(d).toLocaleDateString() : '');
-
-const viewTrace = (batch: any) => {
-  trace.value = batch;
+const loadBatches = async () => {
+  loading.value = true;
+  try {
+    const q = search.value ? `?search=${encodeURIComponent(search.value)}` : '';
+    const res = await api.get(`/inventory/batch-tracking${q}`);
+    batches.value = res.data.data || [];
+  } catch {
+    batches.value = [];
+  } finally {
+    loading.value = false;
+  }
 };
+
+const debouncedLoad = () => {
+  clearTimeout(debounce);
+  debounce = setTimeout(loadBatches, 400);
+};
+
+const selectBatch = async (b: any) => {
+  selected.value = b;
+  movements.value = [];
+  loadingMov.value = true;
+  try {
+    const res = await api.get(`/inventory/batch-tracking/${encodeURIComponent(b.batch_number)}/movements`);
+    movements.value = res.data.data || [];
+  } catch {
+    movements.value = [];
+  } finally {
+    loadingMov.value = false;
+  }
+};
+
+onMounted(loadBatches);
 </script>

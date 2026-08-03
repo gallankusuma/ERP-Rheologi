@@ -153,6 +153,8 @@
                 </td>
                 <td class="px-6 py-4">
                   <p class="font-medium text-gray-900">{{ order.customer_name || '-' }}</p>
+                  <p v-if="order.lead_company" class="text-xs text-purple-600 mt-0.5">🔗 Lead: {{ order.lead_company }}</p>
+                  <p v-if="order.client_name && order.client_name !== order.customer_name" class="text-xs text-blue-600 mt-0.5">🏢 CRM: {{ order.client_name }}</p>
                 </td>
                 <td class="px-6 py-4">
                   <span class="text-sm text-gray-600">{{ order.item_count || 0 }} items</span>
@@ -313,6 +315,30 @@
             <p class="text-sm font-medium text-gray-500 mb-2">Notes</p>
             <p class="text-gray-900 bg-gray-50 p-4 rounded-lg">{{ selectedOrder.notes }}</p>
           </div>
+
+          <!-- CRM Pipeline Info -->
+          <div v-if="selectedOrder.lead_company || selectedOrder.client_name || selectedOrder.project_number" class="bg-purple-50 rounded-lg p-4 border border-purple-200">
+            <h5 class="font-semibold text-purple-800 mb-3">📊 Pipeline Trace</h5>
+            <div class="flex flex-wrap gap-3">
+              <span v-if="selectedOrder.lead_company" class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-semibold">
+                🎯 Lead: {{ selectedOrder.lead_company }}
+              </span>
+              <span class="text-purple-400">→</span>
+              <span v-if="selectedOrder.client_name" class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-semibold">
+                🏢 Client: {{ selectedOrder.client_name }}
+              </span>
+              <span class="text-purple-400">→</span>
+              <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-semibold">
+                📋 SO: {{ selectedOrder.so_number }}
+              </span>
+              <template v-if="selectedOrder.project_number">
+                <span class="text-purple-400">→</span>
+                <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-xs font-semibold">
+                  📁 Project: {{ selectedOrder.project_number }}
+                </span>
+              </template>
+            </div>
+          </div>
         </div>
 
         <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3 sticky bottom-0 bg-white">
@@ -328,6 +354,17 @@
           >
             Edit Order
           </button>
+          <button
+            v-if="!selectedOrder.project_id && ['confirmed', 'processing', 'open'].includes((selectedOrder.status || '').toLowerCase())"
+            @click="createProjectFromSO(selectedOrder)"
+            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center gap-1"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            Create Project
+          </button>
+          <span v-if="selectedOrder.project_id" class="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm font-medium border border-green-200">
+            ✅ Project: {{ selectedOrder.project_number }}
+          </span>
         </div>
       </div>
     </div>
@@ -346,16 +383,44 @@
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-2">Customer <span class="text-red-500">*</span></label>
-              <select
-                v-model="newOrder.customer_id"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                required
-              >
-                <option :value="null">Select Customer</option>
-                <option v-for="customer in customers" :key="customer.id" :value="customer.id">
-                  {{ customer.name }} ({{ customer.code }})
-                </option>
-              </select>
+              <div class="space-y-2">
+                <div class="flex gap-2">
+                  <button
+                    @click="customerSource = 'crm'"
+                    :class="customerSource === 'crm' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'"
+                    class="px-3 py-1 rounded text-xs font-medium"
+                    type="button"
+                  >CRM Clients</button>
+                  <button
+                    @click="customerSource = 'legacy'"
+                    :class="customerSource === 'legacy' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'"
+                    class="px-3 py-1 rounded text-xs font-medium"
+                    type="button"
+                  >Legacy Customers</button>
+                </div>
+                <select
+                  v-if="customerSource === 'legacy'"
+                  v-model="newOrder.customer_id"
+                  @change="newOrder.client_id = null"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option :value="null">Select Customer</option>
+                  <option v-for="customer in customers" :key="customer.id" :value="customer.id">
+                    {{ customer.name }} ({{ customer.code }})
+                  </option>
+                </select>
+                <select
+                  v-else
+                  v-model="newOrder.client_id"
+                  @change="newOrder.customer_id = null"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option :value="null">Select CRM Client</option>
+                  <option v-for="client in crmClients" :key="client.id" :value="client.id">
+                    {{ client.name }} ({{ client.code }})
+                  </option>
+                </select>
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-2">Status</label>
@@ -555,10 +620,20 @@ interface SalesOrder {
   id: number;
   so_number: string;
   customer_id: number;
+  client_id?: number;
+  lead_id?: number;
+  project_id?: number;
   customer_name?: string;
+  client_name?: string;
+  lead_company?: string;
+  lead_stage?: string;
+  project_number?: string;
+  project_name?: string;
+  project_status?: string;
   status: string;
   expected_ship_date?: string;
   currency?: string;
+  total_amount?: number;
   notes?: string;
   item_count?: number;
   created_at?: string;
@@ -575,11 +650,21 @@ interface Customer {
   address?: string;
 }
 
+interface CrmClient {
+  id: number;
+  code: string;
+  name: string;
+  organization?: string;
+  phone?: string;
+  address?: string;
+}
+
 interface Product {
   id: number;
   sku: string;
   name: string;
   price?: number;
+  uom?: string;
 }
 
 const statusFilters = [
@@ -601,10 +686,13 @@ const loading = ref(false);
 
 const orders = ref<SalesOrder[]>([]);
 const customers = ref<Customer[]>([]);
+const crmClients = ref<CrmClient[]>([]);
 const products = ref<Product[]>([]);
+const customerSource = ref('crm');
 
 const newOrder = ref({
   customer_id: null as number | null,
+  client_id: null as number | null,
   status: 'draft',
   expected_ship_date: '',
   currency: 'IDR',
@@ -617,6 +705,7 @@ onMounted(async () => {
   await Promise.all([
     fetchOrders(),
     fetchCustomers(),
+    fetchCrmClients(),
     fetchProducts()
   ]);
 });
@@ -642,10 +731,19 @@ const fetchCustomers = async () => {
   }
 };
 
+const fetchCrmClients = async () => {
+  try {
+    const res = await api.get('/sales/crm-clients');
+    crmClients.value = res.data.data || [];
+  } catch (error: any) {
+    console.error('Failed to fetch CRM clients:', error);
+  }
+};
+
 const fetchProducts = async () => {
   try {
-    const res = await api.get('/products');
-    products.value = res.data.data || [];
+    const res = await api.get('/projects/products-with-bom');
+    products.value = Array.isArray(res.data) ? res.data : (res.data.data || []);
   } catch (error: any) {
     console.error('Failed to fetch products:', error);
   }
@@ -668,8 +766,10 @@ const totalAmount = computed(() => {
 });
 
 const calculateOrderTotal = (order: SalesOrder) => {
-  if (!order.items || order.items.length === 0) return 0;
-  return order.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+  if (order.items && order.items.length > 0) {
+    return order.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+  }
+  return order.total_amount || 0;
 };
 
 const getStatusColor = (status: string) => {
@@ -713,33 +813,44 @@ const openAddOrderModal = () => {
   editingOrder.value = null;
   newOrder.value = {
     customer_id: null,
+    client_id: null,
     status: 'draft',
     expected_ship_date: '',
     currency: 'IDR',
     notes: '',
     items: []
   };
+  customerSource.value = 'crm';
   showAddModal.value = true;
 };
 
-const editOrder = (order: SalesOrder) => {
-  editingOrder.value = order;
-  newOrder.value = {
-    customer_id: order.customer_id,
-    status: order.status,
-    expected_ship_date: order.expected_ship_date || '',
-    currency: order.currency || 'IDR',
-    notes: order.notes || '',
-    items: order.items?.map(item => ({
-      product_id: item.product_id,
-      quantity: item.quantity,
-      unit_price: item.unit_price,
-      uom: item.uom || 'pcs',
-      notes: item.notes
-    })) || []
-  };
-  selectedOrder.value = null;
-  showAddModal.value = true;
+const editOrder = async (order: SalesOrder) => {
+  // Fetch full order details (with items) from API
+  try {
+    const res = await api.get(`/sales/sales-orders/${order.id}`);
+    const fullOrder = res.data.data;
+    editingOrder.value = fullOrder;
+    newOrder.value = {
+      customer_id: fullOrder.customer_id,
+      client_id: fullOrder.client_id || null,
+      status: fullOrder.status,
+      expected_ship_date: fullOrder.expected_ship_date || '',
+      currency: fullOrder.currency || 'IDR',
+      notes: fullOrder.notes || '',
+      items: fullOrder.items?.map((item: any) => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        uom: item.uom || 'pcs',
+        notes: item.notes
+      })) || []
+    };
+    customerSource.value = fullOrder.client_id ? 'crm' : 'legacy';
+    selectedOrder.value = null;
+    showAddModal.value = true;
+  } catch (error: any) {
+    toast.error('Failed to load order details for editing');
+  }
 };
 
 const addOrderItem = () => {
@@ -758,35 +869,69 @@ const removeOrderItem = (index: number) => {
 const onProductSelect = (index: number) => {
   const item = newOrder.value.items[index];
   const product = products.value.find(p => p.id === item.product_id);
-  if (product && product.price) {
-    item.unit_price = product.price;
+  if (product) {
+    if (product.price) {
+      item.unit_price = product.price;
+    }
+    if (product.uom) {
+      item.uom = product.uom;
+    }
   }
 };
 
 const saveOrder = async () => {
-  if (!newOrder.value.customer_id) {
-    toast.error('Please select a customer');
+  if (!newOrder.value.customer_id && !newOrder.value.client_id) {
+    toast.error('Please select a customer or CRM client');
     return;
   }
   
-  if (newOrder.value.items.length === 0 || newOrder.value.items.some(item => !item.product_id || item.product_id === 0)) {
-    toast.error('Please add at least one valid product');
+  // For new orders, require at least one valid product. For edits, allow empty items (just header update).
+  if (!editingOrder.value) {
+    if (newOrder.value.items.length === 0 || newOrder.value.items.some(item => !item.product_id || item.product_id === 0)) {
+      toast.error('Please add at least one valid product');
+      return;
+    }
+  } else if (newOrder.value.items.length > 0 && newOrder.value.items.some(item => !item.product_id || item.product_id === 0)) {
+    toast.error('Please select a valid product for all items');
     return;
   }
 
   loading.value = true;
   try {
     if (editingOrder.value) {
-      await api.put(`/sales/sales-orders/${editingOrder.value.id}`, newOrder.value);
+      const editedId = editingOrder.value.id;
+      await api.put(`/sales/sales-orders/${editedId}`, newOrder.value);
       toast.success('Order updated successfully');
+      showAddModal.value = false;
+      await fetchOrders();
+      // Auto-reopen detail modal so user can see Create Project button
+      try {
+        const res = await api.get(`/sales/sales-orders/${editedId}`);
+        selectedOrder.value = res.data.data;
+      } catch (e) { /* ignore */ }
     } else {
       await api.post('/sales/sales-orders', newOrder.value);
       toast.success('Order created successfully');
+      showAddModal.value = false;
+      await fetchOrders();
     }
-    showAddModal.value = false;
-    await fetchOrders();
   } catch (error: any) {
     toast.error(error.response?.data?.error || 'Failed to save order');
+  } finally {
+    loading.value = false;
+  }
+};
+
+const createProjectFromSO = async (order: SalesOrder) => {
+  if (!confirm(`Create a Project from SO "${order.so_number}"?`)) return;
+  try {
+    loading.value = true;
+    const res = await api.post(`/sales/sales-orders/${order.id}/create-project`);
+    toast.success(`✅ Project ${res.data.data.project_number} created!`);
+    selectedOrder.value = null;
+    await fetchOrders();
+  } catch (error: any) {
+    toast.error(error.response?.data?.error || 'Failed to create project');
   } finally {
     loading.value = false;
   }

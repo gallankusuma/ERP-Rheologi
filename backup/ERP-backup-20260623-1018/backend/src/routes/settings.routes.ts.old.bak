@@ -1,0 +1,302 @@
+import express, { Request, Response } from 'express';
+import db from '../config/database';
+import { authMiddleware } from '../middleware/auth';
+
+const router = express.Router();
+
+// ===== SYSTEM SETTINGS ENDPOINTS =====
+
+router.get('/all', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const settings = db
+      .prepare('SELECT * FROM system_settings ORDER BY category, setting_key ASC')
+      .all();
+    res.json({ data: settings });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+router.get('/category/:category', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const settings = db
+      .prepare('SELECT * FROM system_settings WHERE category = ? ORDER BY setting_key ASC')
+      .all(req.params.category);
+    res.json({ data: settings });
+  } catch (error) {
+    console.error('Error fetching category settings:', error);
+    res.status(500).json({ error: 'Failed to fetch category settings' });
+  }
+});
+
+router.get('/:key', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const setting = db
+      .prepare('SELECT * FROM system_settings WHERE setting_key = ?')
+      .get(req.params.key);
+    if (!setting) {
+      return res.status(404).json({ error: 'Setting not found' });
+    }
+    res.json({ data: setting });
+  } catch (error) {
+    console.error('Error fetching setting:', error);
+    res.status(500).json({ error: 'Failed to fetch setting' });
+  }
+});
+
+router.post('/', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const {
+      setting_key,
+      setting_value,
+      category,
+      description,
+      data_type,
+    } = req.body;
+
+    if (!setting_key || setting_value === undefined) {
+      return res
+        .status(400)
+        .json({ error: 'setting_key and setting_value are required' });
+    }
+
+    const result = db
+      .prepare(
+        `INSERT INTO system_settings (setting_key, setting_value, category, description, data_type)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(
+        setting_key,
+        setting_value,
+        category || 'general',
+        description || null,
+        data_type || 'string'
+      );
+
+    res.status(201).json({
+      message: 'Setting created',
+      data: { id: result.lastInsertRowid },
+    });
+  } catch (error) {
+    console.error('Error creating setting:', error);
+    res.status(500).json({ error: 'Failed to create setting' });
+  }
+});
+
+router.put('/:key', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const { setting_value } = req.body;
+
+    if (setting_value === undefined) {
+      return res.status(400).json({ error: 'setting_value is required' });
+    }
+
+    const setting = db
+      .prepare('SELECT * FROM system_settings WHERE setting_key = ?')
+      .get(req.params.key);
+
+    if (!setting) {
+      return res.status(404).json({ error: 'Setting not found' });
+    }
+
+    db.prepare('UPDATE system_settings SET setting_value = ? WHERE setting_key = ?').run(
+      setting_value,
+      req.params.key
+    );
+
+    res.json({ message: 'Setting updated' });
+  } catch (error) {
+    console.error('Error updating setting:', error);
+    res.status(500).json({ error: 'Failed to update setting' });
+  }
+});
+
+// ===== KPI DASHBOARD ENDPOINTS =====
+
+router.get('/dashboard/overview', authMiddleware, (req: Request, res: Response) => {
+  try {
+    // Production KPI
+    const production = db
+      .prepare(
+        `SELECT 
+         COUNT(*) as total_orders,
+         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+         SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+         FROM work_orders`
+      )
+      .get();
+
+    // Inventory KPI
+    const inventory = db
+      .prepare(
+        `SELECT 
+         COUNT(*) as total_items,
+         SUM(CASE WHEN quantity < reorder_point THEN 1 ELSE 0 END) as low_stock_count
+         FROM inventory_stocks`
+      )
+      .get();
+
+    // Sales KPI
+    const sales = db
+      .prepare(
+        `SELECT 
+         COUNT(*) as total_orders,
+         SUM(total_amount) as total_revenue,
+         COUNT(DISTINCT customer_id) as unique_customers
+         FROM sales_orders WHERE created_at >= date('now', '-30 days')`
+      )
+      .get();
+
+    // Pending Approvals
+    const approvals = db
+      .prepare(
+        `SELECT COUNT(*) as pending_count FROM approval_rules WHERE status = 'pending'`
+      )
+      .get();
+
+    res.json({
+      data: {
+        production,
+        inventory,
+        sales,
+        approvals,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard overview:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard overview' });
+  }
+});
+
+router.get('/dashboard/production', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const data = db
+      .prepare(
+        `SELECT 
+         status,
+         COUNT(*) as count
+         FROM work_orders
+         GROUP BY status`
+      )
+      .all();
+
+    res.json({ data });
+  } catch (error) {
+    console.error('Error fetching production KPI:', error);
+    res.status(500).json({ error: 'Failed to fetch production KPI' });
+  }
+});
+
+router.get('/dashboard/inventory', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const data = db
+      .prepare(
+        `SELECT 
+         p.sku,
+         p.name,
+         s.quantity,
+         s.reorder_point,
+         CASE 
+           WHEN s.quantity <= s.reorder_point THEN 'CRITICAL'
+           WHEN s.quantity <= s.reorder_point * 1.5 THEN 'LOW'
+           ELSE 'OK'
+         END as status
+         FROM inventory_stocks s
+         JOIN products p ON s.product_id = p.id
+         ORDER BY s.quantity ASC`
+      )
+      .all();
+
+    res.json({ data });
+  } catch (error) {
+    console.error('Error fetching inventory KPI:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory KPI' });
+  }
+});
+
+router.get('/dashboard/sales', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const monthly = db
+      .prepare(
+        `SELECT 
+         strftime('%Y-%m', created_at) as month,
+         COUNT(*) as order_count,
+         SUM(total_amount) as total_amount
+         FROM sales_orders
+         GROUP BY strftime('%Y-%m', created_at)
+         ORDER BY month DESC
+         LIMIT 12`
+      )
+      .all();
+
+    const topProducts = db
+      .prepare(
+        `SELECT 
+         p.sku,
+         p.name,
+         COUNT(soi.id) as sales_count,
+         SUM(soi.quantity) as total_quantity
+         FROM sales_order_items soi
+         JOIN products p ON soi.product_id = p.id
+         GROUP BY p.id
+         ORDER BY total_quantity DESC
+         LIMIT 10`
+      )
+      .all();
+
+    res.json({
+      data: {
+        monthly,
+        topProducts,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching sales KPI:', error);
+    res.status(500).json({ error: 'Failed to fetch sales KPI' });
+  }
+});
+
+router.get('/dashboard/quality', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const data = db
+      .prepare(
+        `SELECT 
+         result_status,
+         COUNT(*) as count
+         FROM qc_results
+         GROUP BY result_status`
+      )
+      .all();
+
+    const recentFailures = db
+      .prepare(
+        `SELECT 
+         qr.id,
+         qr.result_status,
+         qr.notes,
+         qt.test_name,
+         b.batch_number
+         FROM qc_results qr
+         JOIN qc_tests qt ON qr.test_id = qt.id
+         JOIN batches b ON qr.batch_id = b.id
+         WHERE qr.result_status = 'FAILED'
+         ORDER BY qr.created_at DESC
+         LIMIT 10`
+      )
+      .all();
+
+    res.json({
+      data: {
+        summary: data,
+        recentFailures,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching quality KPI:', error);
+    res.status(500).json({ error: 'Failed to fetch quality KPI' });
+  }
+});
+
+export default router;

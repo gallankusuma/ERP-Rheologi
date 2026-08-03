@@ -1,0 +1,43 @@
+CREATE TABLE IF NOT EXISTS mps_headers (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  mps_number VARCHAR(50) NOT NULL UNIQUE,
+  period_year INT NOT NULL,
+  period_month INT NOT NULL,
+  scheme VARCHAR(10) DEFAULT 'MTO',
+  status VARCHAR(20) DEFAULT 'Draft',
+  notes TEXT,
+  created_by INT,
+  confirmed_by INT,
+  confirmed_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES users(id),
+  FOREIGN KEY (confirmed_by) REFERENCES users(id),
+  UNIQUE KEY uq_period (period_year, period_month, scheme)
+);
+
+CREATE TABLE IF NOT EXISTS mps_details (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  mps_header_id INT NOT NULL,
+  product_id INT NOT NULL,
+  bom_id INT NULL,
+  so_id INT NULL,
+  so_item_id INT NULL,
+  demand_qty DECIMAL(15,2) DEFAULT 0,
+  demand_w1 DECIMAL(15,2) DEFAULT 0,
+  demand_w2 DECIMAL(15,2) DEFAULT 0,
+  demand_w3 DECIMAL(15,2) DEFAULT 0,
+  demand_w4 DECIMAL(15,2) DEFAULT 0,
+  production_w1 DECIMAL(15,2) DEFAULT 0,
+  production_w2 DECIMAL(15,2) DEFAULT 0,
+  production_w3 DECIMAL(15,2) DEFAULT 0,
+  production_w4 DECIMAL(15,2) DEFAULT 0,
+  beginning_inv DECIMAL(15,2) DEFAULT 0,
+  ending_inv DECIMAL(15,2) DEFAULT 0,
+  wo_id INT NULL,
+  status VARCHAR(20) DEFAULT 'Pending',
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (mps_header_id) REFERENCES mps_headers(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);

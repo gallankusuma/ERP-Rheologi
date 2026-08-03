@@ -119,22 +119,22 @@ onMounted(() => {
 });
 
 const fetchProducts = async () => {
-  const res = await api.get('/api/products');
+  const res = await api.get('/products');
   products.value = res.data.data || [];
 };
 
 const fetchWarehouses = async () => {
-  const res = await api.get('/api/warehouses');
+  const res = await api.get('/warehouses');
   warehouses.value = res.data.data || [];
 };
 
 const fetchTransfers = async () => {
-  const res = await api.get('/api/inventory/stock-transfers');
+  const res = await api.get('/inventory/stock-transfers');
   transfers.value = res.data.data || [];
 };
 
 const fetchAdjustments = async () => {
-  const res = await api.get('/api/inventory/stock-adjustments');
+  const res = await api.get('/inventory/stock-adjustments');
   adjustments.value = res.data.data || [];
 };
 

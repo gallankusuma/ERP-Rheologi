@@ -237,6 +237,9 @@ router.delete('/formulations/:id', authMiddleware, async (req: Request, res: Res
 // GET all lab tests
 router.get('/lab-tests', authMiddleware, async (req: Request, res: Response) => {
   try {
+    let where = '';
+    const params: any[] = [];
+    if (req.query.project_id) { where = 'WHERE t.project_id = ?'; params.push(req.query.project_id); }
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT t.*, f.name as formulation_name, f.formula_code,
              p.name as project_name, u.full_name as tester_name
@@ -244,8 +247,9 @@ router.get('/lab-tests', authMiddleware, async (req: Request, res: Response) => 
       LEFT JOIN rnd_formulations f ON t.formulation_id = f.id
       LEFT JOIN rnd_projects p ON t.project_id = p.id
       LEFT JOIN users u ON t.tested_by = u.id
+      ${where}
       ORDER BY t.created_at DESC
-    `);
+    `, params);
     res.json({ data: rows });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -305,12 +309,18 @@ router.delete('/lab-tests/:id', authMiddleware, async (req: Request, res: Respon
 // GET all stability studies
 router.get('/stability', authMiddleware, async (req: Request, res: Response) => {
   try {
+    let where = '';
+    const params: any[] = [];
+    if (req.query.project_id) { where = 'WHERE s.project_id = ?'; params.push(req.query.project_id); }
     const [rows] = await pool.query<RowDataPacket[]>(`
-      SELECT s.*, f.name as formulation_name, f.formula_code
+      SELECT s.*, f.name as formulation_name, f.formula_code,
+             p.name as project_name
       FROM rnd_stability_studies s
       LEFT JOIN rnd_formulations f ON s.formulation_id = f.id
+      LEFT JOIN rnd_projects p ON s.project_id = p.id
+      ${where}
       ORDER BY s.created_at DESC
-    `);
+    `, params);
     res.json({ data: rows });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -337,11 +347,11 @@ router.get('/stability/:id', authMiddleware, async (req: Request, res: Response)
 // POST create stability study
 router.post('/stability', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { study_code, name, formulation_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, checkpoints } = req.body;
+    const { study_code, name, formulation_id, project_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, checkpoints } = req.body;
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO rnd_stability_studies (study_code, name, formulation_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [study_code, name, formulation_id, batch_number, status || 'planned', storage_condition || '25°C / 60% RH', duration_months || 12, start_date, end_date, protocol, (req as any).user?.id]
+      `INSERT INTO rnd_stability_studies (study_code, name, formulation_id, project_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [study_code, name, formulation_id, project_id || null, batch_number, status || 'planned', storage_condition || '25°C / 60% RH', duration_months || 12, start_date, end_date, protocol, (req as any).user?.id]
     );
     // Create checkpoints if provided
     if (checkpoints && Array.isArray(checkpoints)) {
@@ -359,10 +369,10 @@ router.post('/stability', authMiddleware, async (req: Request, res: Response) =>
 // PUT update stability study
 router.put('/stability/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { study_code, name, formulation_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, conclusion } = req.body;
+    const { study_code, name, formulation_id, project_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, conclusion } = req.body;
     await pool.query(
-      `UPDATE rnd_stability_studies SET study_code=?, name=?, formulation_id=?, batch_number=?, status=?, storage_condition=?, duration_months=?, start_date=?, end_date=?, protocol=?, conclusion=? WHERE id=?`,
-      [study_code, name, formulation_id, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, conclusion, req.params.id]
+      `UPDATE rnd_stability_studies SET study_code=?, name=?, formulation_id=?, project_id=?, batch_number=?, status=?, storage_condition=?, duration_months=?, start_date=?, end_date=?, protocol=?, conclusion=? WHERE id=?`,
+      [study_code, name, formulation_id, project_id || null, batch_number, status, storage_condition, duration_months, start_date, end_date, protocol, conclusion, req.params.id]
     );
     res.json({ message: 'Study updated' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -630,6 +640,198 @@ router.delete('/folders/:id', authMiddleware, async (req: Request, res: Response
   try {
     await pool.query('UPDATE rnd_documents SET folder_id = NULL WHERE folder_id = ?', [req.params.id]);
     await pool.query('DELETE FROM rnd_document_folders WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== R&D SPECIFICATIONS ====================
+
+// LIST specifications with search/filter/pagination
+router.get('/specifications', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { search, process_type, sample_type, source, active, page = '1', limit = '50' } = req.query;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (search) {
+      conditions.push('(s.doc_number LIKE ? OR s.sample_name LIKE ? OR s.notes LIKE ?)');
+      const q = `%${search}%`;
+      params.push(q, q, q);
+    }
+    if (process_type) { conditions.push('s.process_type_code = ?'); params.push(process_type); }
+    if (sample_type) { conditions.push('s.sample_type_code = ?'); params.push(sample_type); }
+    if (source) { conditions.push('s.source = ?'); params.push(source); }
+    if (active !== undefined && active !== '') { conditions.push('s.active = ?'); params.push(active); }
+
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT s.*, 
+        (SELECT COUNT(*) FROM rnd_spec_samples ss WHERE ss.spec_id = s.id) as sample_count,
+        (SELECT COUNT(*) FROM rnd_spec_items si WHERE si.spec_id = s.id) as item_count
+      FROM rnd_specifications s
+      ${where}
+      ORDER BY s.doc_date DESC, s.id DESC
+      LIMIT ? OFFSET ?`,
+      [...params, parseInt(limit as string), offset]
+    );
+
+    const [[{ total }]]: any = await pool.query(
+      `SELECT COUNT(*) as total FROM rnd_specifications s ${where}`, params
+    );
+
+    // Get distinct process types and sample types for filter dropdowns
+    const [processTypes] = await pool.query<RowDataPacket[]>(
+      `SELECT DISTINCT process_type_code, process_type FROM rnd_specifications WHERE process_type IS NOT NULL AND process_type != '' ORDER BY process_type`
+    );
+    const [sampleTypes] = await pool.query<RowDataPacket[]>(
+      `SELECT DISTINCT sample_type_code, sample_type FROM rnd_specifications WHERE sample_type IS NOT NULL AND sample_type != '' ORDER BY sample_type`
+    );
+
+    res.json({ data: rows, total, processTypes, sampleTypes });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// GET specification detail with samples, parameters, items
+router.get('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [[spec]]: any = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM rnd_specifications WHERE id = ?', [req.params.id]
+    );
+    if (!spec) return res.status(404).json({ error: 'Not found' });
+
+    // Get samples
+    const [samples] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM rnd_spec_samples WHERE spec_id = ? ORDER BY sort_order', [req.params.id]
+    );
+
+    // Get parameters for each sample
+    for (const sample of samples as any[]) {
+      const [params] = await pool.query<RowDataPacket[]>(
+        'SELECT * FROM rnd_spec_parameters WHERE sample_id = ? ORDER BY sort_order', [sample.id]
+      );
+      sample.parameters = params;
+    }
+
+    // Get items
+    const [items] = await pool.query<RowDataPacket[]>(
+      `SELECT si.*, p.name as product_name, p.sku 
+       FROM rnd_spec_items si
+       LEFT JOIN products p ON si.product_id = p.id
+       WHERE si.spec_id = ? ORDER BY si.id`, [req.params.id]
+    );
+
+    res.json({ ...spec, samples, items });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// CREATE specification
+router.post('/specifications', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { doc_number, doc_date, process_type, process_type_code, sample_name, sample_type, sample_type_code, active, notes, samples, items } = req.body;
+    const userId = (req as any).user?.id;
+
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO rnd_specifications (doc_number, doc_date, process_type, process_type_code, sample_name, sample_type, sample_type_code, active, notes, source, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ERP', ?)`,
+      [doc_number, doc_date || null, process_type, process_type_code, sample_name, sample_type, sample_type_code, active ?? 1, notes, userId]
+    );
+    const specId = result.insertId;
+
+    // Insert samples with parameters
+    if (samples?.length) {
+      for (const sample of samples) {
+        const [sResult] = await pool.query<ResultSetHeader>(
+          `INSERT INTO rnd_spec_samples (spec_id, sample_code, sample_name, brand, sample_point, sample_type, status_spek, status_off_spek, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [specId, sample.sample_code, sample.sample_name, sample.brand, sample.sample_point, sample.sample_type, sample.status_spek, sample.status_off_spek, sample.sort_order || 0]
+        );
+        const sampleId = sResult.insertId;
+
+        if (sample.parameters?.length) {
+          for (const param of sample.parameters) {
+            await pool.query(
+              `INSERT INTO rnd_spec_parameters (sample_id, parameter_name, method, unit, specification, frequency, setup_type, active, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [sampleId, param.parameter_name, param.method, param.unit, param.specification, param.frequency, param.setup_type, param.active ?? 1, param.sort_order || 0]
+            );
+          }
+        }
+      }
+    }
+
+    // Insert items
+    if (items?.length) {
+      for (const item of items) {
+        // Try to link to existing product
+        const [[product]]: any = await pool.query('SELECT id FROM products WHERE sku = ? LIMIT 1', [item.item_code]);
+        await pool.query(
+          `INSERT INTO rnd_spec_items (spec_id, item_code, item_description, unit, product_id) VALUES (?, ?, ?, ?, ?)`,
+          [specId, item.item_code, item.item_description, item.unit, product?.id || null]
+        );
+      }
+    }
+
+    res.status(201).json({ id: specId, message: 'Created' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// UPDATE specification
+router.put('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { doc_number, doc_date, process_type, process_type_code, sample_name, sample_type, sample_type_code, active, notes, revision, revision_no, approve_1, approve_1_by, samples, items } = req.body;
+
+    await pool.query(
+      `UPDATE rnd_specifications SET doc_number=?, doc_date=?, process_type=?, process_type_code=?, sample_name=?, sample_type=?, sample_type_code=?, active=?, notes=?, revision=?, revision_no=?, approve_1=?, approve_1_by=? WHERE id=?`,
+      [doc_number, doc_date || null, process_type, process_type_code, sample_name, sample_type, sample_type_code, active, notes, revision, revision_no, approve_1, approve_1_by, req.params.id]
+    );
+
+    // Replace samples
+    if (samples !== undefined) {
+      await pool.query('DELETE FROM rnd_spec_samples WHERE spec_id = ?', [req.params.id]);
+      if (samples?.length) {
+        for (const sample of samples) {
+          const [sResult] = await pool.query<ResultSetHeader>(
+            `INSERT INTO rnd_spec_samples (spec_id, sample_code, sample_name, brand, sample_point, sample_type, status_spek, status_off_spek, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [req.params.id, sample.sample_code, sample.sample_name, sample.brand, sample.sample_point, sample.sample_type, sample.status_spek, sample.status_off_spek, sample.sort_order || 0]
+          );
+          if (sample.parameters?.length) {
+            for (const param of sample.parameters) {
+              await pool.query(
+                `INSERT INTO rnd_spec_parameters (sample_id, parameter_name, method, unit, specification, frequency, setup_type, active, sort_order)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [sResult.insertId, param.parameter_name, param.method, param.unit, param.specification, param.frequency, param.setup_type, param.active ?? 1, param.sort_order || 0]
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Replace items
+    if (items !== undefined) {
+      await pool.query('DELETE FROM rnd_spec_items WHERE spec_id = ?', [req.params.id]);
+      if (items?.length) {
+        for (const item of items) {
+          const [[product]]: any = await pool.query('SELECT id FROM products WHERE sku = ? LIMIT 1', [item.item_code]);
+          await pool.query(
+            `INSERT INTO rnd_spec_items (spec_id, item_code, item_description, unit, product_id) VALUES (?, ?, ?, ?, ?)`,
+            [req.params.id, item.item_code, item.item_description, item.unit, product?.id || null]
+          );
+        }
+      }
+    }
+
+    res.json({ message: 'Updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE specification
+router.delete('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await pool.query('DELETE FROM rnd_specifications WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });

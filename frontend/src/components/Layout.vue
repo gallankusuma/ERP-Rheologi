@@ -31,6 +31,51 @@
             </div>
           </div>
           <span class="text-xs text-gray-500 dark:text-gray-400 hidden md:inline">{{ currentDate }}</span>
+          <!-- Inbox Bell -->
+          <div class="relative" @click.stop>
+            <button
+              @click.stop="showInbox = !showInbox"
+              class="relative p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title="Inbox"
+            >
+              <span class="text-lg">📬</span>
+              <span v-if="inboxUnread > 0" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 shadow-sm animate-pulse">
+                {{ inboxUnread > 9 ? '9+' : inboxUnread }}
+              </span>
+            </button>
+            <!-- Inbox Dropdown -->
+            <div v-if="showInbox" class="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+              <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                <h3 class="font-bold text-sm text-gray-800 dark:text-gray-200">📥 Inbox</h3>
+                <button v-if="inboxUnread > 0" @click="markAllRead" class="text-xs text-blue-600 hover:underline">Mark all read</button>
+              </div>
+              <div class="max-h-80 overflow-y-auto">
+                <div v-if="inboxItems.length === 0" class="px-4 py-8 text-center text-gray-400 dark:text-gray-500 text-sm">
+                  No notifications
+                </div>
+                <button
+                  v-for="item in inboxItems"
+                  :key="item.id"
+                  @click="handleInboxClick(item)"
+                  class="w-full text-left px-4 py-3 border-b border-gray-50 dark:border-gray-700 hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"
+                  :class="item.is_read ? '' : 'bg-blue-50/50 dark:bg-blue-900/10'"
+                >
+                  <div class="flex gap-2.5">
+                    <span class="text-lg flex-shrink-0 mt-0.5">{{ inboxIcon(item.type) }}</span>
+                    <div class="min-w-0">
+                      <p class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate" :class="item.is_read ? '' : 'font-bold'">{{ item.title }}</p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ item.message }}</p>
+                      <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{{ inboxTimeAgo(item.created_at) }}</p>
+                    </div>
+                    <span v-if="!item.is_read" class="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0 mt-2"></span>
+                  </div>
+                </button>
+              </div>
+              <div class="px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-750">
+                <button @click="router.push('/notifications'); showInbox = false" class="text-xs text-blue-600 hover:underline w-full text-center">View all notifications →</button>
+              </div>
+            </div>
+          </div>
           <!-- Night Mode Toggle -->
           <button 
             @click="toggleNightMode"
@@ -205,6 +250,9 @@ const appName = computed(() => {
 
 const showUserMenu = ref(false);
 const mobileMenuOpen = ref(false);
+const showInbox = ref(false);
+const inboxItems = ref<any[]>([]);
+const inboxUnread = ref(0);
 
 // Sidebar collapse (persisted)
 const sidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true');
@@ -301,8 +349,21 @@ onMounted(() => {
     if (userMenuEl && !userMenuEl.contains(target)) {
       showUserMenu.value = false;
     }
+    // Close inbox if clicking outside
+    if (showInbox.value) {
+      const inboxEl = target.closest('[title="Inbox"]')?.parentElement;
+      if (!inboxEl || !inboxEl.contains(target)) {
+        showInbox.value = false;
+      }
+    }
   };
   document.addEventListener('click', closeMenuHandler);
+
+  // Fetch inbox
+  fetchInbox();
+  // Poll every 60s
+  void setInterval(fetchInbox, 60000);
+  // Clean up on unmount handled below
 });
 
 onUnmounted(() => {
@@ -310,6 +371,75 @@ onUnmounted(() => {
     document.removeEventListener('click', closeMenuHandler);
   }
 });
+
+// ============================================
+// INBOX / NOTIFICATIONS
+// ============================================
+const fetchInbox = async () => {
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const res = await api.get('/inbox', { headers: { Authorization: `Bearer ${token}` } });
+    const data = res.data;
+    inboxItems.value = Array.isArray(data) ? data : (data?.data || []);
+    inboxUnread.value = inboxItems.value.filter((i: any) => !i.is_read).length;
+  } catch {
+    // silently fail
+  }
+};
+
+const markAllRead = async () => {
+  try {
+    const token = localStorage.getItem('token');
+    await api.put('/inbox/read-all', {}, { headers: { Authorization: `Bearer ${token}` } });
+    inboxItems.value.forEach((i: any) => i.is_read = 1);
+    inboxUnread.value = 0;
+  } catch { /* silent */ }
+};
+
+const handleInboxClick = async (item: any) => {
+  try {
+    const token = localStorage.getItem('token');
+    if (!item.is_read) {
+      await api.put(`/inbox/${item.id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      item.is_read = 1;
+      inboxUnread.value = Math.max(0, inboxUnread.value - 1);
+    }
+  } catch { /* silent */ }
+  showInbox.value = false;
+  // Navigate based on type
+  if (item.link) {
+    router.push(item.link);
+  } else if (item.type === 'event_shared') {
+    router.push('/project/events');
+  }
+};
+
+const inboxIcon = (type: string) => {
+  const icons: Record<string, string> = {
+    'event_shared': '📅',
+    'event_reminder': '⏰',
+    'approval': '📋',
+    'system': '🔔',
+    'message': '💬',
+  };
+  return icons[type] || '🔔';
+};
+
+const inboxTimeAgo = (dateStr: string) => {
+  if (!dateStr) return '';
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+};
 
 interface Submenu {
   id: string;
@@ -352,14 +482,17 @@ const mainMenus: MenuItem[] = [
     label: 'CRM',
     icon: '💼',
     submenus: [
-      { id: 'project-events', label: 'Events', route: '/project/events' },
-      { id: 'clients', label: 'Clients', route: '/customers' },
-      { id: 'projects', label: 'Projects', route: '/projects' },
-      { id: 'tasks', label: 'Tasks', route: '/project/tasks' },
-      { id: 'leads', label: 'Leads', route: '/leads' },
+      { id: 'crm-dashboard', label: 'Dashboard', route: '/crm' },
       { id: 'prospects', label: 'Prospects', route: '/project/prospects' },
+      { id: 'leads', label: 'Leads', route: '/leads' },
+      { id: 'clients', label: 'Clients', route: '/clients-management' },
+      { id: 'projects', label: 'Projects', route: '/projects' },
+      { id: 'sample-requests', label: 'Sample Requests', route: '/sample-requests' },
+      { id: 'project-events', label: 'Events', route: '/project/events' },
+      { id: 'tasks', label: 'Tasks', route: '/project/tasks' },
       { id: 'notes', label: 'Notes', route: '/project/notes' },
       { id: 'messages', label: 'Messages', route: '/notifications' },
+      { id: 'crm-sales', label: '📈 Sales', route: '/crm/sales' },
     ]
   },
   {
@@ -391,10 +524,22 @@ const mainMenus: MenuItem[] = [
     icon: '🔬',
     submenus: [
       { id: 'rnd-projects', label: 'R&D Projects', route: '/rnd/projects' },
+      { id: 'rnd-sample-requests', label: 'Sample Requests', route: '/sample-requests' },
       { id: 'rnd-kanban', label: 'Kanban Board', route: '/rnd/kanban' },
       { id: 'rnd-formulations', label: 'Formulations', route: '/rnd/formulations' },
-      { id: 'rnd-lab-testing', label: 'Lab Testing', route: '/rnd/lab-testing' },
-      { id: 'rnd-stability', label: 'Stability Studies', route: '/rnd/stability' },
+      { id: 'rnd-specifications', label: 'Specifications', route: '/rnd/specifications' },
+    ]
+  },
+  {
+    id: 'ppic',
+    label: 'PPIC',
+    icon: '🏭',
+    submenus: [
+      { id: 'ppic-forecast', label: 'Sales Forecast', route: '/ppic/forecast' },
+      { id: 'ppic-mps', label: 'MPS', route: '/ppic/mps' },
+      { id: 'ppic-mrp', label: 'MRP', route: '/ppic/mrp' },
+      { id: 'ppic-capacity', label: 'Capacity Planning', route: '/ppic/capacity' },
+      { id: 'ppic-reports', label: 'Stock Reports', route: '/ppic/reports' },
     ]
   },
   {
@@ -447,6 +592,8 @@ const mainMenus: MenuItem[] = [
     label: 'Quality',
     icon: '✓',
     submenus: [
+      { id: 'qc-master', label: 'QC Master Data', route: '/qc/master' },
+      { id: 'qc-fpa', label: 'QC FPA', route: '/qc/fpa' },
       { id: 'qc-test-methods', label: 'Test Methods', route: '/quality/test-methods' },
       { id: 'qc-sampling', label: 'Sampling', route: '/quality/sampling' },
       { id: 'qc-results', label: 'Results', route: '/quality/results' },
@@ -456,24 +603,13 @@ const mainMenus: MenuItem[] = [
       { id: 'qc-reports', label: 'QC Reports', route: '/quality/reports' },
     ]
   },
-  {
-    id: 'sales',
-    label: 'Sales',
-    icon: '📈',
-    submenus: [
-      { id: 'sales-invoices', label: 'Invoices', route: '/sales/invoices' },
-      { id: 'sales-orders-list', label: 'Orders List', route: '/sales/orders-list' },
-      { id: 'sales-store', label: 'Store', route: '/sales/store' },
-      { id: 'sales-payments', label: 'Payments', route: '/sales/payments' },
-      { id: 'sales-items', label: 'Items', route: '/sales/items' },
-      { id: 'sales-contracts', label: 'Contracts', route: '/sales/contracts' },
-    ]
-  },
+
   {
     id: 'finance',
     label: 'Finance',
     icon: '💰',
     submenus: [
+      { id: 'general-ledger', label: '📒 General Ledger', route: '/finance/general-ledger' },
       { id: 'cogs', label: 'COGS Calculation', route: '/finance/cogs' },
       { id: 'ap', label: 'Accounts Payable', route: '/finance/ap' },
       { id: 'ar', label: 'Accounts Receivable', route: '/finance/ar' },
@@ -519,6 +655,7 @@ const mainMenus: MenuItem[] = [
       { id: 'items', label: 'Items', route: '/items', name: 'Items' },
       { id: 'item-types', label: 'Item Types', route: '/item-types', name: 'ItemTypes' },
       { id: 'categories', label: 'Item Categories', route: '/categories', name: 'Categories' },
+      { id: 'line-processes', label: 'Line Processes', route: '/line-processes', name: 'LineProcesses' },
       { id: 'bom', label: 'Bill of Materials', route: '/bom', name: 'BOM' },
       { id: 'warehouses', label: 'Warehouses', route: '/warehouses', name: 'Warehouses' },
       { id: 'warehouse-locations', label: 'Warehouse Locations', route: '/warehouse-locations', name: 'WarehouseLocations' },
@@ -526,6 +663,8 @@ const mainMenus: MenuItem[] = [
       { id: 'customers', label: 'Customers', route: '/customers', name: 'Customers' },
       { id: 'employees', label: 'Employees', route: '/users', name: 'Users' },
       { id: 'departments', label: 'Departments', route: '/departments', name: 'Departments' },
+      { id: 'client-categories', label: 'Client Categories', route: '/client-categories', name: 'ClientCategories' },
+      { id: 'forecast-brands', label: 'Forecast Brands', route: '/forecast-brands', name: 'ForecastBrands' },
     ]
   },
   {
@@ -540,6 +679,7 @@ const mainMenus: MenuItem[] = [
       { id: 'audit-log', label: 'Audit Log', route: '/admin/audit-log' },
       { id: 'notifications', label: 'Notification Settings', route: '/admin/notifications' },
       { id: 'integration', label: 'Integration Settings', route: '/admin/integration' },
+      { id: 'document-control', label: 'Document Control', route: '/admin/document-control' },
       { id: 'backup', label: 'Backup & Restore', route: '/admin/backup' },
     ]
   },

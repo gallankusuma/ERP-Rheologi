@@ -41,6 +41,20 @@
       </div>
     </div>
 
+    <!-- Search Bar -->
+    <div class="flex items-center gap-3">
+      <div class="relative flex-1 max-w-md">
+        <span class="absolute inset-y-0 left-3 flex items-center text-gray-400">🔍</span>
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Search by SKU, name, category, or type..."
+          class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+        />
+      </div>
+      <span class="text-sm text-gray-500">{{ sortedData.length }} of {{ items.length }} items</span>
+    </div>
+
     <!-- Bulk Delete Bar -->
     <div v-if="selectedIds.length > 0" class="flex items-center gap-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
       <span class="text-sm font-medium text-red-700">{{ selectedIds.length }} item(s) selected</span>
@@ -182,11 +196,17 @@
     <!-- Add/Edit Modal -->
     <div v-if="showModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
           <h3 class="text-lg font-semibold text-gray-900">{{ editingItem ? 'Edit Item' : 'Add New Item' }}</h3>
           <button @click="closeModal" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
         </div>
-
+        <div v-if="editingItem" class="px-6 border-b border-gray-200 bg-gray-50">
+          <nav class="-mb-px flex space-x-8">
+            <button @click="modalTab = 'basic'" :class="[modalTab === 'basic' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700', 'whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm']">Basic Info</button>
+            <button @click="modalTab = 'qc'" :class="[modalTab === 'qc' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700', 'whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm']">QC Specs</button>
+          </nav>
+        </div>
+        <div v-show="modalTab === 'basic'">
         <form @submit.prevent="handleSubmit" class="p-6 space-y-4">
           <div class="grid grid-cols-2 gap-4">
             <div>
@@ -330,6 +350,21 @@
             </button>
           </div>
         </form>
+        </div>
+        <div v-if="modalTab === 'qc'" class="p-6 space-y-6">
+          <div class="flex justify-between items-center">
+            <h4 class="text-sm font-semibold text-gray-900">Quality Control Specifications</h4>
+            <button @click="showAddSpec = true" class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-sm font-medium hover:bg-blue-200">+ Add Spec</button>
+          </div>
+          <div v-if="showAddSpec" class="bg-gray-50 p-4 rounded-lg border border-gray-200 grid grid-cols-2 gap-4">
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Parameter</label><select v-model="newSpec.parameter_id" class="w-full px-2 py-1.5 text-sm border rounded"><option value="">-- Select --</option><option v-for="p in qcParams" :key="p.id" :value="p.id">{{ p.name }}</option></select></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Method</label><select v-model="newSpec.method_id" class="w-full px-2 py-1.5 text-sm border rounded"><option value="">-- Optional --</option><option v-for="m in qcMethods" :key="m.id" :value="m.id">{{ m.name }}</option></select></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Standard Value</label><input v-model="newSpec.standard_value" type="text" placeholder="e.g. 6.5-7.5" class="w-full px-2 py-1.5 text-sm border rounded" /></div>
+            <div class="flex gap-2"><div class="flex-1"><label class="block text-xs font-medium text-gray-700 mb-1">Min</label><input v-model="newSpec.min_value" type="number" step="0.01" class="w-full px-2 py-1.5 text-sm border rounded" /></div><div class="flex-1"><label class="block text-xs font-medium text-gray-700 mb-1">Max</label><input v-model="newSpec.max_value" type="number" step="0.01" class="w-full px-2 py-1.5 text-sm border rounded" /></div></div>
+            <div class="col-span-2 flex justify-end gap-2 mt-2"><button @click="showAddSpec = false" class="px-3 py-1.5 border rounded text-sm text-gray-600">Cancel</button><button @click="saveQCSpec" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Save</button></div>
+          </div>
+          <table class="min-w-full divide-y divide-gray-200 border"><thead class="bg-gray-50"><tr><th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Parameter</th><th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th><th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Standard</th><th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Min/Max</th><th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Action</th></tr></thead><tbody class="divide-y divide-gray-200 bg-white"><tr v-for="spec in itemQCSpecs" :key="spec.id"><td class="px-4 py-2 text-sm text-gray-900 font-medium">{{ spec.parameter_name }}</td><td class="px-4 py-2 text-sm text-gray-600">{{ spec.method_name || '-' }}</td><td class="px-4 py-2 text-sm text-gray-600">{{ spec.standard_value || '-' }}</td><td class="px-4 py-2 text-sm text-gray-600">{{ spec.min_value ?? '-' }} / {{ spec.max_value ?? '-' }}</td><td class="px-4 py-2 text-sm text-right"><button @click="deleteQCSpec(spec.id)" class="text-red-600 hover:text-red-900">Delete</button></td></tr><tr v-if="itemQCSpecs.length === 0"><td colspan="5" class="px-4 py-6 text-center text-sm text-gray-500">No QC Specifications defined.</td></tr></tbody></table>
+        </div>
       </div>
     </div>
   </div>
@@ -346,10 +381,17 @@ const categories = ref<any[]>([]);
 const units = ref<any[]>([]);
 const productTypes = ref<any[]>([]);
 const showModal = ref(false);
+const modalTab = ref('basic');
 const submitting = ref(false);
 const editingItem = ref<any>(null);
 const errors = ref<any>({});
 const selectedIds = ref<number[]>([]);
+const searchQuery = ref('');
+const qcParams = ref<any[]>([]);
+const qcMethods = ref<any[]>([]);
+const itemQCSpecs = ref<any[]>([]);
+const showAddSpec = ref(false);
+const newSpec = ref<any>({ parameter_id: '', method_id: '', standard_value: '', min_value: '', max_value: '' });
 
 const isAllSelected = computed(() => items.value.length > 0 && items.value.every((i: any) => selectedIds.value.includes(i.id)));
 const toggleSelectAll = () => { if (isAllSelected.value) { selectedIds.value = []; } else { selectedIds.value = items.value.map((i: any) => i.id); } };
@@ -372,7 +414,20 @@ const bulkDelete = async () => {
   }
 };
 
-const { toggleSort, sortIcon, sortedData } = useTableSort(items);
+const filteredItems = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim();
+  if (!q) return items.value;
+  return items.value.filter((item: any) =>
+    (item.sku || '').toLowerCase().includes(q) ||
+    (item.name || '').toLowerCase().includes(q) ||
+    (item.category_name || '').toLowerCase().includes(q) ||
+    (item.item_type || '').toLowerCase().includes(q) ||
+    (item.unit_name || '').toLowerCase().includes(q) ||
+    (item.description || '').toLowerCase().includes(q)
+  );
+});
+
+const { toggleSort, sortIcon, sortedData } = useTableSort(filteredItems);
 
 const form = ref({
   sku: '',
@@ -393,6 +448,7 @@ onMounted(async () => {
   await fetchCategories();
   await fetchUnits();
   await fetchProductTypes();
+  try { const pR = await api.get('/qc/parameters'); qcParams.value = pR.data.data || []; const mR = await api.get('/qc/methods'); qcMethods.value = mR.data.data || []; } catch(e) { console.error(e); }
 });
 
 async function fetchItems() {
@@ -433,6 +489,7 @@ async function fetchProductTypes() {
 
 function openAddModal() {
   editingItem.value = null;
+  modalTab.value = 'basic';
   form.value = {
     sku: '',
     name: '',
@@ -458,6 +515,8 @@ function closeModal() {
 
 function editItem(item: any) {
   editingItem.value = item;
+  modalTab.value = 'basic';
+  fetchQCSpecs(item.id);
   form.value = {
     sku: item.sku || '',
     name: item.name || '',
@@ -548,6 +607,11 @@ async function deleteItem(id: number) {
     console.error('Error deleting item:', err);
   }
 }
+
+// QC Functions
+async function fetchQCSpecs(productId: number) { try { const res = await api.get(`/qc/specs/${productId}`); itemQCSpecs.value = res.data.data || []; } catch(e) { console.error(e); } }
+async function saveQCSpec() { if (!newSpec.value.parameter_id) return alert('Parameter is required'); try { await api.post('/qc/specs', { product_id: editingItem.value.id, parameter_id: newSpec.value.parameter_id, method_id: newSpec.value.method_id || null, standard_value: newSpec.value.standard_value, min_value: newSpec.value.min_value || null, max_value: newSpec.value.max_value || null }); showAddSpec.value = false; newSpec.value = { parameter_id: '', method_id: '', standard_value: '', min_value: '', max_value: '' }; await fetchQCSpecs(editingItem.value.id); } catch(e) { alert('Failed to save spec'); } }
+async function deleteQCSpec(specId: number) { if(!confirm('Delete this spec?')) return; try { await api.delete(`/qc/specs/${specId}`); await fetchQCSpecs(editingItem.value.id); } catch(e) { console.error(e); } }
 
 // Import functions
 const fileInput = ref<HTMLInputElement | null>(null);

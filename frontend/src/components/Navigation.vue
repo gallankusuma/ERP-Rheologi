@@ -129,14 +129,6 @@ const menus = [
     ]
   },
   {
-    label: 'Estimator',
-    submenus: [
-      { to: '/estimator', label: 'Proposal', status: 'active' },
-      { to: '/estimator/ahsp', label: 'AHSP', status: 'pending' },
-      { to: '/estimator/masters', label: 'Satuan Dasar Harga', status: 'active' },
-    ]
-  },
-  {
     label: 'Master Data',
     submenus: [
       { to: '/units', label: 'Units of Measure', status: 'active' },
@@ -194,6 +186,8 @@ const menus = [
   {
     label: 'Quality',
     submenus: [
+      { to: '/qc/master', label: 'QC Master Data', status: 'active' },
+      { to: '/qc/fpa', label: 'Form Permintaan Analisa (FPA)', status: 'active' },
       { to: '/quality/test-methods', label: 'QC Test Methods', status: 'pending' },
       { to: '/quality/sampling', label: 'QC Sampling', status: 'pending' },
       { to: '/quality/results', label: 'QC Results', status: 'pending' },

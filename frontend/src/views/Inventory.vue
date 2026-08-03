@@ -10,14 +10,23 @@
     </PageHeader>
 
     <!-- KPIs -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <StatCard title="Total SKU" :value="totalSku" icon="📊" color="primary" />
-      <StatCard title="Qty On Hand" :value="totalOnHand" icon="🏭" color="success" />
-      <StatCard title="Low Stock (< 10)" :value="lowStock.length" icon="⚠️" :color="lowStock.length ? 'warning' : 'success'" />
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <StatCard title="Total SKU (With Stock)" :value="totalSku" icon="📊" color="primary" />
+      <StatCard title="Total Qty On Hand" :value="formatNumber(totalOnHand)" icon="🏭" color="success" />
+      <StatCard title="Low Stock (< Reorder)" :value="lowStock.length" icon="⚠️" :color="lowStock.length ? 'warning' : 'success'" />
+      <StatCard title="Out of Stock" :value="outOfStock" icon="🚫" :color="outOfStock > 0 ? 'danger' : 'success'" />
     </div>
 
-    <!-- Search -->
-    <FilterBar v-model="search" search-placeholder="Search product..." />
+    <!-- Search + Warehouse Filter -->
+    <div class="flex flex-col md:flex-row gap-3">
+      <div class="flex-1">
+        <FilterBar v-model="search" search-placeholder="Search product or SKU..." />
+      </div>
+      <select v-model="selectedWarehouse" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-300">
+        <option value="">All Warehouses</option>
+        <option v-for="wh in warehouses" :key="wh.id" :value="wh.id">{{ wh.name }}</option>
+      </select>
+    </div>
 
     <!-- Loading / Error -->
     <div v-if="store.loading" class="text-center py-8 text-gray-500 dark:text-gray-400">Loading...</div>
@@ -94,9 +103,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useProductStore } from '../stores/products';
+import api from '../lib/api';
 import PageHeader from '../components/ui/PageHeader.vue';
 import StatCard from '../components/ui/StatCard.vue';
 import FilterBar from '../components/ui/FilterBar.vue';
@@ -120,14 +130,19 @@ const form = ref({
   notes: '',
 });
 
+const selectedWarehouse = ref('');
+const warehouses = ref<any[]>([]);
+
 const columns = [
   { key: 'product_name', label: 'Product' },
+  { key: 'sku', label: 'SKU' },
+  { key: 'warehouse_name', label: 'Warehouse' },
   { key: 'quantity_on_hand', label: 'On Hand' },
-  { key: 'quantity_reserved', label: 'Reserved' },
-  { key: 'available', label: 'Available' },
-  { key: 'location', label: 'Location' },
+  { key: 'reorder_point', label: 'Reorder Point' },
   { key: 'actions', label: 'Action' },
 ];
+
+const formatNumber = (val: number) => val.toLocaleString('id-ID');
 
 const txnColumns = [
   { key: 'transaction_date', label: 'Date' },
@@ -140,7 +155,23 @@ onMounted(async () => {
   await Promise.all([
     store.fetchInventory(),
     productStore.fetchProducts(),
+    fetchWarehouses(),
   ]);
+});
+
+const fetchWarehouses = async () => {
+  try {
+    const res = await api.get('/api/warehouses');
+    warehouses.value = res.data.data || res.data || [];
+  } catch (e) { console.error(e); }
+};
+
+watch(selectedWarehouse, async () => {
+  const params = selectedWarehouse.value ? `?warehouse_id=${selectedWarehouse.value}` : '';
+  try {
+    const res = await api.get(`/api/inventory${params}`);
+    store.inventory = res.data.data || [];
+  } catch (e) { console.error(e); }
 });
 
 const filtered = computed(() => {
@@ -152,7 +183,8 @@ const filtered = computed(() => {
 
 const totalSku = computed(() => store.inventory.length);
 const totalOnHand = computed(() => store.inventory.reduce((sum, inv) => sum + (inv.quantity_on_hand || 0), 0));
-const lowStock = computed(() => store.inventory.filter((inv) => inv.quantity_on_hand - inv.quantity_reserved < 10));
+const lowStock = computed(() => store.inventory.filter((inv) => (inv.quantity_on_hand || 0) > 0 && (inv.quantity_on_hand || 0) < (inv.reorder_point || 10)));
+const outOfStock = computed(() => store.inventory.filter((inv) => (inv.quantity_on_hand || 0) === 0).length);
 
 const availabilityVariant = (inv: any): 'success' | 'warning' | 'danger' => {
   const available = (inv.quantity_on_hand || 0) - (inv.quantity_reserved || 0);

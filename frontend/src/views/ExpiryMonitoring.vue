@@ -1,91 +1,163 @@
 <template>
-  <div class="min-h-screen bg-gray-50 p-6">
-    <div class="max-w-6xl mx-auto flex flex-col gap-4">
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+  <div class="min-h-screen bg-slate-50">
+    <div class="bg-gradient-to-r from-rose-700 to-orange-600 px-6 py-4 text-white shadow-lg">
+      <div class="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
         <div>
-          <p class="text-sm text-gray-500">Inventory</p>
-          <h2 class="text-2xl font-bold text-gray-900">Expiry Monitoring (FEFO)</h2>
-          <p class="text-sm text-gray-600">Pantau batch yang mendekati kadaluarsa, jalankan FEFO.</p>
+          <h1 class="text-xl font-bold">🗓️ Expiry Monitoring</h1>
+          <p class="text-rose-200 text-sm mt-0.5">Pantau tanggal kadaluarsa batch material</p>
         </div>
         <div class="flex items-center gap-3">
-          <label class="text-sm text-gray-600">Horizon (hari)</label>
-          <input type="number" min="1" v-model.number="days" class="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm" />
-          <button @click="load" class="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">Refresh</button>
+          <select v-model="daysFilter" @change="load"
+            class="px-3 py-1.5 rounded-lg bg-white/20 border border-white/30 text-sm text-white focus:outline-none">
+            <option value="30">≤ 30 hari</option>
+            <option value="60">≤ 60 hari</option>
+            <option value="90">≤ 90 hari</option>
+            <option value="180">≤ 180 hari</option>
+            <option value="9999">Semua</option>
+          </select>
+          <button @click="load" class="px-4 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-semibold">🔄 Refresh</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <!-- Stats -->
+      <div v-if="stats" class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div class="bg-red-600 rounded-2xl p-4 text-white shadow">
+          <div class="text-3xl font-black">{{ stats.expired }}</div>
+          <div class="text-red-200 text-xs font-semibold mt-1 uppercase">Sudah Kadaluarsa</div>
+        </div>
+        <div class="bg-orange-500 rounded-2xl p-4 text-white shadow">
+          <div class="text-3xl font-black">{{ stats.critical }}</div>
+          <div class="text-orange-200 text-xs font-semibold mt-1 uppercase">Kritis ≤30 hari</div>
+        </div>
+        <div class="bg-amber-400 rounded-2xl p-4 text-white shadow">
+          <div class="text-3xl font-black">{{ stats.warning }}</div>
+          <div class="text-amber-100 text-xs font-semibold mt-1 uppercase">Peringatan ≤90 hari</div>
+        </div>
+        <div class="bg-emerald-500 rounded-2xl p-4 text-white shadow">
+          <div class="text-3xl font-black">{{ stats.ok }}</div>
+          <div class="text-emerald-200 text-xs font-semibold mt-1 uppercase">Aman > 90 hari</div>
         </div>
       </div>
 
-      <div class="bg-white rounded-md shadow-sm border border-gray-200 overflow-hidden">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Product</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Batch</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Qty</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Exp Date</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Days Left</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
-            </tr>
-          </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
-            <tr v-if="rows.length === 0">
-              <td colspan="6" class="px-4 py-6 text-center text-gray-500">No expiring batches</td>
-            </tr>
-            <tr v-for="b in rows" :key="b.id">
-              <td class="px-4 py-3 text-sm text-gray-900">{{ b.product_name }}</td>
-              <td class="px-4 py-3 text-sm font-semibold text-gray-900">{{ b.batch_number }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ b.quantity }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ formatDate(b.exp_date) }}</td>
-              <td class="px-4 py-3 text-sm font-semibold" :class="dayClass(b.days_to_expiry)">{{ b.days_to_expiry }}</td>
-              <td class="px-4 py-3 text-sm">
-                <span class="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold" :class="badgeClass(b.days_to_expiry)">
-                  {{ label(b.days_to_expiry) }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- Filter -->
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 px-4 py-3 flex gap-3 flex-wrap">
+        <input v-model="search" type="text" placeholder="Cari batch / produk..."
+          class="flex-1 min-w-48 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-rose-400 focus:border-rose-400" />
+        <div class="flex gap-2">
+          <button v-for="s in ['all','expired','critical','warning','ok']" :key="s"
+            @click="statusFilter = s"
+            class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+            :class="statusFilter === s
+              ? 'bg-rose-600 text-white'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+            {{ s === 'all' ? 'Semua' : s === 'expired' ? '🔴 Expired' : s === 'critical' ? '🟠 Kritis' : s === 'warning' ? '🟡 Warning' : '🟢 Aman' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100">
+        <div v-if="loading" class="p-10 text-center">
+          <div class="w-8 h-8 border-4 border-rose-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+        </div>
+        <div v-else-if="!filtered.length" class="p-10 text-center text-gray-400">
+          <div class="text-4xl mb-2">✅</div>
+          Tidak ada batch yang perlu diperhatikan
+        </div>
+        <div v-else class="overflow-x-auto">
+          <table class="min-w-full">
+            <thead class="bg-gray-50 border-b border-gray-100">
+              <tr>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Batch</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Produk</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Gudang</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Qty</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Tgl Produksi</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Kadaluarsa</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Sisa</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              <tr v-for="b in filtered" :key="b.id" class="hover:bg-gray-50 transition-colors">
+                <td class="px-5 py-3 font-mono text-sm font-bold text-gray-700">{{ b.batch_number }}</td>
+                <td class="px-4 py-3">
+                  <div class="text-sm font-semibold text-gray-900">{{ b.product_name }}</div>
+                  <div class="text-xs text-gray-400">{{ b.product_sku }}</div>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600">{{ b.warehouse_name || '—' }}</td>
+                <td class="px-4 py-3 text-right text-sm font-semibold text-gray-800">{{ fmtN(b.quantity) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">{{ b.manufacture_date || '—' }}</td>
+                <td class="px-4 py-3 text-sm font-semibold"
+                  :class="b.expiry_status === 'expired' ? 'text-red-600' : b.expiry_status === 'critical' ? 'text-orange-600' : 'text-gray-700'">
+                  {{ b.expiry_date }}
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <span class="text-sm font-bold"
+                    :class="b.days_to_expiry < 0 ? 'text-red-600' : b.days_to_expiry <= 30 ? 'text-orange-600' : b.days_to_expiry <= 90 ? 'text-amber-600' : 'text-emerald-600'">
+                    {{ b.days_to_expiry < 0 ? `${Math.abs(b.days_to_expiry)}h lalu` : b.days_to_expiry + ' hari' }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <span class="px-2.5 py-1 rounded-full text-xs font-bold"
+                    :class="{
+                      'bg-red-100 text-red-700': b.expiry_status === 'expired',
+                      'bg-orange-100 text-orange-700': b.expiry_status === 'critical',
+                      'bg-amber-100 text-amber-700': b.expiry_status === 'warning',
+                      'bg-emerald-100 text-emerald-700': b.expiry_status === 'ok',
+                    }">
+                    {{ b.expiry_status === 'expired' ? '🔴 Expired' : b.expiry_status === 'critical' ? '🟠 Kritis' : b.expiry_status === 'warning' ? '🟡 Warning' : '🟢 Aman' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="px-5 py-3 border-t border-gray-100 text-xs text-gray-400">
+            {{ filtered.length }} batch ditampilkan
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { useInventoryStore } from '@/stores/inventory';
+import { ref, computed, onMounted } from 'vue';
+import { api } from '../lib/api';
 
-const inventoryStore = useInventoryStore();
-const days = ref(45);
+const loading = ref(true);
+const batches = ref<any[]>([]);
+const stats = ref<any>(null);
+const daysFilter = ref('90');
+const statusFilter = ref('all');
+const search = ref('');
 
-onMounted(async () => {
-  await load();
+const fmtN = (v: any) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+
+const filtered = computed(() => {
+  let res = batches.value;
+  if (statusFilter.value !== 'all') res = res.filter(b => b.expiry_status === statusFilter.value);
+  if (search.value) {
+    const q = search.value.toLowerCase();
+    res = res.filter(b => b.batch_number?.toLowerCase().includes(q) || b.product_name?.toLowerCase().includes(q));
+  }
+  return res;
 });
 
 const load = async () => {
-  await inventoryStore.fetchExpiringBatches(days.value);
+  loading.value = true;
+  try {
+    const res = await api.get(`/inventory/expiry?days=${daysFilter.value}`);
+    batches.value = res.data.data?.batches || [];
+    stats.value = res.data.data?.stats || null;
+  } catch {
+    batches.value = [];
+  } finally {
+    loading.value = false;
+  }
 };
 
-const rows = computed(() => inventoryStore.batches || []);
-
-const formatDate = (d?: string) => (d ? new Date(d).toLocaleDateString() : '-');
-const dayClass = (d?: number) => {
-  if (d === undefined || d === null) return 'text-gray-600';
-  if (d <= 0) return 'text-red-600';
-  if (d <= 7) return 'text-amber-700';
-  return 'text-emerald-700';
-};
-
-const badgeClass = (d?: number) => {
-  if (d === undefined || d === null) return 'bg-gray-50 text-gray-600';
-  if (d <= 0) return 'bg-red-50 text-red-700';
-  if (d <= 7) return 'bg-amber-50 text-amber-700';
-  return 'bg-emerald-50 text-emerald-700';
-};
-
-const label = (d?: number) => {
-  if (d === undefined || d === null) return 'N/A';
-  if (d <= 0) return 'Expired';
-  if (d <= 7) return 'Critical';
-  if (d <= 14) return 'Warning';
-  return 'OK';
-};
+onMounted(load);
 </script>

@@ -523,24 +523,45 @@ router.post('/stock-adjustments/:id/reject', authMiddleware, async (req: Request
 // ========================================
 
 // GET /api/inventory - List all inventory
-router.get('/', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const inventory = await dbAll(
-      `SELECT i.id,
+    const warehouseId = req.query.warehouse_id as string;
+    const showAll = req.query.all === '1';
+    
+    let query = `SELECT i.id,
+              i.warehouse_id,
               i.product_id,
               p.name as product_name,
               p.sku,
               i.quantity as quantity_on_hand,
               0 as quantity_reserved,
               i.quantity as quantity_available,
+              i.reorder_point,
+              w.name as warehouse_name,
               w.name as location,
               i.last_updated as created_at
        FROM inventory_stocks i
        JOIN products p ON i.product_id = p.id
-       JOIN warehouses w ON i.warehouse_id = w.id
-       ORDER BY p.name ASC`,
-      []
-    );
+       JOIN warehouses w ON i.warehouse_id = w.id`;
+    
+    const params: any[] = [];
+    const conditions: string[] = [];
+    
+    if (warehouseId) {
+      conditions.push('i.warehouse_id = ?');
+      params.push(warehouseId);
+    }
+    if (!showAll) {
+      conditions.push('i.quantity > 0');
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY p.name ASC';
+    
+    const inventory = await dbAll(query, params);
     res.json({ data: inventory });
   } catch (error) {
     console.error('Error fetching inventory:', error);

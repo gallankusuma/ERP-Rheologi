@@ -1,0 +1,215 @@
+import express, { Request, Response } from 'express';
+import db from '../config/database';
+import { authMiddleware } from '../middleware/auth';
+
+const router = express.Router();
+
+// ===== NOTIFICATIONS ENDPOINTS =====
+
+router.get('/', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const user_id = (req as any).user?.id;
+    if (!user_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const offset = (page - 1) * limit;
+    const unread_only = req.query.unread === 'true';
+
+    let query =
+      `SELECT * FROM notifications WHERE recipient_id = ?`;
+    const params: any[] = [user_id];
+
+    if (unread_only) {
+      query += ' AND is_read = 0';
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const notifications = db.prepare(query).all(...params);
+
+    const countQuery = unread_only
+      ? 'SELECT COUNT(*) as count FROM notifications WHERE recipient_id = ? AND is_read = 0'
+      : 'SELECT COUNT(*) as count FROM notifications WHERE recipient_id = ?';
+    const countParams = unread_only ? [user_id] : [user_id];
+    const totalCount = (db
+      .prepare(countQuery)
+      .get(...countParams) as { count: number }).count;
+
+    res.json({
+      data: notifications,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+router.get('/unread-count', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const user_id = (req as any).user?.id;
+    if (!user_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const result = (db
+      .prepare('SELECT COUNT(*) as count FROM notifications WHERE recipient_id = ? AND is_read = 0')
+      .get(user_id) as { count: number });
+
+    res.json({ unread_count: result.count });
+  } catch (error) {
+    console.error('Error fetching unread count:', error);
+    res.status(500).json({ error: 'Failed to fetch unread count' });
+  }
+});
+
+router.post('/', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const {
+      recipient_id,
+      sender_id,
+      title,
+      message,
+      type,
+      related_entity_type,
+      related_entity_id,
+      action_url,
+    } = req.body;
+
+    if (!recipient_id || !message || !type) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'recipient_id, message, and type are required',
+        });
+    }
+
+    const result = db
+      .prepare(
+        `INSERT INTO notifications (recipient_id, sender_id, title, message, type, 
+         related_entity_type, related_entity_id, action_url, is_read)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
+      )
+      .run(
+        recipient_id,
+        sender_id || null,
+        title || null,
+        message,
+        type,
+        related_entity_type || null,
+        related_entity_id || null,
+        action_url || null
+      );
+
+    res.status(201).json({
+      message: 'Notification created',
+      data: { id: result.lastInsertRowid },
+    });
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    res.status(500).json({ error: 'Failed to create notification' });
+  }
+});
+
+router.put('/:id/read', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const notification = db
+      .prepare('SELECT * FROM notifications WHERE id = ?')
+      .get(req.params.id);
+
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(
+      req.params.id
+    );
+
+    res.json({ message: 'Notification marked as read' });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res
+      .status(500)
+      .json({ error: 'Failed to mark notification as read' });
+  }
+});
+
+router.put('/mark-all-read', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const user_id = (req as any).user?.id;
+    if (!user_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE recipient_id = ? AND is_read = 0').run(
+      user_id
+    );
+
+    res.json({ message: 'All notifications marked as read' });
+  } catch (error) {
+    console.error('Error marking all notifications as read:', error);
+    res.status(500).json({
+      error: 'Failed to mark all notifications as read',
+    });
+  }
+});
+
+router.delete('/:id', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const notification = db
+      .prepare('SELECT * FROM notifications WHERE id = ?')
+      .get(req.params.id);
+
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    db.prepare('DELETE FROM notifications WHERE id = ?').run(
+      req.params.id
+    );
+
+    res.json({ message: 'Notification deleted' });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+router.post('/bulk-action', authMiddleware, (req: Request, res: Response) => {
+  try {
+    const { ids, action } = req.body;
+
+    if (!ids || !Array.isArray(ids) || !action) {
+      return res
+        .status(400)
+        .json({ error: 'ids (array) and action are required' });
+    }
+
+    if (action === 'read') {
+      const placeholders = ids.map(() => '?').join(',');
+      db.prepare(`UPDATE notifications SET is_read = 1 WHERE id IN (${placeholders})`).run(...ids);
+      res.json({ message: 'Notifications marked as read' });
+    } else if (action === 'delete') {
+      const placeholders = ids.map(() => '?').join(',');
+      db.prepare(`DELETE FROM notifications WHERE id IN (${placeholders})`).run(...ids);
+      res.json({ message: 'Notifications deleted' });
+    } else {
+      res.status(400).json({ error: 'Invalid action. Use read or delete.' });
+    }
+  } catch (error) {
+    console.error('Error performing bulk action:', error);
+    res.status(500).json({ error: 'Failed to perform bulk action' });
+  }
+});
+
+export default router;

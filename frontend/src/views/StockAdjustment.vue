@@ -2,7 +2,7 @@
   <div class="min-h-screen bg-gray-50">
     <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
       <div class="px-4 py-6 sm:px-0">
-        <div class="flex justify-between items-center mb-6">
+        <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-2xl font-bold text-gray-900">Stock Adjustment</h2>
             <p class="text-sm text-gray-500">Manual corrections with 2-level approval</p>
@@ -10,6 +10,28 @@
           <button @click="openCreateModal" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition">
             + Create Adjustment
           </button>
+        </div>
+
+        <!-- Search & Filter Bar -->
+        <div class="flex flex-col sm:flex-row gap-3 mb-5">
+          <div class="relative flex-1">
+            <span class="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
+            <input
+              v-model="search"
+              type="text"
+              placeholder="Cari produk, SKU, gudang, nomor, atau alasan..."
+              class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
+            />
+          </div>
+          <select v-model="filterStatus" class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+            <option value="all">Semua Status</option>
+            <option value="0">Pending</option>
+            <option value="1">Supervisor Approved</option>
+            <option value="2">Fully Approved</option>
+          </select>
+          <span class="flex items-center text-xs text-gray-400 whitespace-nowrap self-center">
+            {{ filteredAdjustments.length }} / {{ adjustments.length }} record
+          </span>
         </div>
 
         <div v-if="loading" class="text-center py-8">Loading...</div>
@@ -29,10 +51,12 @@
               </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-if="adjustments.length === 0">
-                <td colspan="7" class="px-6 py-8 text-center text-gray-500">No adjustments yet. Create one to get started.</td>
+              <tr v-if="filteredAdjustments.length === 0">
+                <td colspan="7" class="px-6 py-8 text-center text-gray-500">
+                  {{ search || filterStatus !== 'all' ? 'Tidak ada data yang cocok dengan pencarian.' : 'No adjustments yet. Create one to get started.' }}
+                </td>
               </tr>
-              <tr v-for="adj in adjustments" :key="adj.id">
+              <tr v-for="adj in filteredAdjustments" :key="adj.id">
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ adj.reference_id || `ADJ-${adj.id}` }}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ formatDate(adj.moved_at) }}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ adj.warehouse_name }}</td>
@@ -82,10 +106,46 @@
 
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">Product <span class="text-red-500">*</span></label>
-            <select v-model="formData.product_id" :disabled="isViewMode" required class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100">
-              <option value="">-- Select Product --</option>
-              <option v-for="product in products" :key="product.id" :value="product.id">{{ product.name }} ({{ product.sku }})</option>
-            </select>
+            <!-- View Mode: show product name -->
+            <div v-if="isViewMode" class="block w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-100 text-sm text-gray-700">
+              {{ products.find(p => String(p.id) === String(formData.product_id))?.name || '—' }}
+            </div>
+            <!-- Edit Mode: searchable combobox -->
+            <div v-else class="relative" ref="productComboRef">
+              <input
+                v-model="productSearch"
+                @focus="productDropdownOpen = true"
+                @input="productDropdownOpen = true"
+                type="text"
+                placeholder="Ketik nama produk atau SKU..."
+                autocomplete="off"
+                class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
+              <!-- Selected tag -->
+              <div v-if="formData.product_id && !productDropdownOpen" class="absolute right-3 top-1/2 -translate-y-1/2">
+                <span class="text-xs text-blue-600 font-semibold">
+                  ✓ {{ products.find(p => String(p.id) === String(formData.product_id))?.sku }}
+                </span>
+              </div>
+              <!-- Dropdown -->
+              <div v-if="productDropdownOpen && filteredProducts.length > 0"
+                class="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+                <div
+                  v-for="p in filteredProducts"
+                  :key="p.id"
+                  @mousedown.prevent="selectProduct(p)"
+                  class="px-4 py-2.5 cursor-pointer hover:bg-blue-50 flex items-center justify-between"
+                  :class="String(formData.product_id) === String(p.id) ? 'bg-blue-50' : ''"
+                >
+                  <span class="text-sm font-medium text-gray-800">{{ p.name }}</span>
+                  <span class="text-xs text-gray-400 font-mono ml-2">{{ p.sku }}</span>
+                </div>
+              </div>
+              <div v-if="productDropdownOpen && productSearch && filteredProducts.length === 0"
+                class="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl px-4 py-3 text-sm text-gray-400">
+                Tidak ada produk yang cocok
+              </div>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-4">
@@ -172,6 +232,59 @@ const loading = ref(false);
 const error = ref('');
 const showModal = ref(false);
 const isViewMode = ref(false);
+const search = ref('');
+const filterStatus = ref('all');
+const productSearch = ref('');
+const productDropdownOpen = ref(false);
+
+const filteredProducts = computed(() => {
+  if (!productSearch.value.trim()) return products.value.slice(0, 50);
+  const q = productSearch.value.toLowerCase();
+  return products.value.filter((p: any) =>
+    (p.name || '').toLowerCase().includes(q) ||
+    (p.sku || '').toLowerCase().includes(q)
+  ).slice(0, 50);
+});
+
+const selectProduct = (p: any) => {
+  formData.value.product_id = String(p.id);
+  productSearch.value = `${p.name} (${p.sku})`;
+  productDropdownOpen.value = false;
+};
+
+
+onMounted(() => {
+  fetchAdjustments();
+  fetchProducts();
+  fetchWarehouses();
+  document.addEventListener('click', (e) => {
+    // Close product dropdown on outside click
+    if (productDropdownOpen.value) {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.relative')) productDropdownOpen.value = false;
+    }
+  });
+});
+
+const filteredAdjustments = computed(() => {
+  let list = adjustments.value;
+  if (filterStatus.value !== 'all') {
+    list = list.filter((a: any) => String(a.approval_status ?? 0) === filterStatus.value);
+  }
+  if (search.value.trim()) {
+    const q = search.value.toLowerCase().trim();
+    list = list.filter((a: any) =>
+      (a.product_name || '').toLowerCase().includes(q) ||
+      (a.sku || '').toLowerCase().includes(q) ||
+      (a.warehouse_name || '').toLowerCase().includes(q) ||
+      (a.reference_id || '').toLowerCase().includes(q) ||
+      (`adj-${a.id}`).toLowerCase().includes(q) ||
+      (a.notes || '').toLowerCase().includes(q) ||
+      (a.reason || '').toLowerCase().includes(q)
+    );
+  }
+  return list;
+});
 
 const formData = ref({
   warehouse_id: '',
@@ -197,7 +310,7 @@ const fetchAdjustments = async () => {
   try {
     loading.value = true;
     error.value = '';
-    const response = await api.get('/api/inventory/stock-adjustments');
+    const response = await api.get('/inventory/stock-adjustments');
     adjustments.value = response.data.data || [];
   } catch (err: any) {
     error.value = err.response?.data?.error || 'Failed to fetch stock adjustments';
@@ -209,7 +322,7 @@ const fetchAdjustments = async () => {
 
 const fetchProducts = async () => {
   try {
-    const response = await api.get('/api/products');
+    const response = await api.get('/products');
     products.value = response.data.data || [];
   } catch (err) {
     console.error('Error fetching products:', err);
@@ -218,7 +331,7 @@ const fetchProducts = async () => {
 
 const fetchWarehouses = async () => {
   try {
-    const response = await api.get('/api/warehouses');
+    const response = await api.get('/warehouses');
     warehouses.value = response.data.data || [];
   } catch (err) {
     console.error('Error fetching warehouses:', err);
@@ -282,7 +395,7 @@ const saveAdjustment = async () => {
   if (!canSave.value) return;
   try {
     loading.value = true;
-    await api.post('/api/inventory/stock-adjustments', formData.value);
+    await api.post('/inventory/stock-adjustments', formData.value);
     closeModal();
     await fetchAdjustments();
   } catch (err: any) {
@@ -340,9 +453,6 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-onMounted(() => {
-  fetchAdjustments();
-  fetchProducts();
-  fetchWarehouses();
-});
+// onMounted handled above (includes fetch + click-outside listener for product combobox)
+
 </script>

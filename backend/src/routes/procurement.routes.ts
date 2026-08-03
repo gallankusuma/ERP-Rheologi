@@ -21,6 +21,20 @@ const bidStorage = multer.diskStorage({
 });
 const bidUpload = multer({ storage: bidStorage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
+// Multer setup for PR item attachment uploads
+const prAttachDir = path.join(__dirname, '../../uploads/pr-attachments');
+if (!fs.existsSync(prAttachDir)) {
+  fs.mkdirSync(prAttachDir, { recursive: true });
+}
+const prAttachStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, prAttachDir),
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'pr-item-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const prAttachUpload = multer({ storage: prAttachStorage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
+
 const generateCode = (prefix: string) => {
   const now = new Date();
   const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -674,7 +688,7 @@ router.get('/purchase-requests/:prId/bids', authMiddleware, async (req: Request,
 router.post('/purchase-requests/:prId/bids', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { prId } = req.params;
-    const { vendor_id, vendor_name, contact_person, phone, email, bid_date, delivery_time_days, notes } = req.body;
+    const { vendor_id, vendor_name, contact_person, phone, email, bid_date, delivery_time_days, notes, selected_items } = req.body;
 
     // Get PR to parse its items
     const pr = await dbGet('SELECT * FROM purchase_requests WHERE id = ?', [prId]) as any;
@@ -719,9 +733,12 @@ router.post('/purchase-requests/:prId/bids', authMiddleware, async (req: Request
       } catch (e) { /* ignore - table might not have data yet */ }
     }
 
-    // Create bid_items rows for each PR item, auto-fill from vendor_prices if available
+    // Create bid_items rows for each PR item (filter by selected_items if provided)
     let grandTotal = 0;
+    const selectedSet = Array.isArray(selected_items) ? new Set(selected_items.map(Number)) : null;
     for (let i = 0; i < prItems.length; i++) {
+      // Skip items not in selected_items (if filter provided)
+      if (selectedSet && !selectedSet.has(i)) continue;
       const item = prItems[i];
       const qty = Number(item.qty || 0);
       const productId = item.productId || null;
@@ -814,6 +831,70 @@ router.post('/purchase-requests/:prId/bids/:bidId/select', authMiddleware, async
   } catch (error) {
     console.error('Error selecting bid:', error);
     res.status(500).json({ error: 'Failed to select bid' });
+  }
+});
+
+// POST /purchase-requests/:prId/bids/:bidId/select-item/:itemIndex - select winner per item
+router.post('/purchase-requests/:prId/bids/:bidId/select-item/:itemIndex', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { prId, bidId, itemIndex } = req.params;
+    const idx = parseInt(itemIndex);
+
+    // Get all bid IDs for this PR
+    const allBids = await dbAll('SELECT id FROM pr_bids WHERE pr_id = ?', [prId]) as any[];
+    const allBidIds = allBids.map((b: any) => b.id);
+
+    if (allBidIds.length === 0) return res.status(404).json({ error: 'No bids found' });
+
+    // Reset is_winner for this item_index across ALL bids
+    await dbRun(
+      `UPDATE pr_bid_items SET is_winner = 0 WHERE item_index = ? AND bid_id IN (${allBidIds.map(() => '?').join(',')})`,
+      [idx, ...allBidIds]
+    );
+
+    // Set is_winner = 1 for this specific bid + item_index
+    await dbRun(
+      'UPDATE pr_bid_items SET is_winner = 1 WHERE bid_id = ? AND item_index = ?',
+      [bidId, idx]
+    );
+
+    // Auto-determine overall bid winner: vendor with the most winning items
+    // Reset all bids to active first
+    await dbRun("UPDATE pr_bids SET status = 'active' WHERE pr_id = ?", [prId]);
+
+    // Find vendor with most item winners
+    const winnerStats = await dbAll(
+      `SELECT b.id as bid_id, b.vendor_id, COUNT(bi.id) as wins
+       FROM pr_bids b
+       JOIN pr_bid_items bi ON bi.bid_id = b.id AND bi.is_winner = 1
+       WHERE b.pr_id = ?
+       GROUP BY b.id
+       ORDER BY wins DESC
+       LIMIT 1`,
+      [prId]
+    ) as any[];
+
+    if (winnerStats.length > 0) {
+      const topBid = winnerStats[0];
+      await dbRun("UPDATE pr_bids SET status = 'selected' WHERE id = ?", [topBid.bid_id]);
+      if (topBid.vendor_id) {
+        await dbRun('UPDATE purchase_requests SET selected_vendor_id = ? WHERE id = ?', [topBid.vendor_id, prId]);
+      }
+    }
+
+    // Return the updated item winners for all bids
+    const itemWinners = await dbAll(
+      `SELECT bi.bid_id, bi.item_index, bi.is_winner
+       FROM pr_bid_items bi
+       JOIN pr_bids b ON b.id = bi.bid_id
+       WHERE b.pr_id = ? AND bi.is_winner = 1`,
+      [prId]
+    );
+
+    res.json({ message: 'Item winner selected', item_winners: itemWinners });
+  } catch (error) {
+    console.error('Error selecting item winner:', error);
+    res.status(500).json({ error: 'Failed to select item winner' });
   }
 });
 
@@ -1866,24 +1947,25 @@ async function applyGrnToInventory(grn: any, items: any[]) {
       const qty = Number(item.received_quantity || 0);
       if (!item.product_id || qty <= 0) continue;
 
-      const existing = await dbGet('SELECT * FROM inventory_stocks WHERE product_id = ?', [item.product_id]) as any;
+      const existing = await dbGet(
+        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ?', 
+        [item.product_id, grn.warehouse_id || 1]
+      ) as any;
 
       let inventoryId: number;
       if (existing) {
-        const newQoh = (existing.quantity_on_hand || 0) + qty;
-        const newAvailable = newQoh - (existing.quantity_reserved || 0);
         await dbRun(
           `UPDATE inventory_stocks
-          SET quantity_on_hand = ?, quantity_available = ?, location = COALESCE(location, ?), updated_at = CURRENT_TIMESTAMP
+          SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP
           WHERE id = ?`,
-          [newQoh, newAvailable, defaultLocation, existing.id]
+          [qty, existing.id]
         );
         inventoryId = existing.id;
       } else {
         const insertResult = await dbRun(
-          `INSERT INTO inventory_stocks (product_id, quantity_on_hand, quantity_reserved, quantity_available, location)
-          VALUES (?, ?, 0, ?, ?)`,
-          [item.product_id, qty, qty, defaultLocation]
+          `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, reorder_point)
+          VALUES (?, ?, ?, 10)`,
+          [grn.warehouse_id || 1, item.product_id, qty]
         );
         inventoryId = insertResult.insertId;
       }
@@ -2569,6 +2651,38 @@ router.post('/material-prices/:id/select', authMiddleware, async (req: Request, 
   } catch (error) {
     console.error('Error selecting vendor price:', error);
     res.status(500).json({ error: 'Failed to select vendor price' });
+  }
+});
+
+// ─── PR Item Attachment Upload ─────────────────────────────
+router.post('/purchase-requests/:id/item-attachment', authMiddleware, prAttachUpload.single('file'), async (req: Request, res: Response) => {
+  try {
+    const pr = await dbGet('SELECT id FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!pr) return res.status(404).json({ error: 'Purchase Request not found' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const filePath = '/uploads/pr-attachments/' + req.file.filename;
+    res.json({ file_path: filePath, original_name: req.file.originalname });
+  } catch (error) {
+    console.error('Error uploading PR item attachment:', error);
+    res.status(500).json({ error: 'Failed to upload attachment' });
+  }
+});
+
+// Delete a PR item attachment file from disk
+router.delete('/purchase-requests/:id/item-attachment', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const filePath = req.query.file_path as string;
+    if (!filePath) return res.status(400).json({ error: 'file_path query param required' });
+    // Only allow deleting from pr-attachments directory
+    if (!filePath.includes('/pr-attachments/')) return res.status(400).json({ error: 'Invalid file path' });
+    const absPath = path.join(__dirname, '../../', filePath);
+    if (fs.existsSync(absPath)) {
+      fs.unlinkSync(absPath);
+    }
+    res.json({ message: 'Attachment deleted' });
+  } catch (error) {
+    console.error('Error deleting PR item attachment:', error);
+    res.status(500).json({ error: 'Failed to delete attachment' });
   }
 });
 

@@ -199,7 +199,7 @@ async function fetchLocations() {
   loading.value = true;
   error.value = '';
   try {
-    const res = await api.get('/api/warehouses/locations');
+    const res = await api.get('/warehouses/locations');
     locations.value = res.data.data || [];
   } catch (err: any) {
     error.value = err.response?.data?.error || 'Failed to fetch locations';
@@ -210,7 +210,7 @@ async function fetchLocations() {
 
 async function fetchWarehouses() {
   try {
-    const res = await api.get('/api/warehouses');
+    const res = await api.get('/warehouses');
     warehouses.value = res.data.data || [];
   } catch (err: any) {
     error.value = err.response?.data?.error || 'Failed to fetch warehouses';

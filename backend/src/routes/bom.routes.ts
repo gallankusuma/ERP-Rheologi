@@ -12,8 +12,11 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
              bh.created_by, bh.created_at, bh.updated_at,
              bh.approval_status, bh.approved_by_supervisor_id, bh.approved_by_manager_id,
              bh.approved_at_supervisor, bh.approved_at_manager,
-             sup.full_name as supervisor_name, mgr.full_name as manager_name
+             bh.jbox_id, bh.bom_code, bh.qty, bh.unit, bh.process_type, bh.production_line, bh.source,
+             sup.full_name as supervisor_name, mgr.full_name as manager_name,
+             p.sku
       FROM bom_headers bh
+      LEFT JOIN products p ON bh.product_id = p.id
       LEFT JOIN users sup ON bh.approved_by_supervisor_id = sup.id
       LEFT JOIN users mgr ON bh.approved_by_manager_id = mgr.id
       ORDER BY bh.created_at DESC
@@ -33,6 +36,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
              bh.created_by, bh.created_at, bh.updated_at,
              bh.approval_status, bh.approved_by_supervisor_id, bh.approved_by_manager_id,
              bh.approved_at_supervisor, bh.approved_at_manager,
+             bh.jbox_id, bh.bom_code, bh.qty, bh.unit, bh.process_type, bh.production_line, bh.source,
              sup.full_name as supervisor_name, mgr.full_name as manager_name
       FROM bom_headers bh
       LEFT JOIN users sup ON bh.approved_by_supervisor_id = sup.id
@@ -48,6 +52,8 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
     const details = await dbAll(`
       SELECT bd.id, bd.bom_header_id, bd.raw_material_id, bd.quantity, bd.unit_of_measure_id,
              bd.sequence, bd.created_at,
+             bd.item_code, bd.item_description, bd.unit as detail_unit,
+             bd.use_tolerance, bd.pct_tolerance, bd.tolerance_value, bd.remark,
              p.name as material_name, p.sku as material_sku,
              u.code as unit_code, u.name as unit_name
       FROM bom_details bd
@@ -67,11 +73,8 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 // POST /api/bom - Create BOM header with details
 router.post('/', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { product_name, notes, details } = req.body;
+    const { product_id, product_name, notes, details, bom_code, qty, unit, process_type, production_line } = req.body;
     const userId = (req as any).user?.userId;
-
-    console.log('📥 [BOM POST] Received payload:', { product_name, notes, details_count: details?.length });
-    console.log('📥 [BOM POST] Auth info - userId:', userId, 'full user:', (req as any).user);
 
     if (!product_name) {
       return res.status(400).json({ error: 'product_name is required' });
@@ -84,23 +87,17 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         const userExists = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
         if (userExists) {
           createdBy = parseInt(String(userId), 10);
-          console.log('✅ User ID exists:', createdBy);
-        } else {
-          console.log('⚠️  User ID', userId, 'not found in database, will set created_by to NULL');
-          createdBy = null;
         }
       } catch (userCheckError) {
-        console.log('⚠️  Error checking user existence:', userCheckError);
-        // If we can't check, don't use the userId
         createdBy = null;
       }
     }
 
-    // Create BOM header - created_by is nullable
-    console.log('📝 [BOM POST] Creating header with:', { product_name, userId, createdBy });
+    // Create BOM header
     const headerResult = await dbRun(
-      'INSERT INTO bom_headers (product_name, status, notes, created_by) VALUES (?, ?, ?, ?)',
-      [product_name, 'ACTIVE', notes || null, createdBy]
+      `INSERT INTO bom_headers (product_id, product_name, bom_code, qty, unit, process_type, production_line, status, notes, created_by, source) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ERP')`,
+      [product_id || null, product_name, bom_code || null, qty || null, unit || null, process_type || null, production_line || null, 'ACTIVE', notes || null, createdBy]
     );
 
     const bomHeaderId = headerResult.insertId;
@@ -108,23 +105,23 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     // Create BOM details if provided
     if (Array.isArray(details) && details.length > 0) {
-      console.log('📋 [BOM POST] Creating', details.length, 'details...');
       for (let i = 0; i < details.length; i++) {
         const detail = details[i];
-        console.log(`  Detail ${i}:`, detail);
         
-        if (!detail.raw_material_id || !detail.quantity) {
-          return res.status(400).json({ error: 'Each BOM detail must include raw_material_id and quantity' });
+        if (!detail.quantity) {
+          return res.status(400).json({ error: 'Each BOM detail must include quantity' });
         }
         
-        console.log(`  Inserting: bom_header_id=${bomHeaderId}, raw_material_id=${detail.raw_material_id}, quantity=${detail.quantity}, unit_id=${detail.unit_of_measure_id}`);
-        
         await dbRun(
-          'INSERT INTO bom_details (bom_header_id, raw_material_id, quantity, unit_of_measure_id, sequence) VALUES (?, ?, ?, ?, ?)',
-          [bomHeaderId, detail.raw_material_id, detail.quantity, detail.unit_of_measure_id || null, i + 1]
+          `INSERT INTO bom_details (bom_header_id, raw_material_id, item_code, item_description, quantity, unit, unit_of_measure_id, sequence, use_tolerance, pct_tolerance, tolerance_value, remark) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            bomHeaderId, detail.raw_material_id || 0, detail.item_code || null, detail.item_description || null,
+            detail.quantity, detail.unit || null, detail.unit_of_measure_id || null, i + 1,
+            detail.use_tolerance || 'No', detail.pct_tolerance || 0, detail.tolerance_value || 0, detail.remark || null
+          ]
         );
       }
-      console.log('✅ [BOM POST] All details inserted');
     }
 
     res.status(201).json({
@@ -142,27 +139,39 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 // PUT /api/bom/:id - Update BOM header and details
 router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { notes, details, status } = req.body;
+    const { product_id, product_name, notes, details, status, bom_code, qty, unit, process_type, production_line } = req.body;
 
     // Update BOM header
-    if (notes !== undefined || status !== undefined) {
-      await dbRun(
-        'UPDATE bom_headers SET notes = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [notes || null, status || 'ACTIVE', req.params.id]
-      );
-    }
+    await dbRun(
+      `UPDATE bom_headers SET 
+        product_id = COALESCE(?, product_id),
+        product_name = COALESCE(?, product_name),
+        bom_code = COALESCE(?, bom_code),
+        qty = COALESCE(?, qty),
+        unit = COALESCE(?, unit),
+        process_type = COALESCE(?, process_type),
+        production_line = COALESCE(?, production_line),
+        notes = COALESCE(?, notes), 
+        status = COALESCE(?, status), 
+        updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+      [product_id || null, product_name || null, bom_code !== undefined ? bom_code : null, qty !== undefined ? qty : null, unit !== undefined ? unit : null, process_type !== undefined ? process_type : null, production_line !== undefined ? production_line : null, notes !== undefined ? notes : null, status || null, req.params.id]
+    );
 
-    // Update BOM details if provided
+    // Update BOM details ONLY if details array is provided and non-empty
     if (Array.isArray(details) && details.length > 0) {
-      // Delete existing details
       await dbRun('DELETE FROM bom_details WHERE bom_header_id = ?', [req.params.id]);
       
-      // Insert new details
       for (let i = 0; i < details.length; i++) {
         const detail = details[i];
         await dbRun(
-          'INSERT INTO bom_details (bom_header_id, raw_material_id, quantity, unit_of_measure_id, sequence) VALUES (?, ?, ?, ?, ?)',
-          [req.params.id, detail.raw_material_id, detail.quantity, detail.unit_of_measure_id || null, i + 1]
+          `INSERT INTO bom_details (bom_header_id, raw_material_id, item_code, item_description, quantity, unit, unit_of_measure_id, sequence, use_tolerance, pct_tolerance, tolerance_value, remark) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.params.id, detail.raw_material_id || 0, detail.item_code || null, detail.item_description || null,
+            detail.quantity, detail.unit || null, detail.unit_of_measure_id || null, i + 1,
+            detail.use_tolerance || 'No', detail.pct_tolerance || 0, detail.tolerance_value || 0, detail.remark || null
+          ]
         );
       }
     }
@@ -177,8 +186,20 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 // DELETE /api/bom/:id - Delete BOM (cascade deletes details)
 router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    // Delete from bom_headers (details cascade delete via FK)
-    await dbRun('DELETE FROM bom_headers WHERE id = ?', [req.params.id]);
+    const bomId = req.params.id;
+
+    // Check if any Work Orders reference this BOM
+    const woRefs = await dbAll('SELECT id, wo_number FROM work_orders WHERE bom_id = ?', [bomId]) as any[];
+    if (woRefs && woRefs.length > 0) {
+      // Nullify bom_id in work_orders first (don't block delete)
+      await dbRun('UPDATE work_orders SET bom_id = NULL WHERE bom_id = ?', [bomId]);
+    }
+
+    // Delete bom_details first (cascade should handle, but explicit is safer)
+    await dbRun('DELETE FROM bom_details WHERE bom_header_id = ?', [bomId]);
+
+    // Delete from bom_headers
+    await dbRun('DELETE FROM bom_headers WHERE id = ?', [bomId]);
 
     res.json({ message: 'BOM deleted successfully' });
   } catch (error) {

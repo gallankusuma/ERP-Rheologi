@@ -70,7 +70,10 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/procurement', procurementRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/warehouses', warehouseRoutes);
+import qcRoutes from './routes/qc.routes';
+
 app.use('/api/quality', qualityRoutes);
+app.use('/api/qc', qcRoutes);
 app.use('/api/batches', batchRoutes);
 app.use('/api/simulate', simulationRoutes);
 app.use('/api/production', productionRoutes);
@@ -98,6 +101,33 @@ import { projectRoutes } from './routes/project.routes';
 
 app.use('/api/clients', clientsRoutes);
 app.use('/api/projects', projectRoutes);
+
+import prospectsRoutes from './routes/prospects.routes';
+app.use('/api/prospects', prospectsRoutes);
+
+import notesRoutes2 from './routes/notes.routes';
+app.use('/api/notes', notesRoutes2);
+
+import inboxRoutes from './routes/inbox.routes';
+app.use('/api/inbox', inboxRoutes);
+
+import ppicRoutes from './routes/ppic.routes';
+app.use('/api/ppic', ppicRoutes);
+
+import leadsRoutes from './routes/leads.routes';
+app.use('/api/leads', leadsRoutes);
+
+import crmRoutes from './routes/crm.routes';
+app.use('/api/crm', crmRoutes);
+
+import lineProcessRoutes from './routes/lineprocess.routes';
+app.use('/api/line-processes', lineProcessRoutes);
+
+import glRoutes from './routes/gl.routes';
+app.use('/api/gl', glRoutes);
+
+import docsRoutes from './routes/docs.routes';
+app.use('/api/docs', docsRoutes);
 
 // Error handling
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

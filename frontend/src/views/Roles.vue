@@ -297,12 +297,14 @@ const toast = ref<{ type: string; message: string } | null>(null);
 
 const moduleIcons: Record<string, string> = {
   'Dashboard': '📊',
-  'Projects': '📁',
+  'Project': '💼',
+  'Projects': '💼',
   'Estimator': '📐',
   'R&D': '🔬',
+  'PPIC': '🏭',
   'Procurement': '🛒',
   'Inventory': '📦',
-  'Production': '🏭',
+  'Production': '⚙️',
   'Quality': '✅',
   'Sales': '💰',
   'Finance': '💳',

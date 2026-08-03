@@ -47,6 +47,44 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/ppic',
+    component: () => import('../views/ppic/PpicLayout.vue'),
+    meta: { requiresAuth: true },
+    redirect: '/ppic/forecast',
+    children: [
+      {
+        path: 'forecast',
+        name: 'PpicForecast',
+        component: () => import('../views/ppic/SalesForecast.vue'),
+        meta: { title: 'PPIC - Sales Forecast' },
+      },
+      {
+        path: 'mps',
+        name: 'PpicMps',
+        component: () => import('../views/ppic/MpsMaster.vue'),
+        meta: { title: 'PPIC - MPS' },
+      },
+      {
+        path: 'mrp',
+        name: 'PpicMrp',
+        component: () => import('../views/ppic/MrpMaster.vue'),
+        meta: { title: 'PPIC - MRP' },
+      },
+      {
+        path: 'capacity',
+        name: 'PpicCapacity',
+        component: () => import('../views/ppic/CapacityPlanning.vue'),
+        meta: { title: 'PPIC - Capacity Planning' },
+      },
+      {
+        path: 'reports',
+        name: 'PpicReports',
+        component: () => import('../views/ppic/StockReports.vue'),
+        meta: { title: 'PPIC - Stock Reports' },
+      }
+    ]
+  },
+  {
     path: '/dashboard',
     name: 'DashboardHome',
     component: Dashboard,
@@ -64,6 +102,19 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/ProjectDetail.vue'),
     meta: { requiresAuth: true, title: 'Project Details', breadcrumb: [{ label: 'Projects', route: '/projects' }, { label: 'Detail' }] },
   },
+  // CRM Module
+  {
+    path: '/crm',
+    name: 'CrmDashboard',
+    component: () => import('../views/CrmDashboard.vue'),
+    meta: { requiresAuth: true, title: 'CRM Dashboard' },
+  },
+  {
+    path: '/crm/sales',
+    name: 'CrmSales',
+    component: () => import('../views/CrmSales.vue'),
+    meta: { requiresAuth: true, title: 'Sales' },
+  },
   {
     path: '/leads',
     name: 'Leads',
@@ -75,6 +126,18 @@ const routes: RouteRecordRaw[] = [
     name: 'LeadDetail',
     component: () => import('../views/LeadDetail.vue'),
     meta: { requiresAuth: true, title: 'Lead Details' },
+  },
+  {
+    path: '/project/prospects',
+    name: 'Prospects',
+    component: () => import('../views/Prospects.vue'),
+    meta: { requiresAuth: true, title: 'Prospects' },
+  },
+  {
+    path: '/project/notes',
+    name: 'CrmNotes',
+    component: () => import('../views/CrmNotes.vue'),
+    meta: { requiresAuth: true, title: 'Notes' },
   },
   {
     path: '/login',
@@ -233,6 +296,18 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/line-processes',
+    name: 'LineProcesses',
+    component: () => import('../views/LineProcesses.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/line-processes/:id',
+    name: 'LineProcessDetail',
+    component: () => import('../views/LineProcessDetail.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/item-types',
     name: 'ItemTypes',
     component: () => import('../views/ItemTypes.vue'),
@@ -330,6 +405,18 @@ const routes: RouteRecordRaw[] = [
   },
   // Client Management Module
   {
+    path: '/sample-requests',
+    name: 'SampleRequests',
+    component: () => import('../views/SampleRequests.vue'),
+    meta: { requiresAuth: true, title: 'Sample Requests' },
+  },
+  {
+    path: '/sample-requests/:id',
+    name: 'SampleRequestDetail',
+    component: () => import('../views/SampleRequestDetail.vue'),
+    meta: { requiresAuth: true, title: 'Sample Request Detail' },
+  },
+  {
     path: '/clients-management',
     name: 'ClientsManagement',
     component: () => import('../views/ClientsManagement.vue'),
@@ -340,6 +427,18 @@ const routes: RouteRecordRaw[] = [
     name: 'ClientDetail',
     component: () => import('../views/ClientDetail.vue'),
     meta: { requiresAuth: true, title: 'Client Detail' },
+  },
+  {
+    path: '/client-categories',
+    name: 'ClientCategories',
+    component: () => import('../views/ClientCategories.vue'),
+    meta: { requiresAuth: true, title: 'Client Categories' },
+  },
+  {
+    path: '/forecast-brands',
+    name: 'ForecastBrands',
+    component: () => import('../views/ForecastBrands.vue'),
+    meta: { requiresAuth: true, title: 'Forecast Brands' },
   },
   // Estimator Module
   {
@@ -404,6 +503,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'R&D Formulations' },
   },
   {
+    path: '/rnd/specifications',
+    name: 'RnDSpecifications',
+    component: () => import('../views/RnDSpecifications.vue'),
+    meta: { requiresAuth: true, title: 'R&D Specifications' },
+  },
+  {
     path: '/rnd/lab-testing',
     name: 'RnDLabTesting',
     component: () => import('../views/RnDLabTesting.vue'),
@@ -441,9 +546,9 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/project/tasks',
-    name: 'ProductionTasks',
-    component: () => import('../views/ProductionTasks.vue'),
-    meta: { requiresAuth: true, title: 'Production Tasks' },
+    name: 'CrmTasks',
+    component: () => import('../views/CrmTasks.vue'),
+    meta: { requiresAuth: true, title: 'CRM Tasks' },
   },
   {
     path: '/sales/shipment',
@@ -456,6 +561,36 @@ const routes: RouteRecordRaw[] = [
     name: 'CustomerPayments',
     component: () => import('../views/CustomerPayments.vue'),
     meta: { requiresAuth: true, title: 'Customer Payments' },
+  },
+  {
+    path: '/sales/orders-list',
+    name: 'SalesOrdersListPage',
+    component: () => import('../views/SalesOrdersList.vue'),
+    meta: { requiresAuth: true, title: 'Sales Orders' },
+  },
+  {
+    path: '/sales/invoices',
+    name: 'SalesInvoicesPage',
+    component: () => import('../views/SalesInvoices.vue'),
+    meta: { requiresAuth: true, title: 'Sales Invoices' },
+  },
+  {
+    path: '/sales/store',
+    name: 'SalesStorePage',
+    component: () => import('../views/SalesStore.vue'),
+    meta: { requiresAuth: true, title: 'Store' },
+  },
+  {
+    path: '/sales/items',
+    name: 'SalesItemsPage',
+    component: () => import('../views/SalesItems.vue'),
+    meta: { requiresAuth: true, title: 'Sales Items' },
+  },
+  {
+    path: '/sales/contracts',
+    name: 'SalesContractsPage',
+    component: () => import('../views/SalesContracts.vue'),
+    meta: { requiresAuth: true, title: 'Sales Contracts' },
   },
   // Production Module
   {
@@ -536,6 +671,30 @@ const routes: RouteRecordRaw[] = [
     name: 'QualityReworkPage',
     component: () => import('../views/QualityRework.vue'),
     meta: { requiresAuth: true, title: 'Rework Orders' },
+  },
+  {
+    path: '/quality/reports',
+    name: 'QualityReports',
+    component: () => import('../views/QualityReports.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/qc/master',
+    name: 'QCMasterData',
+    component: () => import('../views/QCMasterData.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/qc/fpa',
+    name: 'QCAnalysisRequests',
+    component: () => import('../views/QCAnalysisRequests.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/qc/fpa/:id',
+    name: 'QCFpaDetail',
+    component: () => import('../views/QCFpaDetail.vue'),
+    meta: { requiresAuth: true, title: 'FPA Detail' },
   },
   {
     path: '/quality/reports',
@@ -730,6 +889,12 @@ const routes: RouteRecordRaw[] = [
   },
   // Admin Module
   {
+    path: '/admin/document-control',
+    name: 'AdminDocumentControlPage',
+    component: () => import('../views/AdminDocumentControl.vue'),
+    meta: { requiresAuth: true, title: 'Document Control' },
+  },
+  {
     path: '/admin/settings',
     name: 'AdminSettingsPage',
     component: () => import('../views/SystemSettings.vue'),
@@ -771,6 +936,13 @@ const routes: RouteRecordRaw[] = [
     name: 'ChangePassword',
     component: () => import('../views/ChangePassword.vue'),
     meta: { requiresAuth: true, title: 'Change Password' },
+  },
+  // General Ledger / Finance & Accounting
+  {
+    path: '/finance/general-ledger',
+    name: 'GeneralLedger',
+    component: () => import('../views/GeneralLedger.vue'),
+    meta: { requiresAuth: true, title: 'General Ledger' },
   },
   ...placeholderRoutes,
 ];

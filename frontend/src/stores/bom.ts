@@ -15,6 +15,13 @@ interface BOM {
   effective_date?: string;
   approval_status?: number;
   created_at: string;
+  // JBox-aligned columns
+  jbox_id?: number;
+  bom_code?: string;
+  qty?: string;
+  process_type?: string;
+  production_line?: string;
+  source?: string;
 }
 
 interface BOMState {

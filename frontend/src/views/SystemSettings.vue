@@ -195,7 +195,7 @@ onMounted(async () => {
 const fetchSettings = async () => {
   try {
     const response = await api.get('/settings/all');
-    allSettings.value = response.data;
+    allSettings.value = response.data?.data || response.data || [];
 
     // Initialize edit values
     allSettings.value.forEach((setting) => {
@@ -208,15 +208,15 @@ const fetchSettings = async () => {
 
 const fetchKpiDashboard = async () => {
   try {
-    const [overviewRes, productionRes, qualityRes] = await Promise.all([
+    const [overviewRes, productionRes, inventoryRes] = await Promise.all([
       api.get('/settings/dashboard/overview'),
       api.get('/settings/dashboard/production'),
-      api.get('/settings/dashboard/quality'),
+      api.get('/settings/dashboard/inventory'),
     ]);
 
-    overview.value = overviewRes.data;
-    productionStats.value = productionRes.data;
-    qualityStats.value = qualityRes.data.summary || [];
+    overview.value = overviewRes.data?.data || overviewRes.data || {};
+    productionStats.value = productionRes.data?.data || productionRes.data || [];
+    qualityStats.value = inventoryRes.data?.data || [];
   } catch (error) {
     console.error('Failed to fetch KPI dashboard:', error);
   }
