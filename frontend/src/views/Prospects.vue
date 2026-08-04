@@ -1,11 +1,11 @@
 <template>
   <div class="min-h-screen bg-gray-50">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div class="w-full mx-auto px-6 sm:px-8 lg:px-12 py-6">
       <!-- Header -->
       <div class="flex justify-between items-center mb-6">
         <div>
           <h1 class="text-3xl font-bold text-gray-900">Prospects</h1>
-          <p class="text-gray-500 mt-1">Manage potential clients & conversion pipeline</p>
+          <p class="text-gray-500 mt-1 text-base">Manage potential clients & conversion pipeline</p>
         </div>
       <div class="flex gap-3">
         <button @click="batchConvertToLeads" :disabled="selectedProspects.length === 0" 
@@ -24,25 +24,25 @@
       <!-- Stats Cards -->
       <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div v-for="s in statCards" :key="s.label" class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-          <p class="text-xs font-semibold text-gray-500 uppercase">{{ s.label }}</p>
-          <p class="text-2xl font-bold mt-1" :class="s.color">{{ s.value }}</p>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">{{ s.label }}</p>
+          <p class="text-3xl font-bold mt-1" :class="s.color">{{ s.value }}</p>
         </div>
       </div>
 
       <!-- Filters -->
       <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex flex-wrap gap-3 mb-4">
-        <input v-model="search" type="text" placeholder="Search prospects..." class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm" @input="debouncedFetch" />
-        <select v-model="filterTemp" @change="fetchProspects" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+        <input v-model="search" type="text" placeholder="Search prospects..." class="flex-1 min-w-[200px] px-4 py-2.5 border border-gray-300 rounded-lg text-base" @input="debouncedFetch" />
+        <select v-model="filterTemp" @change="fetchProspects" class="px-4 py-2.5 border border-gray-300 rounded-lg text-base bg-white">
           <option value="">All Temperature</option>
           <option value="hot">🔥 Hot</option>
           <option value="warm">🌤 Warm</option>
           <option value="cold">❄️ Cold</option>
         </select>
-        <select v-model="filterStatus" @change="fetchProspects" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+        <select v-model="filterStatus" @change="fetchProspects" class="px-4 py-2.5 border border-gray-300 rounded-lg text-base bg-white">
           <option value="">All Status</option>
           <option v-for="st in statusOptions" :key="st" :value="st">{{ st }}</option>
         </select>
-        <select v-model="filterSource" @change="fetchProspects" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+        <select v-model="filterSource" @change="fetchProspects" class="px-4 py-2.5 border border-gray-300 rounded-lg text-base bg-white">
           <option value="">All Sources</option>
           <option v-for="src in sourceOptions" :key="src" :value="src">{{ src }}</option>
         </select>
@@ -57,16 +57,16 @@
                 <th class="px-3 py-3 text-center">
                   <input type="checkbox" @change="toggleSelectAll" :checked="allSelected" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
                 </th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Code</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Company</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Contact</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Industry</th>
-                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-700">Temp</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Status</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-700">Est. Value</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Follow Up</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Source</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700">Actions</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Code</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Company</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Contact</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Industry</th>
+                <th class="px-4 py-3 text-center text-sm font-semibold text-gray-700">Temp</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                <th class="px-4 py-3 text-right text-sm font-semibold text-gray-700">Est. Value</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Follow Up</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Source</th>
+                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -75,32 +75,32 @@
                   <input v-if="p.status !== 'converted'" type="checkbox" :value="p.id" v-model="selectedProspects" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
                   <span v-else class="text-green-500 text-sm">✓</span>
                 </td>
-                <td class="px-4 py-3 text-sm font-mono text-gray-600">{{ p.code }}</td>
+                <td class="px-4 py-3 font-mono text-gray-600">{{ p.code }}</td>
                 <td class="px-4 py-3">
-                  <p class="font-medium text-gray-900 text-sm">{{ p.company_name }}</p>
-                  <p v-if="p.city" class="text-xs text-gray-500">{{ p.city }}</p>
+                  <p class="font-medium text-gray-900">{{ p.company_name }}</p>
+                  <p v-if="p.city" class="text-sm text-gray-500">{{ p.city }}</p>
                 </td>
                 <td class="px-4 py-3">
-                  <p class="text-sm text-gray-800">{{ p.contact_name || '—' }}</p>
-                  <p class="text-xs text-gray-500">{{ p.email || '' }}</p>
+                  <p class="text-gray-800">{{ p.contact_name || '—' }}</p>
+                  <p class="text-sm text-gray-500">{{ p.email || '' }}</p>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ p.industry || '—' }}</td>
+                <td class="px-4 py-3 text-gray-600">{{ p.industry || '—' }}</td>
                 <td class="px-4 py-3 text-center">
                   <span class="text-lg" :title="p.temperature">{{ tempIcon(p.temperature) }}</span>
                 </td>
                 <td class="px-4 py-3">
-                  <span class="px-2.5 py-1 rounded-full text-xs font-semibold" :class="statusColor(p.status)">{{ p.status }}</span>
+                  <span class="px-2.5 py-1 rounded-full text-sm font-semibold" :class="statusColor(p.status)">{{ p.status }}</span>
                 </td>
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 text-right">{{ formatCurrency(p.estimated_value) }}</td>
+                <td class="px-4 py-3 font-medium text-gray-900 text-right">{{ formatCurrency(p.estimated_value) }}</td>
                 <td class="px-4 py-3">
-                  <span v-if="p.next_follow_up" class="text-xs" :class="isOverdue(p.next_follow_up) ? 'text-red-600 font-bold' : 'text-gray-600'">
+                  <span v-if="p.next_follow_up" class="text-sm" :class="isOverdue(p.next_follow_up) ? 'text-red-600 font-bold' : 'text-gray-600'">
                     {{ formatDate(p.next_follow_up) }}
                     <span v-if="isOverdue(p.next_follow_up)"> ⚠</span>
                   </span>
-                  <span v-else class="text-xs text-gray-400">—</span>
+                  <span v-else class="text-sm text-gray-400">—</span>
                 </td>
                 <td class="px-4 py-3">
-                  <span class="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">{{ p.source }}</span>
+                  <span class="text-sm px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">{{ p.source }}</span>
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex gap-1">

@@ -106,7 +106,7 @@
 import { computed, ref, onMounted, watch } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useProductStore } from '../stores/products';
-import api from '../lib/api';
+import { api } from '../lib/api';
 import PageHeader from '../components/ui/PageHeader.vue';
 import StatCard from '../components/ui/StatCard.vue';
 import FilterBar from '../components/ui/FilterBar.vue';
