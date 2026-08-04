@@ -19,8 +19,9 @@ export function requirePermission(resource: string, action: string) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      // Super admin (role_id = 1) bypasses all permission checks
-      if (user.roleId === 1) {
+      // Super admin (role_id = 1 OR userLevel = 1) bypasses all permission checks
+      // userLevel=1 covers founder accounts that may have role_id=NULL (Accepted Owner Risk)
+      if (user.roleId === 1 || user.userLevel === 1) {
         return next();
       }
 

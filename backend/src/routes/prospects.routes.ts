@@ -105,7 +105,7 @@ router.get('/', authMiddleware, requirePermission('crm.prospects', 'view'), asyn
     }
 
     // Ownership filter: non-admin users only see their own or unassigned
-    if (user.roleId !== 1) {
+    if (user.roleId !== 1 && user.userLevel !== 1) {
       where += ` AND (p.assigned_to = ? OR p.assigned_to IS NULL OR p.created_by = ?)`;
       params.push(user.userId, user.userId);
     }
@@ -255,7 +255,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
 
     // Ownership check
     const user = (req as any).user;
-    if (user.roleId !== 1 && current.assigned_to !== user.userId && current.created_by !== user.userId) {
+    if (user.roleId !== 1 && user.userLevel !== 1 && current.assigned_to !== user.userId && current.created_by !== user.userId) {
       return res.status(403).json({ error: 'You can only edit your own prospects' });
     }
 
