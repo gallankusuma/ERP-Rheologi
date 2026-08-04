@@ -1,72 +1,23 @@
 import express, { Request, Response } from 'express';
-import { dbQuery, dbGet, dbAll, dbRun, dbTransaction } from '../config/database';
+import { dbGet, dbAll, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
-// ── Ensure prospects table exists ──
-const ensureProspectsTable = async () => {
-  try {
-    await dbRun(`
-      CREATE TABLE IF NOT EXISTS prospects (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        code VARCHAR(50) NOT NULL UNIQUE,
-        company_name VARCHAR(255) NOT NULL,
-        contact_name VARCHAR(255),
-        contact_title VARCHAR(100),
-        email VARCHAR(255),
-        phone VARCHAR(50),
-        industry VARCHAR(150),
-        website VARCHAR(255),
-        address TEXT,
-        city VARCHAR(100),
-        country VARCHAR(100) DEFAULT 'Indonesia',
-        source VARCHAR(50) DEFAULT 'other',
-        temperature VARCHAR(20) DEFAULT 'cold',
-        status VARCHAR(50) DEFAULT 'new',
-        interest TEXT,
-        estimated_value DECIMAL(15,2) DEFAULT 0,
-        next_follow_up DATE,
-        last_contacted_at TIMESTAMP NULL,
-        assigned_to INT,
-        notes TEXT,
-        converted_to_client_id INT,
-        converted_to_lead_id INT,
-        converted_at TIMESTAMP NULL,
-        is_archived TINYINT(1) DEFAULT 0,
-        created_by INT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_temperature (temperature),
-        INDEX idx_status (status),
-        INDEX idx_source (source),
-        INDEX idx_next_follow_up (next_follow_up),
-        INDEX idx_assigned_to (assigned_to),
-        INDEX idx_is_archived (is_archived)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    // Ensure is_archived column exists on old tables
-    try {
-      await dbRun(`ALTER TABLE prospects ADD COLUMN is_archived TINYINT(1) DEFAULT 0`);
-    } catch { /* column already exists */ }
-    console.log('✅ Prospects table ensured');
-  } catch (err) {
-    console.error('Prospects table error:', err);
-  }
-};
-ensureProspectsTable();
-
 // ========================================
 // PROSPECT STATE MACHINE
 // ========================================
 const PROSPECT_TRANSITIONS: Record<string, string[]> = {
-  'new':          ['contacted', 'qualified', 'disqualified'],
+  'new':          ['contacted', 'disqualified'],
   'contacted':    ['qualified', 'disqualified'],
   'qualified':    ['converted', 'disqualified'],
-  'converted':    [],  // terminal
-  'disqualified': ['new'],  // can reactivate
+  'converted':    [],  // terminal — only set via convert endpoint
+  'disqualified': ['new'],  // reactivate
 };
+
+// Reserved statuses that cannot be set via generic PUT
+const RESERVED_STATUSES = ['converted'];
 
 function validateProspectTransition(current: string, next: string): { valid: boolean; error?: string } {
   const allowed = PROSPECT_TRANSITIONS[current];
@@ -77,33 +28,16 @@ function validateProspectTransition(current: string, next: string): { valid: boo
   return { valid: true };
 }
 
-// ── Helper: generate next prospect code (concurrency-safe) ──
-const generateProspectCode = async (conn?: any): Promise<string> => {
-  const executor = conn || { execute: async (sql: string, params: any[]) => { const r = await dbGet(sql, params); return [[r]]; } };
-  // Use FOR UPDATE to prevent race condition
-  if (conn) {
-    const [rows] = await conn.execute(
-      `SELECT code FROM prospects WHERE code LIKE 'PSP-%' ORDER BY id DESC LIMIT 1 FOR UPDATE`
-    );
-    const row = rows[0];
-    if (!row) return 'PSP-0001';
-    const lastNum = parseInt(row.code.replace('PSP-', ''), 10);
-    return `PSP-${String(lastNum + 1).padStart(4, '0')}`;
-  }
-  const row = await dbGet(`SELECT code FROM prospects WHERE code LIKE 'PSP-%' ORDER BY id DESC LIMIT 1`);
-  if (!row) return 'PSP-0001';
-  const lastNum = parseInt(row.code.replace('PSP-', ''), 10);
-  return `PSP-${String(lastNum + 1).padStart(4, '0')}`;
-};
-
-// ── Helper: Log prospect activity ──
+// ── Helper: Log prospect activity to dedicated table ──
 const logProspectActivity = async (prospectId: number | string, userId: number | null, action: string, details: string) => {
   try {
     await dbRun(
-      'INSERT INTO lead_activities (lead_id, user_id, action, details) VALUES (?, ?, ?, ?)',
-      [prospectId, userId, `prospect_${action}`, details]
+      'INSERT INTO prospect_activities (prospect_id, user_id, action, details) VALUES (?, ?, ?, ?)',
+      [prospectId, userId, action, details]
     );
-  } catch { /* table might not exist */ }
+  } catch (err) {
+    console.warn('Prospect activity log error:', err);
+  }
 };
 
 // ── Helper: Duplicate detection ──
@@ -126,12 +60,37 @@ const checkDuplicate = async (companyName: string, email?: string | null, exclud
   return duplicates;
 };
 
+// ── Helper: Transactional prospect code generation with retry ──
+const generateProspectCodeTx = async (conn: any): Promise<string> => {
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const [rows] = await conn.execute(
+      `SELECT code FROM prospects WHERE code LIKE 'PSP-%' ORDER BY id DESC LIMIT 1 FOR UPDATE`
+    );
+    const row = rows[0];
+    let nextNum = 1;
+    if (row) {
+      nextNum = parseInt(row.code.replace('PSP-', ''), 10) + 1;
+    }
+    const code = `PSP-${String(nextNum).padStart(4, '0')}`;
+    
+    // Check uniqueness (handles edge cases)
+    const [existing] = await conn.execute('SELECT id FROM prospects WHERE code = ?', [code]);
+    if (existing.length === 0) return code;
+    
+    // Collision — retry with next number
+    nextNum++;
+  }
+  // Fallback: timestamp-based
+  return `PSP-${Date.now()}`;
+};
+
 // ========================================
-// CRUD ENDPOINTS — ALL WITH AUTH
+// CRUD ENDPOINTS — ALL WITH AUTH + PERMISSION
 // ========================================
 
 // ── GET / — List with filters + ownership ──
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, temperature, status, source, assigned_to,
       sort_by = 'created_at', sort_dir = 'DESC',
@@ -141,7 +100,6 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
     let where = 'p.is_archived = 0';
     const params: any[] = [];
 
-    // Show archived if explicitly requested
     if (show_archived === '1' || show_archived === 'true') {
       where = '1=1';
     }
@@ -194,7 +152,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // ── GET /stats ──
-router.get('/stats', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/stats', authMiddleware, requirePermission('crm.prospects', 'view'), async (_req: Request, res: Response) => {
   try {
     const tempStats = await dbAll(`
       SELECT temperature, COUNT(*) as count FROM prospects WHERE status NOT IN ('converted','disqualified') AND is_archived = 0 GROUP BY temperature
@@ -213,8 +171,23 @@ router.get('/stats', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
+// ── GET /activities/:prospectId ──
+router.get('/activities/:prospectId', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
+  try {
+    const activities = await dbAll(
+      `SELECT pa.*, u.full_name as user_name FROM prospect_activities pa 
+       LEFT JOIN users u ON pa.user_id = u.id 
+       WHERE pa.prospect_id = ? ORDER BY pa.created_at DESC LIMIT 50`,
+      [req.params.prospectId]
+    );
+    res.json({ data: activities });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── GET /:id ──
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const row = await dbGet(`
       SELECT p.*, u.full_name as assigned_to_name, cb.full_name as created_by_name
@@ -228,7 +201,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// ── POST / — Create with duplicate detection ──
+// ── POST / — Create with duplicate detection + transactional code ──
 router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), async (req: Request, res: Response) => {
   try {
     const { company_name, contact_name, contact_title, email, phone, industry, website, address, city, country,
@@ -238,34 +211,41 @@ router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), a
 
     // Duplicate detection (warning, not blocking)
     const duplicates = await checkDuplicate(company_name, email);
-
     const userId = (req as any).user?.userId || null;
-    const code = await generateProspectCode();
 
-    const result = await dbRun(`
-      INSERT INTO prospects (code, company_name, contact_name, contact_title, email, phone, industry, website,
-        address, city, country, source, temperature, status, interest, estimated_value, next_follow_up, assigned_to, notes, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)
-    `, [code, company_name, contact_name||null, contact_title||null, email||null, phone||null,
-        industry||null, website||null, address||null, city||null, country||'Indonesia',
-        source||'other', temperature||'cold', interest||null,
-        estimated_value||0, next_follow_up||null, assigned_to||null, notes||null, userId]);
+    const result = await dbTransaction(async (conn) => {
+      const code = await generateProspectCodeTx(conn);
 
-    await logProspectActivity(result.insertId, userId, 'created', `Prospect ${code} created: ${company_name}`);
+      const [insertResult] = await conn.execute(`
+        INSERT INTO prospects (code, company_name, contact_name, contact_title, email, phone, industry, website,
+          address, city, country, source, temperature, status, interest, estimated_value, next_follow_up, assigned_to, notes, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)
+      `, [code, company_name, contact_name||null, contact_title||null, email||null, phone||null,
+          industry||null, website||null, address||null, city||null, country||'Indonesia',
+          source||'other', temperature||'cold', interest||null,
+          estimated_value||0, next_follow_up||null, assigned_to||null, notes||null, userId]);
+
+      return { id: (insertResult as any).insertId, code };
+    });
+
+    await logProspectActivity(result.id, userId, 'created', `Prospect ${result.code} created: ${company_name}`);
 
     res.status(201).json({
-      data: { id: result.insertId, code },
+      data: { id: result.id, code: result.code },
       message: 'Prospect created',
       warnings: duplicates.length > 0 ? { duplicates, message: `Potential duplicate(s) found: ${duplicates.map(d => d.company_name).join(', ')}` } : undefined
     });
   } catch (error: any) {
     console.error('Error creating prospect:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Prospect code collision. Please retry.' });
+    }
     res.status(500).json({ error: error.message });
   }
 });
 
-// ── PUT /:id — Update with state machine validation ──
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+// ── PUT /:id — Update with state machine + ownership ──
+router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'), async (req: Request, res: Response) => {
   try {
     const { company_name, contact_name, contact_title, email, phone, industry, website, address, city, country,
       source, temperature, status, interest, estimated_value, next_follow_up, assigned_to, notes } = req.body;
@@ -273,14 +253,17 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
     const current = await dbGet('SELECT * FROM prospects WHERE id = ?', [req.params.id]);
     if (!current) return res.status(404).json({ error: 'Prospect not found' });
 
-    // Ownership check: non-admin can only edit own prospects
+    // Ownership check
     const user = (req as any).user;
     if (user.roleId !== 1 && current.assigned_to !== user.userId && current.created_by !== user.userId) {
       return res.status(403).json({ error: 'You can only edit your own prospects' });
     }
 
-    // State machine validation if status is changing
+    // State machine validation — block reserved statuses via PUT
     if (status && status !== current.status) {
+      if (RESERVED_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `Status '${status}' can only be set via the conversion endpoint, not direct update.` });
+      }
       const transition = validateProspectTransition(current.status, status);
       if (!transition.valid) {
         return res.status(400).json({ error: transition.error });
@@ -316,7 +299,6 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
       req.params.id
     ]);
 
-    // Log assignment changes
     if (assigned_to && assigned_to !== current.assigned_to) {
       await logProspectActivity(req.params.id as string, userId, 'assigned', `Assigned to user #${assigned_to}`);
     }
@@ -337,12 +319,10 @@ router.delete('/:id', authMiddleware, requirePermission('crm.prospects', 'delete
     const prospect = await dbGet('SELECT * FROM prospects WHERE id = ?', [req.params.id]);
     if (!prospect) return res.status(404).json({ error: 'Prospect not found' });
 
-    // Converted prospects cannot be deleted
     if (prospect.status === 'converted') {
       return res.status(400).json({ error: 'Cannot delete a converted prospect. It is part of the conversion history.' });
     }
 
-    // Soft delete: archive instead of hard delete
     await dbRun('UPDATE prospects SET is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [req.params.id]);
 
     const userId = (req as any).user?.userId || null;
@@ -354,7 +334,24 @@ router.delete('/:id', authMiddleware, requirePermission('crm.prospects', 'delete
   }
 });
 
-// ── POST /:id/convert-to-lead — Atomic conversion with history preservation ──
+// ── PATCH /:id/restore — Restore archived prospect ──
+router.patch('/:id/restore', authMiddleware, requirePermission('crm.prospects', 'update'), async (req: Request, res: Response) => {
+  try {
+    const prospect = await dbGet('SELECT * FROM prospects WHERE id = ? AND is_archived = 1', [req.params.id]);
+    if (!prospect) return res.status(404).json({ error: 'Archived prospect not found' });
+
+    await dbRun('UPDATE prospects SET is_archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [req.params.id]);
+
+    const userId = (req as any).user?.userId || null;
+    await logProspectActivity(req.params.id as string, userId, 'restored', `Prospect restored from archive`);
+
+    res.json({ message: 'Prospect restored' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── POST /:id/convert-to-lead — Atomic, only from 'qualified' status ──
 router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prospects', 'convert'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
@@ -369,12 +366,12 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
       if (prospect.status === 'converted') throw new Error('Prospect already converted');
       if (prospect.is_archived) throw new Error('Cannot convert an archived prospect');
 
-      // 2. Validate prospect is qualified for conversion
-      if (!['qualified', 'contacted', 'new'].includes(prospect.status)) {
-        throw new Error(`Cannot convert prospect with status '${prospect.status}'. Must be new, contacted, or qualified.`);
+      // 2. Only 'qualified' prospects can be converted
+      if (prospect.status !== 'qualified') {
+        throw new Error(`Cannot convert prospect with status '${prospect.status}'. Prospect must be 'qualified' first.`);
       }
 
-      // 3. Create Lead from prospect data
+      // 3. Create Lead
       const [leadResult] = await conn.execute(`
         INSERT INTO leads (company, contact_name, email, phone, stage, value, probability, source, notes, assigned_to, created_by)
         VALUES (?, ?, ?, ?, 'New', ?, 20, ?, ?, ?, ?)
@@ -391,7 +388,7 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
       ]);
       const leadId = (leadResult as any).insertId;
 
-      // 4. Update prospect status to 'converted' — DO NOT DELETE
+      // 4. Mark as converted — DO NOT DELETE
       await conn.execute(
         `UPDATE prospects SET status = 'converted', converted_to_lead_id = ?, converted_at = NOW(), updated_at = NOW() WHERE id = ?`,
         [leadId, req.params.id]
@@ -404,17 +401,12 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
 
     res.json({
       message: 'Prospect converted to Lead successfully',
-      data: {
-        lead_id: result.leadId,
-        company: result.company,
-        contact_name: result.contact_name,
-        email: result.email,
-      }
+      data: { lead_id: result.leadId, company: result.company, contact_name: result.contact_name, email: result.email }
     });
   } catch (error: any) {
     console.error('Error converting prospect to lead:', error);
     const msg = error.message || 'Failed to convert prospect';
-    const status = msg.includes('already converted') || msg.includes('Cannot convert') ? 400 : 500;
+    const status = msg.includes('already converted') || msg.includes('Cannot convert') || msg.includes('must be') ? 400 : 500;
     res.status(status).json({ error: msg });
   }
 });

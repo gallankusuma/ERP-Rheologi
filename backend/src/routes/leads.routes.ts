@@ -155,17 +155,21 @@ router.put('/stages/reorder', authMiddleware, async (req: Request, res: Response
   }
 });
 
-// PUT /leads/stages/:id — Update a stage
+// PUT /leads/stages/:id — Update a stage (system stages: color only)
 router.put('/stages/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { name, color } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Stage name is required' });
-    // Get old name BEFORE updating
-    const old = await dbGet('SELECT name FROM lead_stages WHERE id = ?', [req.params.id]);
-    // Update stage in lead_stages table
+    const old = await dbGet('SELECT * FROM lead_stages WHERE id = ?', [req.params.id]);
+    if (!old) return res.status(404).json({ error: 'Stage not found' });
+    
+    // System stages cannot be renamed (transition map uses fixed keys)
+    if (old.is_system && old.name !== name.trim()) {
+      return res.status(400).json({ error: `System stage '${old.name}' cannot be renamed. Only color can be changed.` });
+    }
+    
     await dbRun('UPDATE lead_stages SET name = ?, color = ? WHERE id = ?',
       [name.trim(), color || '#6b7280', req.params.id]);
-    // Cascade rename: update any leads that used the old stage name
     if (old && old.name !== name.trim()) {
       await dbRun('UPDATE leads SET stage = ? WHERE stage = ?', [name.trim(), old.name]);
     }
@@ -176,12 +180,17 @@ router.put('/stages/:id', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-// DELETE /leads/stages/:id — Delete a stage
+// DELETE /leads/stages/:id — Delete a stage (system stages protected)
 router.delete('/stages/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const stage = await dbGet('SELECT * FROM lead_stages WHERE id = ?', [req.params.id]);
+    const stage = await dbGet('SELECT * FROM lead_stages WHERE id = ?', [req.params.id]) as any;
     if (!stage) return res.status(404).json({ error: 'Stage not found' });
-    // Move leads in this stage to the first available stage
+    
+    // System stages cannot be deleted
+    if (stage.is_system) {
+      return res.status(400).json({ error: `System stage '${stage.name}' cannot be deleted.` });
+    }
+    
     const fallback = await dbGet('SELECT name FROM lead_stages WHERE id != ? ORDER BY sort_order ASC LIMIT 1', [req.params.id]);
     if (fallback) {
       await dbRun('UPDATE leads SET stage = ? WHERE stage = ?', [fallback.name, stage.name]);
@@ -199,14 +208,18 @@ router.delete('/stages/:id', authMiddleware, async (req: Request, res: Response)
 // ========================
 
 // GET /leads — List all leads (with label info)
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
   try {
-    const { stage, search } = req.query;
+    const { stage, search, show_archived } = req.query;
     let query = `SELECT l.*, u.full_name as assigned_name, c.name as client_name, c.organization as client_org
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN clients c ON l.client_id = c.id
-      WHERE 1=1`;
+      WHERE l.is_archived = 0`;
+    
+    if (show_archived === '1' || show_archived === 'true') {
+      query = query.replace('WHERE l.is_archived = 0', 'WHERE 1=1');
+    }
     const params: any[] = [];
 
     if (stage && stage !== 'all') {
@@ -282,7 +295,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /leads/stats/summary — Pipeline stats (must be before /:id)
-router.get('/stats/summary', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stats/summary', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
   try {
     const stages = await dbAll(
       'SELECT stage, COUNT(*) as count, COALESCE(SUM(value),0) as total_value FROM leads GROUP BY stage'
@@ -326,7 +339,7 @@ router.delete('/labels/:labelId', authMiddleware, async (req: Request, res: Resp
 });
 
 // GET /leads/:id — Get single lead with full detail
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
   try {
     const lead = await dbGet(
       `SELECT l.*, u.full_name as assigned_name, c.name as client_name, c.organization as client_org
@@ -349,7 +362,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /leads — Create lead
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('crm.leads', 'create'), async (req: Request, res: Response) => {
   try {
     const { company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, client_id, description, due_date } = req.body;
     const userId = (req as any).user?.userId || null;
@@ -368,22 +381,44 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// PUT /leads/:id — Update lead
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+// PUT /leads/:id — Update lead (with stage transition validation)
+router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, client_id, description, due_date } = req.body;
+    
+    // Load current lead for stage validation
+    const current = await dbGet('SELECT * FROM leads WHERE id = ?', [req.params.id]) as any;
+    if (!current) return res.status(404).json({ success: false, error: 'Lead not found' });
+    
+    // Validate stage transition if stage is changing
+    const effectiveStage = stage || current.stage;
+    if (stage && stage !== current.stage) {
+      const transition = validateLeadTransition(current.stage, stage);
+      if (!transition.valid) {
+        return res.status(400).json({ success: false, error: transition.error });
+      }
+      // Won requires client conversion
+      if (stage === 'Won' && !current.client_id) {
+        return res.status(400).json({ success: false, error: 'Cannot set stage to Won without converting to Client first.', require_conversion: true });
+      }
+    }
+    
     await dbRun(
       `UPDATE leads SET company=?, contact_name=?, email=?, phone=?, stage=?, value=?, probability=?, source=?, color=?, notes=?, assigned_to=?, client_id=?, description=?, due_date=?, updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
-      [company, contact_name || null, email || null, phone || null, stage, value || 0,
+      [company || current.company, contact_name || null, email || null, phone || null, effectiveStage, value || 0,
        probability || 10, source || null, color || null, notes || null, assigned_to || null,
        client_id || null, description || null, due_date || null, req.params.id]
     );
     const userId = (req as any).user?.userId || null;
-    await logActivity(req.params.id as string, userId, 'updated', `Updated lead: ${company}`);
+    await logActivity(req.params.id as string, userId, 'updated', `Updated lead: ${company || current.company}`);
+    if (stage && stage !== current.stage) {
+      await logActivity(req.params.id as string, userId, 'stage_changed', `Stage: ${current.stage} → ${stage}`);
+    }
     res.json({ success: true, message: 'Lead updated' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to update lead' });
+  } catch (error: any) {
+    console.error('Update lead error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to update lead' });
   }
 });
 
@@ -448,7 +483,7 @@ router.patch('/:id/due-date', authMiddleware, async (req: Request, res: Response
 });
 
 // PATCH /leads/:id/assign
-router.patch('/:id/assign', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/:id/assign', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { assigned_to } = req.body;
     await dbRun('UPDATE leads SET assigned_to=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [assigned_to || null, req.params.id]);
@@ -491,8 +526,8 @@ router.delete('/:id', authMiddleware, requirePermission('crm.leads', 'delete'), 
       return res.status(400).json({ success: false, error: 'Cannot delete a converted lead. Archive instead.' });
     }
 
-    // Soft delete: archive the lead
-    await dbRun('UPDATE leads SET stage = ?, is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['Archived', req.params.id]);
+    // Soft delete: set is_archived = 1, KEEP original stage (do NOT change stage)
+    await dbRun('UPDATE leads SET is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [req.params.id]);
 
     const userId = (req as any).user?.userId || null;
     await logActivity(req.params.id as string, userId, 'archived', `Lead archived: ${lead.company}`);
@@ -501,6 +536,24 @@ router.delete('/:id', authMiddleware, requirePermission('crm.leads', 'delete'), 
   } catch (error) {
     console.error('Delete lead error:', error);
     res.status(500).json({ success: false, error: 'Failed to archive lead' });
+  }
+});
+
+// PATCH /leads/:id/restore — Restore archived lead
+router.patch('/:id/restore', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
+  try {
+    const lead = await dbGet('SELECT * FROM leads WHERE id = ? AND is_archived = 1', [req.params.id]) as any;
+    if (!lead) return res.status(404).json({ success: false, error: 'Archived lead not found' });
+
+    await dbRun('UPDATE leads SET is_archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [req.params.id]);
+
+    const userId = (req as any).user?.userId || null;
+    await logActivity(req.params.id as string, userId, 'restored', `Lead restored: ${lead.company}`);
+
+    res.json({ success: true, message: 'Lead restored' });
+  } catch (error) {
+    console.error('Restore lead error:', error);
+    res.status(500).json({ success: false, error: 'Failed to restore lead' });
   }
 });
 
@@ -734,6 +787,11 @@ router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'conv
       const lead = leadRows[0];
       if (!lead) throw new Error('Lead not found');
       if (lead.client_id) throw new Error('Lead already converted to client');
+
+      // Only allow conversion from Negotiation or Discussion stage
+      if (!['Negotiation', 'Discussion'].includes(lead.stage)) {
+        throw new Error(`Cannot convert lead from stage '${lead.stage}'. Lead must be in 'Discussion' or 'Negotiation' stage.`);
+      }
 
       // 2. Find or create Client (with duplicate check)
       let clientId;
