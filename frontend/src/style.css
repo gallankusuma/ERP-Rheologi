@@ -203,8 +203,11 @@ html.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
 }
 
 /* ---------- Sticky Table Headers ---------- */
-/* Universal rule: all table headers stick to the top when scrolling */
-/* The scroll container is <main class="overflow-auto"> in Layout.vue */
+/* All table headers stick to the top when the user scrolls.
+   Tables are typically wrapped in a container with overflow-hidden + overflow-x-auto.
+   We override those containers to allow vertical scrolling so sticky works.
+   The container gets a max-height so it becomes the scrollable area. */
+
 thead {
   position: sticky;
   top: 0;
@@ -221,9 +224,10 @@ html.dark thead th {
   box-shadow: 0 1px 0 0 #334155;
 }
 
-/* overflow-x-auto wrappers around tables must not create a vertical scroll context,
-   otherwise position:sticky on thead breaks. We force overflow-y to be visible
-   so the vertical sticky behavior is handled by the parent <main> container. */
-.overflow-x-auto {
-  overflow-y: visible !important;
+/* Table containers: allow vertical scroll so sticky headers work.
+   Target divs that directly wrap a table with overflow-x-auto or overflow-hidden */
+.overflow-x-auto:has(> table),
+.overflow-hidden:has(> .overflow-x-auto) {
+  overflow: auto !important;
+  max-height: calc(100vh - 280px);
 }
