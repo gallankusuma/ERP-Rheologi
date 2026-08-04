@@ -217,17 +217,20 @@ thead {
 thead th {
   background-color: #f9fafb;
   box-shadow: 0 1px 0 0 #e5e7eb;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #374151;
 }
 
 html.dark thead th {
   background-color: #1e293b !important;
   box-shadow: 0 1px 0 0 #334155;
+  color: #e2e8f0;
 }
 
-/* Table containers: allow vertical scroll so sticky headers work.
-   Target divs that directly wrap a table with overflow-x-auto or overflow-hidden */
-.overflow-x-auto:has(> table),
-.overflow-hidden:has(> .overflow-x-auto) {
-  overflow: auto !important;
-  max-height: calc(100vh - 280px);
+/* Prevent overflow-x-auto from creating a separate scroll context for vertical scrolling */
+.overflow-x-auto:has(> table) {
+  overflow-y: visible !important;
 }

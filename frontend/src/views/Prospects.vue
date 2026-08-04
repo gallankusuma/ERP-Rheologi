@@ -49,8 +49,8 @@
       </div>
 
       <!-- Table -->
-      <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <div class="overflow-x-auto">
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-auto max-h-[calc(100vh-320px)]">
+        <div>
           <table class="w-full">
             <thead class="bg-gray-50 border-b border-gray-200">
               <tr>
