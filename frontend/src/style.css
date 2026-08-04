@@ -202,3 +202,28 @@ html.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
   }
 }
 
+/* ---------- Sticky Table Headers ---------- */
+/* Universal rule: all table headers stick to the top when scrolling */
+/* The scroll container is <main class="overflow-auto"> in Layout.vue */
+thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+thead th {
+  background-color: #f9fafb;
+  box-shadow: 0 1px 0 0 #e5e7eb;
+}
+
+html.dark thead th {
+  background-color: #1e293b !important;
+  box-shadow: 0 1px 0 0 #334155;
+}
+
+/* overflow-x-auto wrappers around tables must not create a vertical scroll context,
+   otherwise position:sticky on thead breaks. We force overflow-y to be visible
+   so the vertical sticky behavior is handled by the parent <main> container. */
+.overflow-x-auto {
+  overflow-y: visible !important;
+}
