@@ -202,17 +202,9 @@ html.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
   }
 }
 
-/* ---------- Sticky Table Headers ---------- */
-
-thead {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
+/* ---------- Table Header Styling ---------- */
 
 thead th {
-  background-color: #f9fafb !important;
-  box-shadow: 0 1px 0 0 #e5e7eb;
   font-size: 0.9375rem !important;
   font-weight: 700 !important;
   text-transform: uppercase !important;
@@ -221,19 +213,5 @@ thead th {
 }
 
 html.dark thead th {
-  background-color: #1e293b !important;
-  box-shadow: 0 1px 0 0 #334155;
   color: #e2e8f0 !important;
-}
-
-/* Make all table wrapper containers scrollable so sticky headers work.
-   Most tables sit inside div.overflow-hidden > div.overflow-x-auto > table
-   or div.overflow-hidden > table. We convert these to scroll containers. */
-.overflow-hidden:has(table) {
-  overflow: auto !important;
-  max-height: calc(100vh - 280px);
-}
-
-.overflow-x-auto:has(> table) {
-  overflow-y: visible !important;
 }
