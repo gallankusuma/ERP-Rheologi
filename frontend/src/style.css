@@ -203,10 +203,6 @@ html.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
 }
 
 /* ---------- Sticky Table Headers ---------- */
-/* All table headers stick to the top when the user scrolls.
-   Tables are typically wrapped in a container with overflow-hidden + overflow-x-auto.
-   We override those containers to allow vertical scrolling so sticky works.
-   The container gets a max-height so it becomes the scrollable area. */
 
 thead {
   position: sticky;
@@ -215,22 +211,29 @@ thead {
 }
 
 thead th {
-  background-color: #f9fafb;
+  background-color: #f9fafb !important;
   box-shadow: 0 1px 0 0 #e5e7eb;
-  font-size: 0.9375rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #374151;
+  font-size: 0.9375rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.03em !important;
+  color: #374151 !important;
 }
 
 html.dark thead th {
   background-color: #1e293b !important;
   box-shadow: 0 1px 0 0 #334155;
-  color: #e2e8f0;
+  color: #e2e8f0 !important;
 }
 
-/* Prevent overflow-x-auto from creating a separate scroll context for vertical scrolling */
+/* Make all table wrapper containers scrollable so sticky headers work.
+   Most tables sit inside div.overflow-hidden > div.overflow-x-auto > table
+   or div.overflow-hidden > table. We convert these to scroll containers. */
+.overflow-hidden:has(table) {
+  overflow: auto !important;
+  max-height: calc(100vh - 280px);
+}
+
 .overflow-x-auto:has(> table) {
   overflow-y: visible !important;
 }
