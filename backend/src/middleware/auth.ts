@@ -17,14 +17,13 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
     
-    // Load role_id from database to ensure accurate permission checks
-    // JWT only contains userId and userLevel — role_id must come from DB
+    // JWT only has userId and userLevel, so we need to load role_id from DB
     let roleId = null;
     try {
-      const userRecord = await dbGet('SELECT role_id FROM users WHERE id = ?', [decoded.userId]);
-      roleId = userRecord?.role_id || null;
+      const user = await dbGet('SELECT role_id FROM users WHERE id = ?', [decoded.userId]);
+      roleId = user?.role_id || null;
     } catch {
-      // If DB lookup fails, continue with null roleId (non-admin)
+      // if DB lookup fails, continue without role
     }
 
     req.userId = decoded.userId;

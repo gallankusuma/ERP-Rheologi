@@ -2,14 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import { dbGet } from '../config/database';
 
 /**
- * Authorization middleware that checks if the current user has the required permission.
- * 
- * Usage:
- *   router.post('/workorders', authMiddleware, requirePermission('production.workorders', 'create'), handler);
- *   router.put('/workorders/:id/status', authMiddleware, requirePermission('production.workorders', 'update'), handler);
- * 
- * Checks: user's role → role_permissions → permissions table
- * Super-admin (role_id=1) bypasses all permission checks.
+ * Check if user has the required permission for a resource action.
+ * Checks user role -> role_permissions -> permissions table.
+ * Admin (role_id=1) and founder (userLevel>=1) bypass all checks.
  */
 export function requirePermission(resource: string, action: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -19,13 +14,11 @@ export function requirePermission(resource: string, action: string) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      // Super admin (role_id = 1 OR userLevel = 1) bypasses all permission checks
-      // userLevel=1 covers founder accounts that may have role_id=NULL (Accepted Owner Risk)
-      if (user.roleId === 1 || user.userLevel === 1) {
+      // admin/founder bypass
+      if (user.roleId === 1 || (user.userLevel && user.userLevel >= 1)) {
         return next();
       }
 
-      // Look up the user's role and check if they have the required permission
       const userRecord = await dbGet('SELECT role_id FROM users WHERE id = ?', [user.userId]);
       if (!userRecord) {
         return res.status(403).json({ error: 'User not found' });
@@ -33,12 +26,11 @@ export function requirePermission(resource: string, action: string) {
 
       const roleId = userRecord.role_id;
 
-      // Super admin role always passes
       if (roleId === 1) {
         return next();
       }
 
-      // Check permission via role_permissions join
+      // check specific permission
       const permission = await dbGet(
         `SELECT rp.id FROM role_permissions rp
          JOIN permissions p ON rp.permission_id = p.id
@@ -50,7 +42,7 @@ export function requirePermission(resource: string, action: string) {
         return next();
       }
 
-      // Also check for wildcard action (some roles have 'manage' which covers all actions)
+      // check wildcard 'manage' permission
       const wildcardPerm = await dbGet(
         `SELECT rp.id FROM role_permissions rp
          JOIN permissions p ON rp.permission_id = p.id

@@ -5,18 +5,15 @@ import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
-// ========================================
-// PROSPECT STATE MACHINE
-// ========================================
+// valid status transitions for prospects
 const PROSPECT_TRANSITIONS: Record<string, string[]> = {
   'new':          ['contacted', 'disqualified'],
   'contacted':    ['qualified', 'disqualified'],
   'qualified':    ['converted', 'disqualified'],
-  'converted':    [],  // terminal — only set via convert endpoint
-  'disqualified': ['new'],  // reactivate
+  'converted':    [],
+  'disqualified': ['new'],
 };
 
-// Reserved statuses that cannot be set via generic PUT
 const RESERVED_STATUSES = ['converted'];
 
 function validateProspectTransition(current: string, next: string): { valid: boolean; error?: string } {
@@ -28,7 +25,6 @@ function validateProspectTransition(current: string, next: string): { valid: boo
   return { valid: true };
 }
 
-// ── Helper: Log prospect activity to dedicated table ──
 const logProspectActivity = async (prospectId: number | string, userId: number | null, action: string, details: string) => {
   try {
     await dbRun(
@@ -36,11 +32,11 @@ const logProspectActivity = async (prospectId: number | string, userId: number |
       [prospectId, userId, action, details]
     );
   } catch (err) {
-    console.warn('Prospect activity log error:', err);
+    console.warn('prospect activity log failed:', err);
   }
 };
 
-// ── Helper: Duplicate detection ──
+// check for existing prospects with same company name or email
 const checkDuplicate = async (companyName: string, email?: string | null, excludeId?: number): Promise<any[]> => {
   const duplicates: any[] = [];
   if (companyName) {
@@ -60,36 +56,24 @@ const checkDuplicate = async (companyName: string, email?: string | null, exclud
   return duplicates;
 };
 
-// ── Helper: Transactional prospect code generation with retry ──
+// generate PSP-XXXX code inside a transaction to avoid race conditions
 const generateProspectCodeTx = async (conn: any): Promise<string> => {
-  const MAX_RETRIES = 3;
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     const [rows] = await conn.execute(
       `SELECT code FROM prospects WHERE code LIKE 'PSP-%' ORDER BY id DESC LIMIT 1 FOR UPDATE`
     );
-    const row = rows[0];
-    let nextNum = 1;
-    if (row) {
-      nextNum = parseInt(row.code.replace('PSP-', ''), 10) + 1;
-    }
+    let nextNum = rows[0] ? parseInt(rows[0].code.replace('PSP-', ''), 10) + 1 : 1;
     const code = `PSP-${String(nextNum).padStart(4, '0')}`;
-    
-    // Check uniqueness (handles edge cases)
+
     const [existing] = await conn.execute('SELECT id FROM prospects WHERE code = ?', [code]);
     if (existing.length === 0) return code;
-    
-    // Collision — retry with next number
     nextNum++;
   }
-  // Fallback: timestamp-based
   return `PSP-${Date.now()}`;
 };
 
-// ========================================
-// CRUD ENDPOINTS — ALL WITH AUTH + PERMISSION
-// ========================================
 
-// ── GET / — List with filters + ownership ──
+// GET / - list prospects
 router.get('/', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, temperature, status, source, assigned_to,
@@ -104,7 +88,7 @@ router.get('/', authMiddleware, requirePermission('crm.prospects', 'view'), asyn
       where = '1=1';
     }
 
-    // Ownership filter: non-admin users only see their own or unassigned
+    // non-admin only sees own or unassigned
     if (user.roleId !== 1 && user.userLevel !== 1) {
       where += ` AND (p.assigned_to = ? OR p.assigned_to IS NULL OR p.created_by = ?)`;
       params.push(user.userId, user.userId);
@@ -151,7 +135,7 @@ router.get('/', authMiddleware, requirePermission('crm.prospects', 'view'), asyn
   }
 });
 
-// ── GET /stats ──
+// GET /stats
 router.get('/stats', authMiddleware, requirePermission('crm.prospects', 'view'), async (_req: Request, res: Response) => {
   try {
     const tempStats = await dbAll(`
@@ -171,7 +155,7 @@ router.get('/stats', authMiddleware, requirePermission('crm.prospects', 'view'),
   }
 });
 
-// ── GET /activities/:prospectId ──
+// GET /activities/:prospectId
 router.get('/activities/:prospectId', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const activities = await dbAll(
@@ -186,7 +170,7 @@ router.get('/activities/:prospectId', authMiddleware, requirePermission('crm.pro
   }
 });
 
-// ── GET /:id ──
+// GET /:id
 router.get('/:id', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const row = await dbGet(`
@@ -201,7 +185,7 @@ router.get('/:id', authMiddleware, requirePermission('crm.prospects', 'view'), a
   }
 });
 
-// ── POST / — Create with duplicate detection + transactional code ──
+// POST / - create prospect
 router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), async (req: Request, res: Response) => {
   try {
     const { company_name, contact_name, contact_title, email, phone, industry, website, address, city, country,
@@ -209,7 +193,6 @@ router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), a
 
     if (!company_name) return res.status(400).json({ error: 'Company name is required' });
 
-    // Duplicate detection (warning, not blocking)
     const duplicates = await checkDuplicate(company_name, email);
     const userId = (req as any).user?.userId || null;
 
@@ -244,7 +227,7 @@ router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), a
   }
 });
 
-// ── PUT /:id — Update with state machine + ownership ──
+// PUT /:id - update prospect
 router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'), async (req: Request, res: Response) => {
   try {
     const { company_name, contact_name, contact_title, email, phone, industry, website, address, city, country,
@@ -253,13 +236,12 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
     const current = await dbGet('SELECT * FROM prospects WHERE id = ?', [req.params.id]);
     if (!current) return res.status(404).json({ error: 'Prospect not found' });
 
-    // Ownership check
     const user = (req as any).user;
     if (user.roleId !== 1 && user.userLevel !== 1 && current.assigned_to !== user.userId && current.created_by !== user.userId) {
       return res.status(403).json({ error: 'You can only edit your own prospects' });
     }
 
-    // State machine validation — block reserved statuses via PUT
+    // block reserved statuses from being set via PUT
     if (status && status !== current.status) {
       if (RESERVED_STATUSES.includes(status)) {
         return res.status(400).json({ error: `Status '${status}' can only be set via the conversion endpoint, not direct update.` });
@@ -303,7 +285,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
       await logProspectActivity(req.params.id as string, userId, 'assigned', `Assigned to user #${assigned_to}`);
     }
     if (status && status !== current.status) {
-      await logProspectActivity(req.params.id as string, userId, 'status_changed', `Status: ${current.status} → ${status}`);
+      await logProspectActivity(req.params.id as string, userId, 'status_changed', `Status: ${current.status} -> ${status}`);
     }
 
     res.json({ message: 'Prospect updated' });
@@ -313,7 +295,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
   }
 });
 
-// ── DELETE /:id — Soft delete (archive) ──
+// DELETE /:id - soft delete (archive)
 router.delete('/:id', authMiddleware, requirePermission('crm.prospects', 'delete'), async (req: Request, res: Response) => {
   try {
     const prospect = await dbGet('SELECT * FROM prospects WHERE id = ?', [req.params.id]);
@@ -334,7 +316,7 @@ router.delete('/:id', authMiddleware, requirePermission('crm.prospects', 'delete
   }
 });
 
-// ── PATCH /:id/restore — Restore archived prospect ──
+// PATCH /:id/restore - restore archived prospect
 router.patch('/:id/restore', authMiddleware, requirePermission('crm.prospects', 'update'), async (req: Request, res: Response) => {
   try {
     const prospect = await dbGet('SELECT * FROM prospects WHERE id = ? AND is_archived = 1', [req.params.id]);
@@ -351,13 +333,12 @@ router.patch('/:id/restore', authMiddleware, requirePermission('crm.prospects', 
   }
 });
 
-// ── POST /:id/convert-to-lead — Atomic, only from 'qualified' status ──
+// POST /:id/convert-to-lead - convert qualified prospect to lead
 router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prospects', 'convert'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
 
     const result = await dbTransaction(async (conn) => {
-      // 1. Lock and validate prospect
       const [prospectRows] = await conn.execute(
         'SELECT * FROM prospects WHERE id = ? FOR UPDATE', [req.params.id]
       );
@@ -366,12 +347,10 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
       if (prospect.status === 'converted') throw new Error('Prospect already converted');
       if (prospect.is_archived) throw new Error('Cannot convert an archived prospect');
 
-      // 2. Only 'qualified' prospects can be converted
       if (prospect.status !== 'qualified') {
         throw new Error(`Cannot convert prospect with status '${prospect.status}'. Prospect must be 'qualified' first.`);
       }
 
-      // 3. Create Lead
       const [leadResult] = await conn.execute(`
         INSERT INTO leads (company, contact_name, email, phone, stage, value, probability, source, notes, assigned_to, created_by)
         VALUES (?, ?, ?, ?, 'New', ?, 20, ?, ?, ?, ?)
@@ -388,7 +367,6 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
       ]);
       const leadId = (leadResult as any).insertId;
 
-      // 4. Mark as converted — DO NOT DELETE
       await conn.execute(
         `UPDATE prospects SET status = 'converted', converted_to_lead_id = ?, converted_at = NOW(), updated_at = NOW() WHERE id = ?`,
         [leadId, req.params.id]

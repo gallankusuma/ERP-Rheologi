@@ -6,16 +6,14 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-// ========================================
-// LEAD STATE MACHINE
-// ========================================
+// lead stage transition rules
 const LEAD_TRANSITIONS: Record<string, string[]> = {
   'New':          ['Qualified', 'Lost'],
   'Qualified':    ['Discussion', 'Lost'],
   'Discussion':   ['Negotiation', 'Lost', 'Qualified'],
   'Negotiation':  ['Won', 'Lost', 'Discussion'],
-  'Won':          [],   // terminal — must go through conversion
-  'Lost':         ['New'],  // can reactivate
+  'Won':          [],
+  'Lost':         ['New'],
 };
 
 function validateLeadTransition(current: string, next: string): { valid: boolean; error?: string } {
@@ -27,7 +25,7 @@ function validateLeadTransition(current: string, next: string): { valid: boolean
   return { valid: true };
 }
 
-// Allowed MIME types for attachments
+// allowed file types for attachments
 const ALLOWED_MIME_TYPES = [
   'application/pdf',
   'image/jpeg', 'image/png', 'image/gif', 'image/webp',
@@ -39,7 +37,7 @@ const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.
 
 const router = Router();
 
-// ===== FILE UPLOAD CONFIG =====
+// file upload config
 const uploadDir = path.join(__dirname, '../../uploads/lead_attachments');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -63,7 +61,7 @@ const upload = multer({
   }
 });
 
-// ===== Helper: Log Activity =====
+// log lead activity
 const logActivity = async (leadId: number | string, userId: number | null, action: string, details: string) => {
   try {
     await dbRun('INSERT INTO lead_activities (lead_id, user_id, action, details) VALUES (?,?,?,?)',
@@ -71,7 +69,7 @@ const logActivity = async (leadId: number | string, userId: number | null, actio
   } catch (e) { console.warn('Activity log error:', e); }
 };
 
-// ===== Ensure lead_stages table =====
+// ensure lead_stages table exists
 const ensureLeadStagesTable = async () => {
   try {
     await dbRun(`
@@ -100,15 +98,13 @@ const ensureLeadStagesTable = async () => {
         await dbRun('INSERT INTO lead_stages (name, color, sort_order, is_default) VALUES (?,?,?,1)',
           [s.name, s.color, s.order]);
       }
-      console.log('✅ Lead stages seeded');
+    console.log('Lead stages seeded');
     }
   } catch (e) { console.error('Lead stages table error:', e); }
 };
 ensureLeadStagesTable();
 
-// ========================
-// LEAD STAGES CRUD
-// ========================
+// lead stages CRUD
 
 // GET /leads/stages — List all stages ordered
 router.get('/stages', authMiddleware, async (_req: Request, res: Response) => {
@@ -203,9 +199,7 @@ router.delete('/stages/:id', authMiddleware, async (req: Request, res: Response)
   }
 });
 
-// ========================
-// CORE LEAD CRUD
-// ========================
+// lead CRUD endpoints
 
 // GET /leads — List all leads (with label info)
 router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
@@ -557,9 +551,7 @@ router.patch('/:id/restore', authMiddleware, requirePermission('crm.leads', 'upd
   }
 });
 
-// ========================
-// CHECKLISTS
-// ========================
+// checklists
 
 // GET /leads/:id/checklists
 router.get('/:id/checklists', authMiddleware, async (req: Request, res: Response) => {
