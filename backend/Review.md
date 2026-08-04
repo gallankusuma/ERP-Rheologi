@@ -1,99 +1,62 @@
-Team,
+Untuk CRM, reliability scope yang harus dibereskan:
 
-Saya sudah melakukan review terhadap integrasi modul Production, Inventory, PPIC, dan QC di branch `main`.
+P0 — wajib
+Tambahkan authentication dan permission pada seluruh endpoint Prospect.
+Conversion Prospect → Lead harus berada dalam satu database transaction.
+Jangan hapus Prospect setelah conversion; ubah menjadi converted agar histori funnel tetap ada.
+Conversion Lead → Client → Contact → Sales Order harus atomic.
+Tambahkan rollback jika pembuatan Client, Contact, atau Sales Order gagal.
+Validasi bahwa user hanya dapat melihat atau mengubah Prospect/Lead sesuai ownership dan role.
+P1 — sebelum sign-off
+Tentukan clients sebagai customer master utama.
+Hentikan duplikasi fungsi customers dan clients, atau jadikan customers compatibility layer sementara.
+Buat aturan state transition Prospect dan Lead.
+Stage Won tidak boleh sekadar drag-and-drop tanpa conversion validation.
+Gunakan soft delete/archive untuk Prospect dan Lead.
+Tambahkan duplicate detection berdasarkan perusahaan, email, nomor telepon, atau identifier bisnis.
+Buat nomor Prospect, Client, dan Sales Order dengan sequence yang aman terhadap concurrency.
+Tambahkan audit log untuk assignment, stage change, conversion, archive, dan creation Sales Order.
+Validasi file attachment berdasarkan MIME type, extension, ukuran, dan authorization.
+Reliability scenarios
 
-Secara flow, modul sudah mencakup Planning → MRP → Work Order → Material Issue → Production Execution → QC → Yield/Scrap → FG Receipt → Production History. Namun, implementasi saat ini belum aman untuk dinyatakan production-ready dan belum disarankan digunakan untuk transaksi operasional nyata.
+Tim perlu membuktikan skenario berikut:
 
-## P0 — Blocking Security Issues
+Create Prospect
+→ Assign Salesperson
+→ Follow-up
+→ Qualify
+→ Convert to Lead
+→ Update Pipeline
+→ Mark Won
+→ Create/Link Client
+→ Optional Sales Order
 
-2. Hapus seluruh file credential dan backup dari repository, termasuk `CREDENTIALS.txt`, backup ZIP, database dump, dan binlog.
-3. Rotate seluruh password, JWT secret, database credential, API key, dan deployment credential yang pernah tersimpan dalam repository.
-4. Rewrite Git history karena menghapus file melalui commit biasa tidak menghilangkan credential dari history.
-5. Tambahkan secret scanning pada CI dan pre-commit hook.
+Kemudian test kegagalannya:
 
-## P0 — Transaction and Inventory Integrity
+dua user convert Prospect yang sama bersamaan;
+company yang sama sudah memiliki Client;
+pembuatan Contact gagal;
+Sales Order item tidak valid;
+request conversion dikirim dua kali;
+user tanpa permission mencoba conversion;
+Lead dihapus setelah memiliki Sales Order;
+perubahan stage dilakukan ke nilai tidak valid.
+Definition of Done CRM
 
-1. Material issue harus dijalankan dalam satu database transaction:
-   - lock inventory row;
-   - validate available stock;
-   - create issue transaction;
-   - update WO material issued quantity;
-   - update stock balance;
-   - commit atau rollback seluruh proses.
+CRM baru gue tandai Firm / Approved kalau:
 
-2. Sistem tidak boleh mengizinkan stock balance negatif.
+[ ] Tidak ada endpoint CRM sensitif tanpa auth
+[ ] Permission matrix diterapkan backend
+[ ] Prospect conversion atomic
+[ ] Lead conversion atomic
+[ ] Conversion dapat di-retry dengan aman
+[ ] Histori Prospect tidak hilang
+[ ] Clients menjadi source of truth
+[ ] Stage transition tervalidasi
+[ ] Delete memakai archive/soft delete
+[ ] Audit log tersedia
+[ ] Migration tersedia dan repeatable
+[ ] E2E Prospect → Lead → Client → SO lulus
+[ ] Semua P0/P1 ditutup
 
-3. FG receipt harus dijalankan dalam transaction dan wajib memvalidasi:
-   - WO sudah completed;
-   - mandatory QC sudah passed;
-   - batch sudah approved/released;
-   - total receipt tidak melebihi recorded output;
-   - request bersifat idempotent agar double-click atau retry tidak menggandakan stok.
-
-## P1 — Manufacturing Logic
-
-1. Terapkan WO state machine yang konsisten:
-   `draft → approved → released → in_progress → on_hold → completed → closed`.
-
-2. Start WO hanya boleh dilakukan jika:
-   - BOM version sudah dikunci;
-   - WO sudah approved/released;
-   - line process sudah dipilih;
-   - material availability sudah tervalidasi;
-   - required QC checkpoints sudah dibuat.
-
-3. Complete WO hanya boleh dilakukan jika:
-   - seluruh mandatory process selesai;
-   - mandatory QC passed;
-   - yield dan scrap sudah direkam;
-   - material reconciliation sudah selesai.
-
-4. Jangan hard-delete WO yang sudah memiliki transaksi. Gunakan cancellation/void workflow dan audit trail.
-
-## P1 — MRP and Traceability
-
-1. Perbaiki query MRP karena inventory saat ini dapat terduplikasi untuk material yang mempunyai stok di beberapa warehouse.
-2. Definisikan apakah availability menggunakan satu warehouse produksi atau gabungan warehouse.
-3. Pisahkan on-hand, reserved, allocated, issued, incoming PO, dan available-to-promise.
-4. Tambahkan recursive BOM explosion atau nyatakan dengan jelas bahwa implementasi hanya mendukung single-level BOM.
-5. Buat tabel transaksi `wo_material_issues`. Satu WO material harus dapat menggunakan beberapa batch/lot dan beberapa partial issue.
-6. Setiap issue harus menyimpan warehouse, location, batch, quantity, operator, timestamp, dan reversal reference.
-
-## P1 — Schema and Migration
-
-1. Satukan seluruh perubahan database dalam versioned migration.
-2. Normalisasi status menjadi satu format dan satu vocabulary.
-3. Ubah `actual_start` dan `actual_end` dari `DATE` menjadi `DATETIME` atau `TIMESTAMP`.
-4. Pastikan clean database dapat dibangun hanya dengan menjalankan migration resmi.
-5. Hilangkan SQL check/fix ad-hoc dari repository utama atau pindahkan ke folder maintenance yang terdokumentasi.
-
-## P1 — Authorization
-
-Tambahkan permission middleware untuk minimal:
-
-- create/update/release WO;
-- start, pause, resume, dan complete production;
-- issue dan reverse material;
-- record yield;
-- receive finished goods;
-- trigger/approve QC;
-- cancel atau delete transaksi.
-
-Authentication saja tidak cukup untuk transaksi produksi dan inventory.
-
-## Acceptance Criteria
-
-Perubahan dapat dinyatakan siap diuji ketika:
-
-- tidak ada credential atau secret di repository dan history;
-- database baru dapat dibuat dari migration tanpa manual SQL;
-- stock tidak dapat negatif;
-- issue dan receipt rollback sepenuhnya saat terjadi error;
-- material consumption dapat ditelusuri sampai lot bahan baku;
-- FG receipt tidak dapat melebihi output yang disetujui;
-- batch tidak dapat released sebelum QC approval;
-- seluruh WO state transition tervalidasi;
-- tersedia automated integration test untuk satu complete production cycle;
-- build, lint, migration, dan test wajib lolos di CI.
-
-Status review: **Changes required — do not go live before P0 items are resolved.**
+Hardcoded founder access kita pisahkan sebagai Accepted Owner Risk, sehingga tidak menghentikan review modul lain. Namun semua kontrol akses operasional CRM tetap wajib berfungsi.

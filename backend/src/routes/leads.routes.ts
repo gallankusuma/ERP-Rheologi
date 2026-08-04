@@ -1,9 +1,41 @@
 import { Router, Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+
+// ========================================
+// LEAD STATE MACHINE
+// ========================================
+const LEAD_TRANSITIONS: Record<string, string[]> = {
+  'New':          ['Qualified', 'Lost'],
+  'Qualified':    ['Discussion', 'Lost'],
+  'Discussion':   ['Negotiation', 'Lost', 'Qualified'],
+  'Negotiation':  ['Won', 'Lost', 'Discussion'],
+  'Won':          [],   // terminal — must go through conversion
+  'Lost':         ['New'],  // can reactivate
+};
+
+function validateLeadTransition(current: string, next: string): { valid: boolean; error?: string } {
+  const allowed = LEAD_TRANSITIONS[current];
+  if (!allowed) return { valid: false, error: `Unknown lead stage '${current}'` };
+  if (!allowed.includes(next)) {
+    return { valid: false, error: `Cannot transition lead from '${current}' to '${next}'. Allowed: [${allowed.join(', ')}]` };
+  }
+  return { valid: true };
+}
+
+// Allowed MIME types for attachments
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain', 'text/csv',
+];
+const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.csv'];
 
 const router = Router();
 
@@ -19,7 +51,17 @@ const storage = multer.diskStorage({
     cb(null, unique + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype) || !ALLOWED_EXTENSIONS.includes(ext)) {
+      return cb(new Error(`File type not allowed: ${file.mimetype} (${ext}). Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`));
+    }
+    cb(null, true);
+  }
+});
 
 // ===== Helper: Log Activity =====
 const logActivity = async (leadId: number | string, userId: number | null, action: string, details: string) => {
@@ -338,7 +380,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
        client_id || null, description || null, due_date || null, req.params.id]
     );
     const userId = (req as any).user?.userId || null;
-    await logActivity(req.params.id, userId, 'updated', `Updated lead: ${company}`);
+    await logActivity(req.params.id as string, userId, 'updated', `Updated lead: ${company}`);
     res.json({ success: true, message: 'Lead updated' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to update lead' });
@@ -349,13 +391,35 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 router.patch('/:id/stage', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { stage } = req.body;
-    const old = await dbGet('SELECT stage, company FROM leads WHERE id=?', [req.params.id]) as any;
+    if (!stage) return res.status(400).json({ success: false, error: 'Stage is required' });
+
+    const old = await dbGet('SELECT * FROM leads WHERE id=?', [req.params.id]) as any;
+    if (!old) return res.status(404).json({ success: false, error: 'Lead not found' });
+
+    // State machine validation
+    if (old.stage !== stage) {
+      const transition = validateLeadTransition(old.stage, stage);
+      if (!transition.valid) {
+        return res.status(400).json({ success: false, error: transition.error });
+      }
+    }
+
+    // Won stage requires conversion validation — must have client_id or trigger convert
+    if (stage === 'Won' && !old.client_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot mark as Won without converting to a Client first. Use the Convert action instead.',
+        require_conversion: true
+      });
+    }
+
     await dbRun('UPDATE leads SET stage=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [stage, req.params.id]);
     const userId = (req as any).user?.userId || null;
-    await logActivity(req.params.id, userId, 'stage_changed', `Stage: ${old?.stage} → ${stage}`);
+    await logActivity(req.params.id as string, userId, 'stage_changed', `Stage: ${old.stage} → ${stage}`);
     res.json({ success: true, message: 'Stage updated' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to update stage' });
+  } catch (error: any) {
+    console.error('Stage update error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to update stage' });
   }
 });
 
@@ -376,7 +440,7 @@ router.patch('/:id/due-date', authMiddleware, async (req: Request, res: Response
     const { due_date } = req.body;
     await dbRun('UPDATE leads SET due_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [due_date || null, req.params.id]);
     const userId = (req as any).user?.userId || null;
-    await logActivity(req.params.id, userId, 'due_date_set', `Due date: ${due_date || 'removed'}`);
+    await logActivity(req.params.id as string, userId, 'due_date_set', `Due date: ${due_date || 'removed'}`);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update due date' });
@@ -391,7 +455,7 @@ router.patch('/:id/assign', authMiddleware, async (req: Request, res: Response) 
     const userId = (req as any).user?.userId || null;
     if (assigned_to) {
       const user = await dbGet('SELECT full_name FROM users WHERE id=?', [assigned_to]) as any;
-      await logActivity(req.params.id, userId, 'assigned', `Assigned to ${user?.full_name || 'user #' + assigned_to}`);
+      await logActivity(req.params.id as string, userId, 'assigned', `Assigned to ${user?.full_name || 'user #' + assigned_to}`);
     }
     res.json({ success: true });
   } catch (error) {
@@ -411,39 +475,32 @@ router.patch('/:id/description', authMiddleware, async (req: Request, res: Respo
 });
 
 // DELETE /leads/:id
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('crm.leads', 'delete'), async (req: Request, res: Response) => {
   try {
-    const lead = await dbGet('SELECT id, company FROM leads WHERE id = ?', [req.params.id]) as any;
+    const lead = await dbGet('SELECT * FROM leads WHERE id = ?', [req.params.id]) as any;
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
 
-    // Cascade delete related records (FK constraints)
-    // 1. Delete checklist items (child of checklists)
-    const checklists = await dbAll('SELECT id FROM lead_checklists WHERE lead_id = ?', [req.params.id]) as any[];
-    for (const cl of checklists) {
-      await dbRun('DELETE FROM lead_checklist_items WHERE checklist_id = ?', [cl.id]);
+    // Leads with Sales Orders cannot be deleted
+    const hasSO = await dbGet('SELECT id FROM sales_orders WHERE lead_id = ?', [req.params.id]);
+    if (hasSO) {
+      return res.status(400).json({ success: false, error: 'Cannot delete lead with associated Sales Orders. Archive instead.' });
     }
-    // 2. Delete checklists
-    await dbRun('DELETE FROM lead_checklists WHERE lead_id = ?', [req.params.id]);
-    // 3. Delete label assignments
-    await dbRun('DELETE FROM lead_label_assignments WHERE lead_id = ?', [req.params.id]);
-    // 4. Delete comments
-    await dbRun('DELETE FROM lead_comments WHERE lead_id = ?', [req.params.id]);
-    // 5. Delete activities
-    await dbRun('DELETE FROM lead_activities WHERE lead_id = ?', [req.params.id]);
-    // 6. Delete attachments (+ files)
-    const attachments = await dbAll('SELECT file_path FROM lead_attachments WHERE lead_id = ?', [req.params.id]) as any[];
-    for (const att of attachments) {
-      const filePath = path.join(uploadDir, att.file_path);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    }
-    await dbRun('DELETE FROM lead_attachments WHERE lead_id = ?', [req.params.id]);
-    // 7. Finally delete the lead
-    await dbRun('DELETE FROM leads WHERE id = ?', [req.params.id]);
 
-    res.json({ success: true, message: 'Lead deleted' });
+    // Converted leads cannot be deleted
+    if (lead.client_id || lead.stage === 'Won') {
+      return res.status(400).json({ success: false, error: 'Cannot delete a converted lead. Archive instead.' });
+    }
+
+    // Soft delete: archive the lead
+    await dbRun('UPDATE leads SET stage = ?, is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['Archived', req.params.id]);
+
+    const userId = (req as any).user?.userId || null;
+    await logActivity(req.params.id as string, userId, 'archived', `Lead archived: ${lead.company}`);
+
+    res.json({ success: true, message: 'Lead archived' });
   } catch (error) {
     console.error('Delete lead error:', error);
-    res.status(500).json({ success: false, error: 'Failed to delete lead' });
+    res.status(500).json({ success: false, error: 'Failed to archive lead' });
   }
 });
 
@@ -642,7 +699,7 @@ router.post('/:id/attachments', authMiddleware, upload.single('file'), async (re
     const result = await dbRun(`
       INSERT INTO lead_attachments (lead_id, file_name, file_path, file_type, file_size, uploaded_by) VALUES (?,?,?,?,?,?)
     `, [req.params.id, originalname, filename, fileType, size, userId]);
-    await logActivity(req.params.id, userId, 'attachment_added', `Uploaded: ${originalname}`);
+    await logActivity(req.params.id as string, userId, 'attachment_added', `Uploaded: ${originalname}`);
     res.status(201).json({ id: result.insertId, file_name: originalname, file_path: filename, file_type: fileType, file_size: size });
   } catch (error) {
     res.status(500).json({ error: 'Failed to upload' });
@@ -666,94 +723,123 @@ router.delete('/attachments/:attachmentId', authMiddleware, async (req: Request,
 // ========================
 // CONVERT TO CLIENT (with optional SO creation)
 // ========================
-router.post('/:id/convert', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'convert'), async (req: Request, res: Response) => {
   try {
     const { create_so, so_items } = req.body;
-    const lead = await dbGet('SELECT * FROM leads WHERE id = ?', [req.params.id]) as any;
-    if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
-    if (lead.client_id) {
-      return res.json({ success: true, message: 'Lead already linked to client', client_id: lead.client_id });
-    }
+    const userId = (req as any).user?.userId || null;
 
-    // Step 1: Create or find Client
-    const existing = await dbGet('SELECT id FROM clients WHERE name = ?', [lead.company]) as any;
-    let clientId;
-    if (existing) {
-      clientId = existing.id;
-    } else {
-      const code = 'CLI-' + Date.now();
-      const result = await dbRun(
-        `INSERT INTO clients (code, name, organization, phone, is_active) VALUES (?, ?, ?, ?, 1)`,
-        [code, lead.company, lead.company, lead.phone || null]
-      );
-      clientId = result.insertId;
-    }
+    const result = await dbTransaction(async (conn) => {
+      // 1. Lock and validate lead
+      const [leadRows] = await conn.execute('SELECT * FROM leads WHERE id = ? FOR UPDATE', [req.params.id]);
+      const lead = leadRows[0];
+      if (!lead) throw new Error('Lead not found');
+      if (lead.client_id) throw new Error('Lead already converted to client');
 
-    // Step 2: Create contact from lead info
-    if (lead.contact_person || lead.email) {
-      try {
-        await dbRun(
-          `INSERT INTO contacts (client_id, name, email, phone, is_primary) VALUES (?, ?, ?, ?, 1)`,
-          [clientId, lead.contact_person || lead.company, lead.email || null, lead.phone || null]
-        );
-      } catch { /* ignore duplicate */ }
-    }
-
-    // Step 3: Update lead
-    await dbRun(
-      'UPDATE leads SET client_id = ?, stage = ?, converted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [clientId, 'Won', req.params.id]
-    );
-
-    const userId = (req as any).user?.userId || (req as any).userId || null;
-    await logActivity(req.params.id, userId, 'converted', `Converted to client #${clientId}`);
-
-    let soId = null;
-    let soNumber = null;
-
-    // Step 4: Optionally create Sales Order
-    if (create_so) {
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const rand = Math.floor(1000 + Math.random() * 9000);
-      soNumber = `SO-${dateStr}-${rand}`;
-      const soDate = new Date().toISOString().split('T')[0];
-
-      const soResult = await dbRun(
-        `INSERT INTO sales_orders (so_number, client_id, lead_id, so_date, status, currency, total_amount, notes)
-         VALUES (?, ?, ?, ?, 'draft', 'IDR', ?, ?)`,
-        [soNumber, clientId, lead.id, soDate, lead.value || 0, `Created from Lead: ${lead.company}`]
-      );
-      soId = soResult.insertId;
-
-      // If SO items provided, insert them
-      if (Array.isArray(so_items) && so_items.length > 0) {
-        let total = 0;
-        for (const item of so_items) {
-          const lineTotal = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
-          total += lineTotal;
-          await dbRun(
-            'INSERT INTO so_items (so_id, product_id, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
-            [soId, item.product_id, item.quantity, item.unit_price || 0, lineTotal]
-          );
+      // 2. Find or create Client (with duplicate check)
+      let clientId;
+      const [existingClients] = await conn.execute('SELECT id FROM clients WHERE name = ?', [lead.company]);
+      if (existingClients[0]) {
+        clientId = existingClients[0].id;
+      } else {
+        // Concurrency-safe client code
+        const [lastClient] = await conn.execute("SELECT code FROM clients WHERE code LIKE 'CLI-%' ORDER BY id DESC LIMIT 1 FOR UPDATE");
+        let clientCode = 'CLI-0001';
+        if (lastClient[0]) {
+          const num = parseInt(lastClient[0].code.replace('CLI-', ''), 10);
+          clientCode = `CLI-${String(num + 1).padStart(4, '0')}`;
         }
-        if (total > 0) {
-          await dbRun('UPDATE sales_orders SET total_amount = ? WHERE id = ?', [total, soId]);
+        const [clientResult] = await conn.execute(
+          `INSERT INTO clients (code, name, organization, phone, is_active) VALUES (?, ?, ?, ?, 1)`,
+          [clientCode, lead.company, lead.company, lead.phone || null]
+        );
+        clientId = (clientResult as any).insertId;
+      }
+
+      // 3. Create contact from lead info (within transaction — no silent ignore)
+      if (lead.contact_name || lead.email) {
+        const [existingContact] = await conn.execute(
+          'SELECT id FROM contacts WHERE client_id = ? AND email = ?', [clientId, lead.email || '']
+        );
+        if (existingContact.length === 0) {
+          await conn.execute(
+            `INSERT INTO contacts (client_id, name, email, phone, is_primary) VALUES (?, ?, ?, ?, 1)`,
+            [clientId, lead.contact_name || lead.company, lead.email || null, lead.phone || null]
+          );
         }
       }
 
-      await logActivity(req.params.id, userId, 'so_created', `Sales Order ${soNumber} created from lead`);
+      // 4. Update lead status to Won + link client
+      await conn.execute(
+        'UPDATE leads SET client_id = ?, stage = ?, converted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [clientId, 'Won', req.params.id]
+      );
+
+      let soId = null;
+      let soNumber = null;
+
+      // 5. Optionally create Sales Order (also in transaction)
+      if (create_so) {
+        // Concurrency-safe SO number
+        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const [lastSO] = await conn.execute(
+          `SELECT so_number FROM sales_orders WHERE so_number LIKE ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+          [`SO-${dateStr}-%`]
+        );
+        let seq = 1;
+        if (lastSO[0]) {
+          const parts = lastSO[0].so_number.split('-');
+          seq = parseInt(parts[parts.length - 1], 10) + 1;
+        }
+        soNumber = `SO-${dateStr}-${String(seq).padStart(4, '0')}`;
+        const soDate = new Date().toISOString().split('T')[0];
+
+        const [soResult] = await conn.execute(
+          `INSERT INTO sales_orders (so_number, client_id, lead_id, so_date, status, currency, total_amount, notes)
+           VALUES (?, ?, ?, ?, 'draft', 'IDR', ?, ?)`,
+          [soNumber, clientId, lead.id, soDate, lead.value || 0, `Created from Lead: ${lead.company}`]
+        );
+        soId = (soResult as any).insertId;
+
+        // Insert SO items if provided
+        if (Array.isArray(so_items) && so_items.length > 0) {
+          let total = 0;
+          for (const item of so_items) {
+            if (!item.product_id || !item.quantity) {
+              throw new Error(`Invalid SO item: product_id and quantity are required`);
+            }
+            const lineTotal = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+            total += lineTotal;
+            await conn.execute(
+              'INSERT INTO so_items (so_id, product_id, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
+              [soId, item.product_id, item.quantity, item.unit_price || 0, lineTotal]
+            );
+          }
+          if (total > 0) {
+            await conn.execute('UPDATE sales_orders SET total_amount = ? WHERE id = ?', [total, soId]);
+          }
+        }
+      }
+
+      return { clientId, soId, soNumber, company: lead.company };
+    });
+
+    await logActivity(req.params.id as string, userId, 'converted', `Converted to client #${result.clientId}`);
+    if (result.soId) {
+      await logActivity(req.params.id as string, userId, 'so_created', `Sales Order ${result.soNumber} created`);
     }
 
     res.json({
       success: true,
-      message: create_so ? 'Lead converted to client + Sales Order created' : 'Lead converted to client',
-      client_id: clientId,
-      so_id: soId,
-      so_number: soNumber
+      message: result.soId ? 'Lead converted to client + Sales Order created' : 'Lead converted to client',
+      client_id: result.clientId,
+      so_id: result.soId,
+      so_number: result.soNumber
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Convert lead error:', error);
-    res.status(500).json({ success: false, error: 'Failed to convert lead' });
+    const msg = error.message || 'Failed to convert lead';
+    const status = msg.includes('already converted') || msg.includes('Invalid SO item') ? 400 : 500;
+    res.status(status).json({ success: false, error: msg });
   }
 });
 
