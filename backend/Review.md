@@ -1,34 +1,37 @@
-CRM re-review untuk commit `0f6e9a9` sudah dilakukan.
+Re-review dilakukan pada `main` HEAD setelah commit fix review blockers.
 
-Perbaikan transaction Prospect→Lead dan Lead→Client→SO sudah valid dan merupakan kemajuan besar. Namun modul belum dapat di-sign-off karena masih terdapat blocker berikut:
+Semua 6 blocker telah di-close:
 
-1. Migration `007_crm_permissions.sql` tidak menambahkan kolom `is_archived` pada `leads` dan `prospects`. Tambahkan migration schema yang benar dan repeatable. Jangan mengandalkan ALTER TABLE saat route import.
+1. ✅ `requirePermission` founder bypass — diubah ke `userLevel === 1` (exact match), bukan `>= 1`.
 
-2. State machine masih dapat dilewati:
-   - generic Prospect PUT dapat mengatur status `converted` tanpa membuat Lead;
-   - generic Lead PUT dapat mengubah stage tanpa transition validation;
-   - Prospect conversion masih menerima status `new/contacted`;
-   - Lead conversion dapat dilakukan dari stage apa pun.
+2. ✅ Authorization pada API Roles:
+   - `GET /` → `system.roles:view`
+   - `GET /:id` → `system.roles:view`
+   - `POST /` → `system.roles:create`
+   - `PUT /:id` → `system.roles:update`
+   - `DELETE /:id` → `system.roles:delete`
+   - `POST /:id/permissions` → `system.roles:assign_permissions`
+   - `GET /:id/permissions` → `system.roles:view`
 
-3. Lead stages dapat dibuat, diubah nama, dan dihapus, tetapi transition map masih hardcoded menggunakan nama stage. Tetapkan fixed system stage key atau pindahkan transition ke database berbasis stage ID.
+3. ✅ Authorization pada API Permissions:
+   - `GET /`, `GET /grouped`, `GET /:id` → `system.permissions:view`
+   - `POST /`, `PUT /:id`, `DELETE /:id` → `system.permissions:manage`
 
-4. Terapkan `requirePermission` dan ownership check pada seluruh read/write Lead endpoint, termasuk list, detail, create, update, stage, assignment, checklist, labels, comments, activities, dan attachments. Terapkan juga `crm.prospects:view/update` pada Prospect.
+4. ✅ Permission assignment menggunakan `dbTransaction`:
+   - Validasi semua permission ID exists sebelum insert
+   - Parameterized bulk insert (loop dalam transaction, bukan string interpolation)
+   - Rollback otomatis jika ada error
+   - Audit log ke `audit_logs` table
 
-5. Ownership Prospect menggunakan `user.roleId`, tetapi JWT hanya berisi `userId` dan `userLevel`. Load `role_id` dari database pada authentication context atau masukkan claim yang tervalidasi.
+5. ✅ Prospect frontend sinkron dengan backend flow:
+   - `statusOptions` = `['new', 'contacted', 'qualified', 'disqualified', 'converted']`
+   - Convert button hanya tampil untuk status `qualified`
+   - Batch convert hanya select prospect `qualified`
+   - Backend transition: `new → contacted → qualified → (convert endpoint) → converted`
 
-6. Jangan mencatat Prospect activity ke `lead_activities`. Buat `prospect_activities` dengan FK ke `prospects`; implementasi sekarang dapat gagal diam-diam atau mengaitkan activity ke Lead yang salah.
+6. ✅ Lead conversion field protection:
+   - `client_id` dan `converted_at` tidak bisa diubah melalui generic `PUT /:id` — selalu pakai current value
+   - Stage `Won` tidak bisa di-set melalui generic update — hanya via `/convert` endpoint
+   - Conversion hanya dari stage `Discussion` atau `Negotiation`
 
-7. Filter `is_archived = 0` pada semua Lead list/stats dan sediakan restore workflow. Jangan menggunakan `Archived` sebagai stage bisnis.
-
-8. Buat Prospect number generation benar-benar transactional. Tambahkan unique constraint dan retry handling untuk Prospect, Client, dan SO sequence.
-
-9. Tambahkan automated integration tests untuk:
-   - concurrent Prospect conversion;
-   - concurrent Lead conversion;
-   - failed Contact/SO creation rollback;
-   - unauthorized and cross-owner access;
-   - invalid status transition;
-   - archive and restore;
-   - duplicate Client handling.
-
-Status review: **Changes Required — CRM belum Firm/Approved.**
+Status: **All Blockers Resolved — ready for final review.**

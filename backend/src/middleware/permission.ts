@@ -14,8 +14,8 @@ export function requirePermission(resource: string, action: string) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      // admin/founder bypass
-      if (user.roleId === 1 || (user.userLevel && user.userLevel >= 1)) {
+      // admin bypass (role_id=1) or founder bypass (userLevel exactly 1)
+      if (user.roleId === 1 || user.userLevel === 1) {
         return next();
       }
 

@@ -378,7 +378,7 @@ router.post('/', authMiddleware, requirePermission('crm.leads', 'create'), async
 // PUT /leads/:id — Update lead (with stage transition validation)
 router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
-    const { company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, client_id, description, due_date } = req.body;
+    const { company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, description, due_date } = req.body;
     
     // Load current lead for stage validation
     const current = await dbGet('SELECT * FROM leads WHERE id = ?', [req.params.id]) as any;
@@ -387,27 +387,28 @@ router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), asy
     // Validate stage transition if stage is changing
     const effectiveStage = stage || current.stage;
     if (stage && stage !== current.stage) {
+      // Won can only be set by the /convert endpoint
+      if (stage === 'Won') {
+        return res.status(400).json({ success: false, error: "Stage 'Won' can only be set via the Convert endpoint, not direct update." });
+      }
       const transition = validateLeadTransition(current.stage, stage);
       if (!transition.valid) {
         return res.status(400).json({ success: false, error: transition.error });
       }
-      // Won requires client conversion
-      if (stage === 'Won' && !current.client_id) {
-        return res.status(400).json({ success: false, error: 'Cannot set stage to Won without converting to Client first.', require_conversion: true });
-      }
     }
     
+    // client_id and converted_at are protected — only set by /convert endpoint
     await dbRun(
       `UPDATE leads SET company=?, contact_name=?, email=?, phone=?, stage=?, value=?, probability=?, source=?, color=?, notes=?, assigned_to=?, client_id=?, description=?, due_date=?, updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
       [company || current.company, contact_name || null, email || null, phone || null, effectiveStage, value || 0,
        probability || 10, source || null, color || null, notes || null, assigned_to || null,
-       client_id || null, description || null, due_date || null, req.params.id]
+       current.client_id, description || null, due_date || null, req.params.id]
     );
     const userId = (req as any).user?.userId || null;
     await logActivity(req.params.id as string, userId, 'updated', `Updated lead: ${company || current.company}`);
     if (stage && stage !== current.stage) {
-      await logActivity(req.params.id as string, userId, 'stage_changed', `Stage: ${current.stage} → ${stage}`);
+      await logActivity(req.params.id as string, userId, 'stage_changed', `Stage: ${current.stage} \u2192 ${stage}`);
     }
     res.json({ success: true, message: 'Lead updated' });
   } catch (error: any) {

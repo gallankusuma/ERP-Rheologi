@@ -72,8 +72,8 @@
             <tbody class="divide-y divide-gray-100">
               <tr v-for="p in prospects" :key="p.id" class="hover:bg-blue-50/40 transition-colors" :class="{ 'bg-blue-50/60': selectedProspects.includes(p.id) }">
                 <td class="px-3 py-3 text-center">
-                  <input v-if="p.status !== 'converted'" type="checkbox" :value="p.id" v-model="selectedProspects" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
-                  <span v-else class="text-green-500 text-sm">✓</span>
+                  <input v-if="p.status === 'qualified'" type="checkbox" :value="p.id" v-model="selectedProspects" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                  <span v-else-if="p.status === 'converted'" class="text-green-500 text-sm">✓</span>
                 </td>
                 <td class="px-4 py-3 font-mono text-gray-600">{{ p.code }}</td>
                 <td class="px-4 py-3">
@@ -105,7 +105,7 @@
                 <td class="px-4 py-3">
                   <div class="flex gap-1">
                     <button @click="openModal(p)" class="text-blue-600 hover:text-blue-800 text-sm font-medium" title="Edit">✏️</button>
-                    <button v-if="p.status !== 'converted'" @click="convertProspect(p)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Convert to Lead">🔄</button>
+                    <button v-if="p.status === 'qualified'" @click="convertProspect(p)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Convert to Lead">🔄</button>
                     <button @click="deleteProspect(p)" class="text-red-400 hover:text-red-600 text-sm font-medium" title="Delete">🗑</button>
                   </div>
                 </td>
@@ -260,11 +260,11 @@ const stats = reactive({ total: 0, active: 0, converted: 0, overdue: 0, totalVal
 const selectedProspects = ref<number[]>([]);
 
 const allSelected = computed(() => {
-  const convertable = prospects.value.filter(p => p.status !== 'converted');
+  const convertable = prospects.value.filter(p => p.status === 'qualified');
   return convertable.length > 0 && convertable.every(p => selectedProspects.value.includes(p.id));
 });
 
-const statusOptions = ['new', 'contacted', 'interested', 'unresponsive', 'disqualified', 'converted'];
+const statusOptions = ['new', 'contacted', 'qualified', 'disqualified', 'converted'];
 const sourceOptions = ['website', 'linkedin', 'referral', 'cold_call', 'email', 'event', 'trade_show', 'social_media', 'other'];
 
 const defaultForm = () => ({
@@ -288,8 +288,7 @@ const tempIcon = (t: string) => ({ hot: '🔥', warm: '🌤️', cold: '❄️' 
 const statusColor = (s: string) => ({
   new: 'bg-gray-100 text-gray-800',
   contacted: 'bg-blue-100 text-blue-800',
-  interested: 'bg-cyan-100 text-cyan-800',
-  unresponsive: 'bg-yellow-100 text-yellow-800',
+  qualified: 'bg-cyan-100 text-cyan-800',
   disqualified: 'bg-red-100 text-red-800',
   converted: 'bg-green-100 text-green-800',
 }[s] || 'bg-gray-100 text-gray-800');
@@ -432,7 +431,7 @@ const batchConvertToLeads = async () => {
 };
 
 const toggleSelectAll = () => {
-  const convertable = prospects.value.filter(p => p.status !== 'converted');
+  const convertable = prospects.value.filter(p => p.status === 'qualified');
   if (allSelected.value) {
     selectedProspects.value = [];
   } else {
