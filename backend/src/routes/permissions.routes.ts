@@ -5,6 +5,36 @@ import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
+// auto-seed system permissions on startup
+const seedSystemPermissions = async () => {
+  const systemPerms = [
+    { resource: 'system.roles', action: 'view', module: 'System', name: 'View Roles' },
+    { resource: 'system.roles', action: 'create', module: 'System', name: 'Create Roles' },
+    { resource: 'system.roles', action: 'update', module: 'System', name: 'Update Roles' },
+    { resource: 'system.roles', action: 'delete', module: 'System', name: 'Delete Roles' },
+    { resource: 'system.roles', action: 'assign_permissions', module: 'System', name: 'Assign Permissions' },
+    { resource: 'system.permissions', action: 'view', module: 'System', name: 'View Permissions' },
+    { resource: 'system.permissions', action: 'manage', module: 'System', name: 'Manage Permissions' },
+  ];
+  try {
+    for (const p of systemPerms) {
+      const existing = await dbGet(
+        'SELECT id FROM permissions WHERE resource = ? AND action = ?',
+        [p.resource, p.action]
+      );
+      if (!existing) {
+        await dbRun(
+          'INSERT INTO permissions (resource, action, module, name) VALUES (?, ?, ?, ?)',
+          [p.resource, p.action, p.module, p.name]
+        );
+      }
+    }
+  } catch (e) {
+    console.warn('System permissions seed skipped:', e);
+  }
+};
+seedSystemPermissions();
+
 // GET /permissions - Get all permissions
 router.get('/', authMiddleware, requirePermission('system.permissions', 'view'), async (req: Request, res: Response) => {
   try {
