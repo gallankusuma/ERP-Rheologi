@@ -36,7 +36,7 @@ const seedSystemPermissions = async () => {
 seedSystemPermissions();
 
 // GET /permissions - Get all permissions
-router.get('/', authMiddleware, requirePermission('system.permissions', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const permissions = await dbAll(
       'SELECT id, resource, action, module, name, description FROM permissions ORDER BY module, action',
@@ -49,7 +49,7 @@ router.get('/', authMiddleware, requirePermission('system.permissions', 'view'),
 });
 
 // GET /permissions/grouped - Get permissions grouped by module
-router.get('/grouped', authMiddleware, requirePermission('system.permissions', 'view'), async (req: Request, res: Response) => {
+router.get('/grouped', authMiddleware, async (req: Request, res: Response) => {
   try {
     const permissions = await dbAll(
       'SELECT id, resource, action, module, name, description FROM permissions ORDER BY module, FIELD(action, "view","create","edit","delete","approve","export")',
@@ -71,7 +71,7 @@ router.get('/grouped', authMiddleware, requirePermission('system.permissions', '
 });
 
 // GET /permissions/:id - Get permission by ID
-router.get('/:id', authMiddleware, requirePermission('system.permissions', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const permission = await dbGet('SELECT * FROM permissions WHERE id = ?', [req.params.id]);
     if (!permission) {

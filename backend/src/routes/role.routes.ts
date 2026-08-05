@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/roles - Get all roles
-router.get('/', authMiddleware, requirePermission('system.roles', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const roles = await dbAll('SELECT * FROM roles ORDER BY level DESC, name ASC', []);
     res.json({ data: roles });
@@ -17,7 +17,7 @@ router.get('/', authMiddleware, requirePermission('system.roles', 'view'), async
 });
 
 // GET /api/roles/:id - Get specific role with permissions
-router.get('/:id', authMiddleware, requirePermission('system.roles', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const role = await dbGet('SELECT * FROM roles WHERE id = ?', [req.params.id]);
     if (!role) {
@@ -165,7 +165,7 @@ router.post('/:id/permissions', authMiddleware, requirePermission('system.roles'
 });
 
 // GET /api/roles/:id/permissions - Get role's permission IDs
-router.get('/:id/permissions', authMiddleware, requirePermission('system.roles', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/permissions', authMiddleware, async (req: Request, res: Response) => {
   try {
     const permissions = await dbAll(
       'SELECT permission_id FROM role_permissions WHERE role_id = ?',
