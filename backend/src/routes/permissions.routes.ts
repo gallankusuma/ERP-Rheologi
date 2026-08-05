@@ -5,7 +5,7 @@ import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
-// auto-seed system permissions on startup
+// auto-seed system permissions and assign to Admin role on startup
 const seedSystemPermissions = async () => {
   const systemPerms = [
     { resource: 'system.roles', action: 'view', module: 'System', name: 'View Roles' },
@@ -17,6 +17,7 @@ const seedSystemPermissions = async () => {
     { resource: 'system.permissions', action: 'manage', module: 'System', name: 'Manage Permissions' },
   ];
   try {
+    // seed permission records
     for (const p of systemPerms) {
       const existing = await dbGet(
         'SELECT id FROM permissions WHERE resource = ? AND action = ?',
@@ -27,6 +28,26 @@ const seedSystemPermissions = async () => {
           'INSERT INTO permissions (resource, action, module, name) VALUES (?, ?, ?, ?)',
           [p.resource, p.action, p.module, p.name]
         );
+      }
+    }
+
+    // auto-assign all system.* permissions to Admin role (code='ADM')
+    const adminRole = await dbGet("SELECT id FROM roles WHERE code = 'ADM'") as any;
+    if (adminRole) {
+      const allSystemPerms = await dbAll(
+        "SELECT id FROM permissions WHERE resource LIKE 'system.%'"
+      ) as any[];
+      for (const perm of allSystemPerms) {
+        const alreadyAssigned = await dbGet(
+          'SELECT role_id FROM role_permissions WHERE role_id = ? AND permission_id = ?',
+          [adminRole.id, perm.id]
+        );
+        if (!alreadyAssigned) {
+          await dbRun(
+            'INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
+            [adminRole.id, perm.id]
+          );
+        }
       }
     }
   } catch (e) {
