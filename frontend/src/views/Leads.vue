@@ -250,7 +250,7 @@
 
               <!-- Convert to Client Button -->
               <button
-                v-if="['Discussion', 'Negotiation'].includes(lead.stage) && !lead.client_id"
+                v-if="['Discussion', 'Proposal', 'Negotiation'].includes(lead.stage) && !lead.client_id"
                 @click.stop="convertToClient(lead)"
                 class="mt-2 w-full text-[10px] py-1.5 rounded-md bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold hover:from-green-600 hover:to-emerald-700 transition-all"
               >🔄 Convert to Client</button>
@@ -278,17 +278,30 @@
           <h3 class="text-lg font-bold text-gray-900">{{ editingLead ? 'Edit Lead' : 'Add New Lead' }}</h3>
         </div>
         <div class="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
-          <!-- Client Selector -->
+          <!-- Lead Type: explicit — a Lead is either a brand-new opportunity or tied to an
+               existing Client from the start (Review.md P0 #4) -->
           <div class="bg-blue-50 rounded-lg p-3 border border-blue-100">
-            <label class="block text-xs font-semibold text-blue-700 mb-1.5">Link to Existing Client (optional)</label>
+            <label class="block text-xs font-semibold text-blue-700 mb-2">Lead Type</label>
+            <div class="flex gap-2 mb-2">
+              <button type="button" @click="leadType = 'new'; formLead.client_id = null"
+                class="flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-all"
+                :class="leadType === 'new' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-300'"
+              >🆕 New Business</button>
+              <button type="button" @click="leadType = 'existing'"
+                class="flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-all"
+                :class="leadType === 'existing' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-300'"
+              >🏢 Existing Client Opportunity</button>
+            </div>
             <select
+              v-if="leadType === 'existing'"
               v-model="formLead.client_id"
               @change="onClientSelect"
               class="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500"
             >
-              <option :value="null">— New Prospect (manual input) —</option>
+              <option :value="null">— Select a Client —</option>
               <option v-for="c in clients" :key="c.id" :value="c.id">{{ c.name }} {{ c.organization ? '(' + c.organization + ')' : '' }}</option>
             </select>
+            <p v-else class="text-xs text-blue-600/70">No Client yet — this Lead starts as a fresh opportunity.</p>
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div>
@@ -394,6 +407,7 @@
           <h3 class="text-lg font-bold text-gray-900">⚙️ Manage Pipeline Stages</h3>
           <button @click="showStageManager = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
+        <p class="px-6 pt-3 text-xs text-gray-500">The pipeline uses a fixed set of business stages for this CRM version — you can reorder them and change their colors, but not rename, add or delete them.</p>
         <div class="px-6 py-5 space-y-2 max-h-[50vh] overflow-y-auto">
           <div v-for="(stage, idx) in stagesData" :key="stage.id"
             class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-blue-300 bg-white group transition-all">
@@ -405,30 +419,11 @@
             <!-- Color Picker -->
             <input type="color" v-model="stage.color" @change="updateStage(stage)"
               class="w-7 h-7 rounded-full border-2 border-gray-200 cursor-pointer p-0" :title="'Stage color'" />
-            <!-- Name -->
-            <input v-model="stage.name" @blur="updateStage(stage)" @keydown.enter="($event.target as HTMLInputElement).blur()"
-              class="flex-1 px-3 py-1.5 border border-transparent hover:border-gray-300 focus:border-blue-400 rounded-lg text-sm font-medium text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400 transition-all bg-transparent" />
-            <!-- Delete -->
-            <button @click="deleteStage(stage)" :disabled="stagesData.length <= 1"
-              class="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-20 disabled:cursor-not-allowed p-1"
-              title="Delete stage">
-              🗑
-            </button>
+            <!-- Name (read-only: fixed business stage) -->
+            <span class="flex-1 px-3 py-1.5 text-sm font-medium text-gray-800">{{ stage.name }}</span>
+            <span class="text-gray-300 text-sm" title="Fixed business stage — cannot be renamed or deleted">🔒</span>
           </div>
           <div v-if="stagesData.length === 0" class="text-center py-6 text-gray-400 text-sm">No stages configured</div>
-        </div>
-        <!-- Add New Stage -->
-        <div class="px-6 py-4 border-t border-gray-200 bg-gray-50">
-          <div class="flex gap-2">
-            <input type="color" v-model="newStageColor" class="w-9 h-9 rounded-lg border border-gray-300 cursor-pointer p-0" />
-            <input v-model="newStageName" type="text" placeholder="New stage name..."
-              @keydown.enter="addStage"
-              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <button @click="addStage" :disabled="!newStageName.trim()"
-              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50 transition-all">
-              + Add
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -507,10 +502,6 @@ const stageColorMap = computed(() => {
   return m;
 });
 
-// Stage manager form
-const newStageName = ref('');
-const newStageColor = ref('#6b7280');
-
 const sources = ['Website', 'LinkedIn', 'Referral', 'Cold Call', 'Email', 'Event', 'Google', 'Facebook', 'Twitter', 'Elsewhere', 'Other'];
 
 const emptyForm = () => ({
@@ -520,6 +511,8 @@ const emptyForm = () => ({
 });
 
 const formLead = ref(emptyForm());
+// explicit Lead type (Review.md P0 #4) — 'existing' requires picking a Client, 'new' keeps client_id null
+const leadType = ref<'new' | 'existing'>('new');
 const leads = ref<Lead[]>([]);
 const clients = ref<any[]>([]);
 
@@ -593,6 +586,7 @@ const fetchLeads = async () => {
 const openAddLeadModal = () => {
   editingLead.value = null;
   formLead.value = emptyForm();
+  leadType.value = 'new';
   showModal.value = true;
 };
 
@@ -626,11 +620,16 @@ const openEditModal = (lead: Lead) => {
     notes: lead.notes || '',
     client_id: lead.client_id || null
   };
+  leadType.value = lead.client_id ? 'existing' : 'new';
   showModal.value = true;
 };
 
 const saveLead = async () => {
   if (!formLead.value.company) return;
+  if (leadType.value === 'existing' && !formLead.value.client_id) {
+    alert('Please select a Client for an Existing Client Opportunity.');
+    return;
+  }
   saving.value = true;
   try {
     if (editingLead.value) {
@@ -798,46 +797,20 @@ const fetchStages = async () => {
       { id: 0, name: 'New', color: '#6b7280', sort_order: 0, is_default: 1 },
       { id: 0, name: 'Qualified', color: '#3b82f6', sort_order: 1, is_default: 1 },
       { id: 0, name: 'Discussion', color: '#06b6d4', sort_order: 2, is_default: 1 },
-      { id: 0, name: 'Negotiation', color: '#8b5cf6', sort_order: 3, is_default: 1 },
-      { id: 0, name: 'Won', color: '#22c55e', sort_order: 4, is_default: 1 },
-      { id: 0, name: 'Lost', color: '#ef4444', sort_order: 5, is_default: 1 },
+      { id: 0, name: 'Proposal', color: '#f59e0b', sort_order: 3, is_default: 1 },
+      { id: 0, name: 'Negotiation', color: '#8b5cf6', sort_order: 4, is_default: 1 },
+      { id: 0, name: 'Won', color: '#22c55e', sort_order: 5, is_default: 1 },
+      { id: 0, name: 'Lost', color: '#ef4444', sort_order: 6, is_default: 1 },
     ];
   }
 };
 
-const addStage = async () => {
-  const name = newStageName.value.trim();
-  if (!name) return;
-  try {
-    const res = await api.post('/leads/stages', { name, color: newStageColor.value });
-    stagesData.value.push({ ...res.data.data, is_default: 0 });
-    newStageName.value = '';
-    newStageColor.value = '#6b7280';
-  } catch (err) {
-    console.error('Failed to add stage:', err);
-    alert('Failed to add stage');
-  }
-};
-
+// only color/order are editable — stage names are fixed business stages (Review.md P0 #3)
 const updateStage = async (stage: StageConfig) => {
-  if (!stage.name.trim()) return;
   try {
-    await api.put(`/leads/stages/${stage.id}`, { name: stage.name.trim(), color: stage.color });
+    await api.put(`/leads/stages/${stage.id}`, { name: stage.name, color: stage.color });
   } catch (err) {
     console.error('Failed to update stage:', err);
-  }
-};
-
-const deleteStage = async (stage: StageConfig) => {
-  if (stagesData.value.length <= 1) return;
-  if (!confirm(`Delete stage "${stage.name}"? Leads in this stage will be moved to the first remaining stage.`)) return;
-  try {
-    await api.delete(`/leads/stages/${stage.id}`);
-    stagesData.value = stagesData.value.filter(s => s.id !== stage.id);
-    await fetchLeads();
-  } catch (err) {
-    console.error('Failed to delete stage:', err);
-    alert('Failed to delete stage');
   }
 };
 

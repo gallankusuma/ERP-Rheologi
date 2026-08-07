@@ -6,12 +6,13 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-// lead stage transition rules
+// lead stage transition rules (Review.md P0 #2 — Proposal stage added between Discussion and Negotiation)
 const LEAD_TRANSITIONS: Record<string, string[]> = {
   'New':          ['Qualified', 'Lost'],
   'Qualified':    ['Discussion', 'Lost'],
-  'Discussion':   ['Negotiation', 'Lost', 'Qualified'],
-  'Negotiation':  ['Won', 'Lost', 'Discussion'],
+  'Discussion':   ['Proposal', 'Lost', 'Qualified'],
+  'Proposal':     ['Negotiation', 'Lost', 'Discussion'],
+  'Negotiation':  ['Won', 'Lost', 'Proposal'],
   'Won':          [],
   'Lost':         ['New'],
 };
@@ -70,6 +71,9 @@ const logActivity = async (leadId: number | string, userId: number | null, actio
 };
 
 // ensure lead_stages table exists
+// Review.md P0 #2/#3: pipeline is fixed for this CRM version — `is_system` protects the
+// 7 business stages from rename/delete (Stage Manager may only reorder/recolor them), and
+// a missing `Proposal` stage is inserted between Discussion and Negotiation on existing installs.
 const ensureLeadStagesTable = async () => {
   try {
     await dbRun(`
@@ -79,10 +83,19 @@ const ensureLeadStagesTable = async () => {
         color VARCHAR(50) DEFAULT '#6b7280',
         sort_order INT DEFAULT 0,
         is_default TINYINT(1) DEFAULT 0,
+        is_system TINYINT(1) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // existing installs: table may pre-date the is_system column
+    try {
+      await dbRun(`ALTER TABLE lead_stages ADD COLUMN is_system TINYINT(1) DEFAULT 0`);
+    } catch (e: any) {
+      if (!/duplicate/i.test(e.message || '')) console.warn('lead_stages.is_system column check:', e.message);
+    }
+
     // Seed defaults if empty
     const count = await dbGet('SELECT COUNT(*) as cnt FROM lead_stages');
     if (!count || count.cnt === 0) {
@@ -90,15 +103,68 @@ const ensureLeadStagesTable = async () => {
         { name: 'New', color: '#6b7280', order: 0 },
         { name: 'Qualified', color: '#3b82f6', order: 1 },
         { name: 'Discussion', color: '#06b6d4', order: 2 },
-        { name: 'Negotiation', color: '#8b5cf6', order: 3 },
-        { name: 'Won', color: '#22c55e', order: 4 },
-        { name: 'Lost', color: '#ef4444', order: 5 },
+        { name: 'Proposal', color: '#f59e0b', order: 3 },
+        { name: 'Negotiation', color: '#8b5cf6', order: 4 },
+        { name: 'Won', color: '#22c55e', order: 5 },
+        { name: 'Lost', color: '#ef4444', order: 6 },
       ];
       for (const s of defaults) {
-        await dbRun('INSERT INTO lead_stages (name, color, sort_order, is_default) VALUES (?,?,?,1)',
+        await dbRun('INSERT INTO lead_stages (name, color, sort_order, is_default, is_system) VALUES (?,?,?,1,1)',
           [s.name, s.color, s.order]);
       }
-    console.log('Lead stages seeded');
+      console.log('Lead stages seeded');
+    } else {
+      // existing installs: lock down the fixed business stages
+      await dbRun(
+        `UPDATE lead_stages SET is_system = 1 WHERE name IN ('New','Qualified','Discussion','Proposal','Negotiation','Won','Lost')`
+      );
+
+      const canonicalColors: Record<string, string> = {
+        New: '#6b7280', Qualified: '#3b82f6', Discussion: '#06b6d4',
+        Proposal: '#f59e0b', Negotiation: '#8b5cf6', Won: '#22c55e', Lost: '#ef4444',
+      };
+      const canonicalNames = Object.keys(canonicalColors);
+
+      // repair a case-mangled system stage name (e.g. 'NEW' -> 'New', a side effect of the
+      // previously-unprotected rename) so it matches the case-sensitive LEAD_TRANSITIONS keys,
+      // migrating any leads currently sitting on the mangled name
+      const existingStages = await dbAll('SELECT id, name FROM lead_stages') as any[];
+      for (const name of canonicalNames) {
+        const match = existingStages.find(s => s.name.toLowerCase() === name.toLowerCase() && s.name !== name);
+        if (match) {
+          await dbRun('UPDATE leads SET stage = ? WHERE stage = ?', [name, match.name]);
+          await dbRun('UPDATE lead_stages SET name = ?, is_system = 1 WHERE id = ?', [name, match.id]);
+        }
+      }
+
+      // add the Proposal stage between Discussion and Negotiation if it predates this migration
+      const proposal = await dbGet(`SELECT id FROM lead_stages WHERE name = 'Proposal'`);
+      if (!proposal) {
+        const discussion = await dbGet(`SELECT sort_order FROM lead_stages WHERE name = 'Discussion'`);
+        const insertOrder = discussion ? discussion.sort_order + 1 : 3;
+        await dbRun(`UPDATE lead_stages SET sort_order = sort_order + 1 WHERE sort_order >= ?`, [insertOrder]);
+        await dbRun(
+          `INSERT INTO lead_stages (name, color, sort_order, is_default, is_system) VALUES ('Proposal', '#f59e0b', ?, 1, 1)`,
+          [insertOrder]
+        );
+        console.log('Lead stages: Proposal stage added to pipeline');
+      }
+
+      // restore any other canonical stage that was previously deleted outright via the
+      // unprotected Stage Manager (e.g. 'Qualified') — appended after the existing pipeline so
+      // it doesn't disturb sort_order that may have been legitimately customized via reorder
+      const refreshed = await dbAll('SELECT name FROM lead_stages') as any[];
+      const present = new Set(refreshed.map((s: any) => s.name));
+      for (const name of canonicalNames) {
+        if (!present.has(name)) {
+          const max = await dbGet('SELECT MAX(sort_order) as mx FROM lead_stages') as any;
+          await dbRun(
+            'INSERT INTO lead_stages (name, color, sort_order, is_default, is_system) VALUES (?,?,?,1,1)',
+            [name, canonicalColors[name], (max?.mx ?? -1) + 1]
+          );
+          console.log(`Lead stages: restored missing '${name}' stage`);
+        }
+      }
     }
   } catch (e) { console.error('Lead stages table error:', e); }
 };
@@ -117,23 +183,13 @@ router.get('/stages', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-// POST /leads/stages — Create a new stage
-router.post('/stages', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const { name, color } = req.body;
-    if (!name?.trim()) return res.status(400).json({ error: 'Stage name is required' });
-    // Get max sort_order
-    const max = await dbGet('SELECT MAX(sort_order) as mx FROM lead_stages');
-    const nextOrder = (max?.mx ?? -1) + 1;
-    const result = await dbRun(
-      'INSERT INTO lead_stages (name, color, sort_order) VALUES (?,?,?)',
-      [name.trim(), color || '#6b7280', nextOrder]
-    );
-    res.status(201).json({ success: true, data: { id: result.insertId, name: name.trim(), color: color || '#6b7280', sort_order: nextOrder } });
-  } catch (error) {
-    console.error('Create stage error:', error);
-    res.status(500).json({ success: false, error: 'Failed to create stage' });
-  }
+// POST /leads/stages — disabled: the Lead pipeline uses a fixed set of business stages for
+// this CRM version (Review.md P0 #3) — custom stages have no transition rules and can dead-end
+// a Lead. Stage Manager may still reorder stages and change their colors via the endpoints below.
+router.post('/stages', authMiddleware, async (_req: Request, res: Response) => {
+  res.status(400).json({
+    error: 'Custom pipeline stages are not supported. The Lead pipeline uses a fixed set of business stages for this CRM version — you can still reorder stages and change their colors.'
+  });
 });
 
 // PUT /leads/stages/reorder — Reorder stages (must be before /:id)
@@ -781,9 +837,9 @@ router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'conv
       if (!lead) throw new Error('Lead not found');
       if (lead.client_id) throw new Error('Lead already converted to client');
 
-      // Only allow conversion from Negotiation or Discussion stage
-      if (!['Negotiation', 'Discussion'].includes(lead.stage)) {
-        throw new Error(`Cannot convert lead from stage '${lead.stage}'. Lead must be in 'Discussion' or 'Negotiation' stage.`);
+      // Only allow conversion once the deal is actively closing (Discussion/Proposal/Negotiation)
+      if (!['Discussion', 'Proposal', 'Negotiation'].includes(lead.stage)) {
+        throw new Error(`Cannot convert lead from stage '${lead.stage}'. Lead must be in 'Discussion', 'Proposal' or 'Negotiation' stage.`);
       }
 
       // 2. Find or create Client (with duplicate check)
