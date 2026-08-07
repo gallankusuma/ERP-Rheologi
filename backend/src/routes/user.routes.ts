@@ -44,7 +44,7 @@ const deriveUsername = async (email: string, baseUsername?: string): Promise<str
   }
 };
 
-router.get('/', authMiddleware, requirePermission('admin.users', 'view'), async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const users = await dbAll(`${USER_SELECT} ORDER BY d.name, u.full_name ASC`, []);
     res.json({ data: users });

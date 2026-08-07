@@ -934,7 +934,7 @@ router.post('/:id/estimates', authMiddleware, requirePermission('crm.clients', '
 // ============================================
 
 // GET /api/clients/categories/all - List all categories
-router.get('/categories/all', authMiddleware, requirePermission('master_data.client-categories', 'view'), async (req: Request, res: Response) => {
+router.get('/categories/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const categories = await dbAll(
       'SELECT * FROM client_categories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC',
