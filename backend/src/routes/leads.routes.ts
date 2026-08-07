@@ -414,13 +414,16 @@ router.get('/:id', authMiddleware, requirePermission('crm.leads', 'view'), async
 // POST /leads — Create lead
 router.post('/', authMiddleware, requirePermission('crm.leads', 'create'), async (req: Request, res: Response) => {
   try {
-    const { company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, client_id, description, due_date } = req.body;
+    const { company, contact_name, email, phone, value, currency, probability, source, color, notes, assigned_to, client_id, description, due_date } = req.body;
     const userId = (req as any).user?.userId || null;
+    // a new Lead always starts at 'New' — any `stage` sent by the client is ignored, since
+    // creating straight into e.g. Proposal would skip the pipeline's state machine entirely
+    // (Review.md P1-1)
     const result = await dbRun(
-      `INSERT INTO leads (company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, created_by, client_id, description, due_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [company, contact_name || null, email || null, phone || null, stage || 'New',
-       value || 0, probability || 10, source || null, color || null, notes || null,
+      `INSERT INTO leads (company, contact_name, email, phone, stage, value, currency, probability, source, color, notes, assigned_to, created_by, client_id, description, due_date)
+       VALUES (?, ?, ?, ?, 'New', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [company, contact_name || null, email || null, phone || null,
+       value || 0, currency || 'IDR', probability || 10, source || null, color || null, notes || null,
        assigned_to || null, userId, client_id || null, description || null, due_date || null]
     );
     await logActivity(result.insertId, userId, 'created', `Created lead: ${company}`);
@@ -434,8 +437,8 @@ router.post('/', authMiddleware, requirePermission('crm.leads', 'create'), async
 // PUT /leads/:id — Update lead (with stage transition validation)
 router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
-    const { company, contact_name, email, phone, stage, value, probability, source, color, notes, assigned_to, description, due_date } = req.body;
-    
+    const { company, contact_name, email, phone, stage, value, currency, probability, source, color, notes, assigned_to, description, due_date } = req.body;
+
     // Load current lead for stage validation
     const current = await dbGet('SELECT * FROM leads WHERE id = ?', [req.params.id]) as any;
     if (!current) return res.status(404).json({ success: false, error: 'Lead not found' });
@@ -455,10 +458,10 @@ router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), asy
     
     // client_id and converted_at are protected — only set by /convert endpoint
     await dbRun(
-      `UPDATE leads SET company=?, contact_name=?, email=?, phone=?, stage=?, value=?, probability=?, source=?, color=?, notes=?, assigned_to=?, client_id=?, description=?, due_date=?, updated_at=CURRENT_TIMESTAMP
+      `UPDATE leads SET company=?, contact_name=?, email=?, phone=?, stage=?, value=?, currency=?, probability=?, source=?, color=?, notes=?, assigned_to=?, client_id=?, description=?, due_date=?, updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
       [company || current.company, contact_name || null, email || null, phone || null, effectiveStage, value || 0,
-       probability || 10, source || null, color || null, notes || null, assigned_to || null,
+       currency || current.currency || 'IDR', probability || 10, source || null, color || null, notes || null, assigned_to || null,
        current.client_id, description || null, due_date || null, req.params.id]
     );
     const userId = (req as any).user?.userId || null;
@@ -823,11 +826,14 @@ router.delete('/attachments/:attachmentId', authMiddleware, async (req: Request,
 });
 
 // ========================
-// CONVERT TO CLIENT (with optional SO creation)
+// CONVERT TO CLIENT
+// A converted Lead only becomes a Client here — it never auto-creates a Sales Order.
+// The old `create_so` flag produced SO headers with zero items (Review.md P0-1), since the
+// regular Sales Order endpoint requires at least one item; the frontend now redirects the user
+// to the Sales Order form (prefilled with the new client) to pick real items instead.
 // ========================
 router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'convert'), async (req: Request, res: Response) => {
   try {
-    const { create_so, so_items } = req.body;
     const userId = (req as any).user?.userId || null;
 
     const result = await dbTransaction(async (conn) => {
@@ -882,66 +888,17 @@ router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'conv
         [clientId, 'Won', req.params.id]
       );
 
-      let soId = null;
-      let soNumber = null;
-
-      // 5. Optionally create Sales Order (also in transaction)
-      if (create_so) {
-        // Concurrency-safe SO number
-        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const [lastSO] = await conn.execute(
-          `SELECT so_number FROM sales_orders WHERE so_number LIKE ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
-          [`SO-${dateStr}-%`]
-        );
-        let seq = 1;
-        if (lastSO[0]) {
-          const parts = lastSO[0].so_number.split('-');
-          seq = parseInt(parts[parts.length - 1], 10) + 1;
-        }
-        soNumber = `SO-${dateStr}-${String(seq).padStart(4, '0')}`;
-        const soDate = new Date().toISOString().split('T')[0];
-
-        const [soResult] = await conn.execute(
-          `INSERT INTO sales_orders (so_number, client_id, lead_id, so_date, status, currency, total_amount, notes)
-           VALUES (?, ?, ?, ?, 'draft', 'IDR', ?, ?)`,
-          [soNumber, clientId, lead.id, soDate, lead.value || 0, `Created from Lead: ${lead.company}`]
-        );
-        soId = (soResult as any).insertId;
-
-        // Insert SO items if provided
-        if (Array.isArray(so_items) && so_items.length > 0) {
-          let total = 0;
-          for (const item of so_items) {
-            if (!item.product_id || !item.quantity) {
-              throw new Error(`Invalid SO item: product_id and quantity are required`);
-            }
-            const lineTotal = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
-            total += lineTotal;
-            await conn.execute(
-              'INSERT INTO so_items (so_id, product_id, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
-              [soId, item.product_id, item.quantity, item.unit_price || 0, lineTotal]
-            );
-          }
-          if (total > 0) {
-            await conn.execute('UPDATE sales_orders SET total_amount = ? WHERE id = ?', [total, soId]);
-          }
-        }
-      }
-
-      return { clientId, soId, soNumber, company: lead.company };
+      return { clientId, company: lead.company, value: lead.value, currency: lead.currency };
     });
 
     await logActivity(req.params.id as string, userId, 'converted', `Converted to client #${result.clientId}`);
-    if (result.soId) {
-      await logActivity(req.params.id as string, userId, 'so_created', `Sales Order ${result.soNumber} created`);
-    }
 
     res.json({
       success: true,
-      message: result.soId ? 'Lead converted to client + Sales Order created' : 'Lead converted to client',
+      message: 'Lead converted to client',
       client_id: result.clientId,
-      so_id: result.soId,
-      so_number: result.soNumber
+      lead_value: result.value,
+      currency: result.currency
     });
   } catch (error: any) {
     console.error('Convert lead error:', error);

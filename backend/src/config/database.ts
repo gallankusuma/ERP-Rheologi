@@ -240,6 +240,9 @@ const ensureCrmSchema = async (connection: any) => {
   await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature VARCHAR(20) NULL`);
   await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS interest TEXT NULL`);
   await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up DATE NULL`);
+  // Carry Prospect's currency through to Lead, and Lead's through to any Sales Order created
+  // from it — was previously lost/hardcoded to IDR at every step (Review.md P0-2)
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'IDR'`);
 
   // Carry Lead's company context through to Client (Review.md P1 #6)
   await execSchemaEnsure(connection, `ALTER TABLE clients ADD COLUMN IF NOT EXISTS industry VARCHAR(100) NULL`);

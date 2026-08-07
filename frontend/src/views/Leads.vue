@@ -108,7 +108,7 @@
                   </span>
                 </td>
                 <td class="px-6 py-4">
-                  <p class="font-medium text-gray-900">{{ formatNumber(lead.value) }}</p>
+                  <p class="font-medium text-gray-900">{{ formatNumber(lead.value, lead.currency) }}</p>
                 </td>
                 <td class="px-6 py-4">
                   <div class="flex items-center gap-2">
@@ -173,7 +173,8 @@
               </span>
             </div>
             <p class="text-xs text-gray-500 mt-1">
-              Total: {{ formatNumber(getTotalValueByStage(stage)) }}
+              <template v-if="getStageCurrency(stage)">Total: {{ formatNumber(getTotalValueByStage(stage), getStageCurrency(stage)) }}</template>
+              <template v-else>Total: {{ getTotalValueByStage(stage).toLocaleString() }} (mixed currencies)</template>
             </p>
           </div>
 
@@ -210,7 +211,7 @@
 
               <!-- Value & Probability -->
               <div class="flex justify-between items-center mb-2.5 pb-2 border-b border-gray-100">
-                <p class="text-sm font-bold text-gray-900">{{ formatNumber(lead.value) }}</p>
+                <p class="text-sm font-bold text-gray-900">{{ formatNumber(lead.value, lead.currency) }}</p>
                 <span class="text-xs font-semibold px-2 py-0.5 rounded" :class="getProbabilityBadge(lead.probability)">
                   {{ lead.probability }}%
                 </span>
@@ -342,12 +343,18 @@
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Lead Value</label>
-              <input
-                v-model="formLead.value"
-                type="number"
-                placeholder="0"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <div class="flex gap-2">
+                <select v-model="formLead.currency" class="px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 w-24">
+                  <option value="IDR">Rp</option>
+                  <option value="USD">$</option>
+                </select>
+                <input
+                  v-model="formLead.value"
+                  type="number"
+                  placeholder="0"
+                  class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Probability (%)</label>
@@ -359,7 +366,9 @@
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <div>
+            <div v-if="editingLead">
+              <!-- Stage is only editable once a Lead exists — PUT validates transitions against
+                   the pipeline state machine. New Leads always start at 'New' (Review.md P1-1). -->
               <label class="block text-sm font-medium text-gray-700 mb-1">Stage</label>
               <select v-model="formLead.stage" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                 <option v-for="s in stageNames" :key="s" :value="s">{{ s }}</option>
@@ -448,8 +457,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import LeadDetailPanel from '@/components/crm/LeadDetailPanel.vue';
+
+const router = useRouter();
 
 interface Lead {
   id: number;
@@ -459,6 +471,7 @@ interface Lead {
   phone?: string;
   stage: string;
   value: number;
+  currency?: string;
   probability: number;
   source: string;
   color?: string | null;
@@ -506,7 +519,7 @@ const sources = ['Website', 'LinkedIn', 'Referral', 'Cold Call', 'Email', 'Event
 
 const emptyForm = () => ({
   company: '', contact_name: '', email: '', phone: '',
-  stage: stageNames.value[0] || 'New', value: 0, probability: 10, source: 'Website',
+  stage: stageNames.value[0] || 'New', value: 0, currency: 'IDR', probability: 10, source: 'Website',
   color: null as string | null, notes: '', client_id: null as number | null
 });
 
@@ -614,6 +627,7 @@ const openEditModal = (lead: Lead) => {
     phone: lead.phone || '',
     stage: lead.stage,
     value: lead.value,
+    currency: lead.currency || 'IDR',
     probability: lead.probability,
     source: lead.source || 'Website',
     color: lead.color || null,
@@ -708,6 +722,13 @@ const getTotalValueByStage = (stage: string) => {
   return getLeadsByStage(stage).reduce((sum, lead) => sum + (Number(lead.value) || 0), 0);
 };
 
+// summing mixed currencies would misreport the total, so only report a currency for the
+// column total when every lead in that stage actually shares one (Review.md P0-2)
+const getStageCurrency = (stage: string) => {
+  const currencies = new Set(getLeadsByStage(stage).map(l => l.currency || 'IDR'));
+  return currencies.size === 1 ? [...currencies][0] : undefined;
+};
+
 
 const getProbabilityColor = (probability: number) => {
   if (probability >= 80) return 'bg-green-500';
@@ -723,11 +744,11 @@ const getProbabilityBadge = (probability: number) => {
   return 'bg-red-100 text-red-800';
 };
 
-// matches the Rp formatting used across Prospects/Sales Order — Lead value has no currency
-// field of its own (unlike Prospects), so it's always treated as IDR (Review.md P1 #10)
-const formatNumber = (num: number) => {
-  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num || 0);
-};
+// matches the Rp/$ formatting used across Prospects/Sales Order — reads each Lead's own
+// currency instead of assuming IDR (Review.md P0-2)
+const formatNumber = (num: number, currency = 'IDR') => currency === 'USD'
+  ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(num || 0)
+  : new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num || 0);
 
 const formatDate = (date: string) => {
   if (!date) return '';
@@ -758,24 +779,25 @@ const onClientSelect = () => {
 };
 
 const convertToClient = async (lead: Lead) => {
-  // Show choice dialog
-  const choice = prompt(
-    `Convert "${lead.company}" to Client.\n\nChoose an option:\n1 = Convert to Client only\n2 = Convert to Client + Create Draft Sales Order\n\nEnter 1 or 2:`,
-    '2'
-  );
-  if (!choice || !['1', '2'].includes(choice.trim())) return;
+  if (!confirm(`Convert "${lead.company}" to a Client?`)) return;
 
-  const createSO = choice.trim() === '2';
-  
+  // Conversion only creates the Client — a Sales Order needs real items, which this flow can't
+  // collect, so it no longer auto-creates a draft SO with zero items (Review.md P0-1). Instead,
+  // send the user straight to the Sales Order form with the new Client pre-selected.
   try {
-    const res = await api.post(`/leads/${lead.id}/convert`, { create_so: createSO });
+    const res = await api.post(`/leads/${lead.id}/convert`, {});
     if (res.data?.success) {
-      let msg = `✅ Lead converted! Client ID: ${res.data.client_id}`;
-      if (res.data.so_number) {
-        msg += `\n📋 Sales Order ${res.data.so_number} created!`;
-      }
-      alert(msg);
       await fetchLeads();
+      if (confirm(`✅ Lead converted to Client! Create a Sales Order for them now?`)) {
+        router.push({
+          path: '/sales/orders-list',
+          query: {
+            client_id: String(res.data.client_id),
+            lead_value: res.data.lead_value ? String(res.data.lead_value) : undefined,
+            currency: res.data.currency || undefined,
+          }
+        });
+      }
     }
   } catch (err) {
     console.error('Convert error:', err);

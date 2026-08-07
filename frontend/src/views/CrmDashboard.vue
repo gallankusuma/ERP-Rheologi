@@ -281,6 +281,7 @@ const pipelineStages = [
   { name: 'New', color: 'bg-slate-300' },
   { name: 'Qualified', color: 'bg-blue-400' },
   { name: 'Discussion', color: 'bg-cyan-400' },
+  { name: 'Proposal', color: 'bg-amber-400' },
   { name: 'Negotiation', color: 'bg-purple-400' },
   { name: 'Won', color: 'bg-emerald-400' },
   { name: 'Lost', color: 'bg-red-300' },

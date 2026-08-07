@@ -653,20 +653,22 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
       }
 
       // create the lead record
-      // carries every Prospect qualification/contact field forward so nothing is lost on conversion (Review.md P1 #6)
+      // carries every Prospect qualification/contact field forward so nothing is lost on conversion
+      // (Review.md P1 #6), including currency (Review.md P0-2)
       const [leadResult] = await conn.execute(`
         INSERT INTO leads (
           company, contact_name, email, phone, stage,
-          value, probability, source, notes, assigned_to, created_by,
+          value, currency, probability, source, notes, assigned_to, created_by,
           contact_title, industry, website, address, city, country,
           temperature, interest, next_follow_up
-        ) VALUES (?, ?, ?, ?, 'New', ?, 20, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'New', ?, ?, 20, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         prospect.company_name,
         prospect.contact_name || null,
         prospect.email || null,
         prospect.phone || null,
         prospect.estimated_value || 0,
+        prospect.currency || 'IDR',
         prospect.source || null,
         prospect.notes || null,
         prospect.assigned_to || userId,

@@ -245,8 +245,16 @@ router.get('/:id', authMiddleware, requirePermission('crm.clients', 'view'), asy
       progress: Math.round(p.progress || 0)
     }));
 
-    // Get invoices
-    const invoices = await dbAll('SELECT * FROM client_invoices WHERE client_id = ? ORDER BY invoice_date DESC LIMIT 10', [client.id]);
+    // Get invoices — Sales module (`invoices`/`sales_orders`) is the source of truth, not the
+    // legacy `client_invoices` table, which was a parallel record never reflecting real Sales
+    // transactions (Review.md P0-3)
+    const invoices = await dbAll(`
+      SELECT inv.id, inv.invoice_number, inv.invoice_date, inv.due_date, inv.total_amount, inv.status, inv.notes, inv.created_at
+      FROM invoices inv
+      JOIN sales_orders so ON inv.so_id = so.id
+      WHERE so.client_id = ?
+      ORDER BY inv.invoice_date DESC LIMIT 10
+    `, [client.id]);
     client.invoices = invoices;
 
     // Get estimates
@@ -261,9 +269,26 @@ router.get('/:id', authMiddleware, requirePermission('crm.clients', 'view'), asy
     const tickets = await dbAll('SELECT * FROM client_tickets WHERE client_id = ? ORDER BY created_at DESC LIMIT 10', [client.id]);
     client.tickets = tickets;
 
-    // Get orders
-    const orders = await dbAll('SELECT * FROM client_orders WHERE client_id = ? ORDER BY order_date DESC LIMIT 10', [client.id]);
+    // Get orders — same source-of-truth fix as invoices above (Review.md P0-3)
+    const orders = await dbAll(`
+      SELECT so.id, so.so_number as order_number, so.so_date as date, ? as \`to\`, so.status, so.total_amount as amount
+      FROM sales_orders so
+      WHERE so.client_id = ?
+      ORDER BY so.so_date DESC LIMIT 10
+    `, [client.name, client.id]);
     client.orders = orders;
+
+    // Client 360 revenue figures — computed live from real Sales invoices/payments instead of
+    // the `clients.total_invoiced/payment_received/due_amount` columns, which were only ever
+    // written by the legacy quick-invoice flow and never kept in sync (Review.md P0-3)
+    const revenue = await dbGet(`
+      SELECT
+        COALESCE((SELECT SUM(inv.total_amount) FROM invoices inv JOIN sales_orders so ON inv.so_id = so.id WHERE so.client_id = ?), 0) as total_invoiced,
+        COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp JOIN invoices inv ON sp.invoice_id = inv.id JOIN sales_orders so ON inv.so_id = so.id WHERE so.client_id = ?), 0) as payment_received
+    `, [client.id, client.id]) as any;
+    client.total_invoiced = Number(revenue?.total_invoiced || 0);
+    client.payment_received = Number(revenue?.payment_received || 0);
+    client.due_amount = client.total_invoiced - client.payment_received;
 
     // Get events
     const events = await dbAll(

@@ -598,9 +598,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
 import { api } from '@/lib/api';
 import { useToast } from 'vue-toastification';
 import { formatCurrency } from '@/utils/format';
+
+const route = useRoute();
 
 const toast = useToast();
 
@@ -708,6 +711,21 @@ onMounted(async () => {
     fetchCrmClients(),
     fetchProducts()
   ]);
+
+  // Arrived here from a converted Lead (Review.md P0-1) — open the create form pre-filled
+  // with the new Client instead of the old flow auto-creating an empty-item Sales Order
+  const clientId = route.query.client_id ? Number(route.query.client_id) : null;
+  if (clientId) {
+    openAddOrderModal();
+    newOrder.value.client_id = clientId;
+    if (route.query.currency) newOrder.value.currency = String(route.query.currency);
+    if (route.query.lead_value) {
+      const suggested = Number(route.query.lead_value);
+      if (suggested > 0) {
+        newOrder.value.notes = `Converted from Lead — estimated value ${suggested.toLocaleString()} ${newOrder.value.currency}. Add the actual items below.`;
+      }
+    }
+  }
 });
 
 const fetchOrders = async () => {

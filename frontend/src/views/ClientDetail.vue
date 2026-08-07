@@ -28,9 +28,9 @@
                 <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                 Edit
              </button>
-             <button @click="showTransactionModal = true" class="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-semibold hover:bg-primary-700 shadow-lg shadow-primary-500/30 transition-all flex items-center gap-2">
+             <button @click="openTransactionModal('quote')" class="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-semibold hover:bg-primary-700 shadow-lg shadow-primary-500/30 transition-all flex items-center gap-2">
                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
-                 New Transaction
+                 New Quote
              </button>
           </div>
         </div>
@@ -1413,20 +1413,14 @@
     <div v-if="showTransactionModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 transition-opacity" @click.self="showTransactionModal = false">
         <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden transform transition-all scale-100">
             <div class="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-                <h3 class="text-lg font-bold text-slate-800">New Transaction</h3>
+                <h3 class="text-lg font-bold text-slate-800">New Quote / Estimate</h3>
                 <button @click="showTransactionModal = false" class="text-slate-400 hover:text-slate-600">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
             </div>
+            <!-- Invoices and Sales Orders are managed in the Sales module (Review.md P0-3) — this
+                 modal only handles Quotes/Estimates, which route to the proposal editor below. -->
             <form @submit.prevent="saveTransaction" class="p-6 space-y-4">
-                <div class="space-y-2">
-                    <label class="text-sm font-semibold text-slate-700">Transaction Type</label>
-                    <select v-model="transactionForm.type" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none">
-                        <option value="invoice">Invoice</option>
-                        <option value="quote">Quote / Estimate</option>
-                        <option value="order">Sales Order</option>
-                    </select>
-                </div>
 
                 <div class="space-y-2">
                     <label class="text-sm font-semibold text-slate-700">Date</label>
@@ -2317,46 +2311,30 @@ const saveClient = async () => {
 const saveTransaction = async () => {
     try {
         const payload = { ...transactionForm.value } as any;
-        
-        if (payload.type === 'invoice') {
-            payload.invoice_date = payload.date;
-            delete payload.date;
-             await api.post(`/clients/${route.params.id}/invoices`, payload);
-             alert('Invoice created successfully!');
-             fetchClient();
 
-        } else if (payload.type === 'quote') {
-            // Mock Estimate Creation and Navigation
-            const mockId = Math.floor(Math.random() * 1000);
-            
-            // In a real app, we'd POST to backend and get the ID back
-            // await axios.post(endpoint, payload, ...);
-            
-             // Create a mock estimate object to add to the list immediately (optimistic update)
-            const newEstimate = {
-                id: mockId,
-                estimate_number: 'EST-' + mockId,
-                date: payload.date,
-                valid_until: payload.due_date,
-                amount: payload.total_amount,
-                status: 'draft'
-            };
-            
-            if (!client.value.estimates) client.value.estimates = [];
-            client.value.estimates.unshift(newEstimate);
+        // Mock Estimate Creation and Navigation
+        const mockId = Math.floor(Math.random() * 1000);
 
-            showTransactionModal.value = false;
-            
-            // Navigate to the Estimate/Proposal Editor
-            router.push({ name: 'EstimatorProposalEditor', params: { id: mockId } });
-            return;
+        // In a real app, we'd POST to backend and get the ID back
+        // await axios.post(endpoint, payload, ...);
 
-        } else {
-             alert('Order creation not implemented yet');
-             return;
-        }
-        
+        // Create a mock estimate object to add to the list immediately (optimistic update)
+        const newEstimate = {
+            id: mockId,
+            estimate_number: 'EST-' + mockId,
+            date: payload.date,
+            valid_until: payload.due_date,
+            amount: payload.total_amount,
+            status: 'draft'
+        };
+
+        if (!client.value.estimates) client.value.estimates = [];
+        client.value.estimates.unshift(newEstimate);
+
         showTransactionModal.value = false;
+
+        // Navigate to the Estimate/Proposal Editor
+        router.push({ name: 'EstimatorProposalEditor', params: { id: mockId } });
     } catch (error) {
          console.error('Error creating transaction:', error);
          alert('Failed to create transaction');
@@ -2499,6 +2477,13 @@ const savePayment = async () => {
 };
 
 const openTransactionModal = (type: string = 'invoice') => {
+    // Invoices/Orders now come from real Sales Order data (Review.md P0-3) — a standalone
+    // invoice/order created here would never appear anywhere else in the system, so send the
+    // user to the Sales module instead of writing an orphan record.
+    if (type === 'invoice' || type === 'order') {
+        router.push({ path: '/sales/orders-list', query: { client_id: String(route.params.id) } });
+        return;
+    }
     transactionForm.value.type = type;
     showTransactionModal.value = true;
 };

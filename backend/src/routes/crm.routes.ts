@@ -49,7 +49,7 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
     const leadsByStage = await dbAll(`
       SELECT stage, COUNT(*) as count, COALESCE(SUM(value), 0) as total_value
       FROM leads WHERE is_archived = 0 GROUP BY stage
-      ORDER BY FIELD(stage, 'New', 'Qualified', 'Discussion', 'Negotiation', 'Won', 'Lost')
+      ORDER BY FIELD(stage, 'New', 'Qualified', 'Discussion', 'Proposal', 'Negotiation', 'Won', 'Lost')
     `);
 
     // ── Prospect Temperature Breakdown ──

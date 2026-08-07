@@ -28,7 +28,7 @@
           <div class="grid grid-cols-3 gap-3">
             <div class="bg-white rounded-lg p-3 border border-gray-200 text-center">
               <p class="text-xs text-gray-500 mb-1">Value</p>
-              <p class="text-lg font-bold text-gray-900">{{ formatNumber(lead.value) }}</p>
+              <p class="text-lg font-bold text-gray-900">{{ formatNumber(lead.value, lead.currency) }}</p>
             </div>
             <div class="bg-white rounded-lg p-3 border border-gray-200 text-center">
               <p class="text-xs text-gray-500 mb-1">Probability</p>
@@ -480,8 +480,10 @@ const deleteAttachment = async (id: number) => {
 };
 
 // Helpers
-// Lead value has no currency field of its own (unlike Prospects) — always IDR (Review.md P1 #10)
-const formatNumber = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n || 0);
+// reads the Lead's own currency instead of assuming IDR (Review.md P0-2)
+const formatNumber = (n: number, currency = 'IDR') => currency === 'USD'
+  ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(n || 0)
+  : new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n || 0);
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 const timeAgo = (d: string) => {
   if (!d) return '';
