@@ -18,7 +18,6 @@ const generateCode = (prefix: string) => {
 router.get('/inbox', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
-    const userLevel = Number((req as any).user?.userLevel || 0);
     const { module, entity_type } = req.query;
 
     let sql = `
@@ -29,11 +28,8 @@ router.get('/inbox', authMiddleware, async (req: Request, res: Response) => {
     `;
     const params: any[] = [];
 
-    // ── Permission-based inbox filtering ──
-    // Master Admin (level 10+) sees everything.
-    // Other users see items only if they have the correct approve/approve_1/approve_2 permission
-    // for the module, OR if no rules/permissions exist for that module (fallback: visible to all).
-    if (userLevel < 10) {
+    // permission-based inbox filtering
+    {
       // Get all permission resources the user can approve (via role)
       const userRow = await dbGet('SELECT role_id FROM users WHERE id = ?', [userId]) as any;
       const roleId = userRow?.role_id;

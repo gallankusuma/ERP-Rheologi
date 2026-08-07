@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requirePermission } from '../middleware/permission';
+import { requirePermission, checkUserPermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -167,64 +167,41 @@ router.post('/stock-transfers/:id/approve', authMiddleware, async (req: Request,
   try {
     const { id } = req.params;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
-
-    console.log('🔍 Stock Transfer Approval:', { id, userId, userLevel });
-
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const transfer = await dbGet('SELECT * FROM stock_movements WHERE id = ?', [id]) as any;
-    if (!transfer) {
-      return res.status(404).json({ error: 'Stock transfer not found' });
-    }
+    if (!transfer) return res.status(404).json({ error: 'Stock transfer not found' });
 
     const currentStatus = transfer.approval_status || 0;
-    console.log('📊 Current Transfer Status:', { currentStatus, userLevel });
+    const hasApprove = await checkUserPermission(userId, 'inventory.stock-transfer', 'approve');
+    const hasApprove1 = await checkUserPermission(userId, 'inventory.stock-transfer', 'approve_1');
+    const hasApprove2 = await checkUserPermission(userId, 'inventory.stock-transfer', 'approve_2');
 
-    // Director & Master (Level 4+) - DIRECT APPROVAL
-    if (userLevel >= 4) {
-      console.log('✅ Director/Master path - Direct full approval');
-      const approverRow = await dbGet('SELECT id FROM users WHERE id = ?', [userId]) as { id: number } | undefined;
-      const approverId = approverRow ? userId : null;
-
+    if (hasApprove && currentStatus < 2) {
       await dbRun(
         'UPDATE stock_movements SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, approverId, id]
+        [userId, userId, id]
       );
-
-      // Execute stock movement
       await executeStockTransfer(transfer);
-
-      return res.json({ message: 'Stock transfer fully approved and executed by Director/Master', approval_status: 2 });
+      return res.json({ message: 'Stock transfer fully approved and executed', approval_status: 2 });
     }
-
-    // Supervisor (Level 2)
-    if (userLevel === 2 && currentStatus === 0) {
-      console.log('✅ Supervisor approval path');
+    if (hasApprove1 && currentStatus === 0) {
       await dbRun(
         'UPDATE stock_movements SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
         [userId, id]
       );
-      return res.json({ message: 'Stock transfer approved by supervisor (1/2)', approval_status: 1 });
+      return res.json({ message: 'Stock transfer approved (1/2)', approval_status: 1 });
     }
-
-    // Manager (Level 3)
-    if (userLevel === 3 && currentStatus === 1) {
-      console.log('✅ Manager approval path');
+    if (hasApprove2 && currentStatus === 1) {
       await dbRun(
         'UPDATE stock_movements SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
         [userId, id]
       );
-
-      // Execute stock movement
       await executeStockTransfer(transfer);
-
-      return res.json({ message: 'Stock transfer fully approved and executed by manager (2/2)', approval_status: 2 });
+      return res.json({ message: 'Stock transfer fully approved and executed (2/2)', approval_status: 2 });
     }
 
-    return res.status(403).json({ error: 'Not authorized to approve at this level' });
+    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
   } catch (error) {
     console.error('Error approving stock transfer:', error);
     res.status(500).json({ error: 'Failed to approve stock transfer' });
@@ -235,24 +212,18 @@ router.post('/stock-transfers/:id/approve', authMiddleware, async (req: Request,
 router.post('/stock-transfers/:id/reject', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const userLevel = (req as any).user?.userLevel || 1;
+    const userId = (req as any).user?.userId;
 
     const transfer = await dbGet('SELECT approval_status FROM stock_movements WHERE id = ?', [id]) as any;
-    if (!transfer) {
-      return res.status(404).json({ error: 'Stock transfer not found' });
-    }
+    if (!transfer) return res.status(404).json({ error: 'Stock transfer not found' });
 
     const currentStatus = transfer.approval_status || 0;
+    if (currentStatus === 0) return res.status(400).json({ error: 'Cannot reject pending item' });
 
-    // Only Level 2+ can reject, and only if status > 0
-    if (userLevel < 2 || currentStatus === 0) {
-      return res.status(403).json({ error: 'Not authorized to reject' });
-    }
-
-    // Level 4+ can reject from any state, Level 2-3 only from state 1
-    if (userLevel < 4 && currentStatus !== 1) {
-      return res.status(403).json({ error: 'Not authorized to reject at this level' });
-    }
+    const canReject = await checkUserPermission(userId, 'inventory.stock-transfer', 'approve_1')
+      || await checkUserPermission(userId, 'inventory.stock-transfer', 'approve_2')
+      || await checkUserPermission(userId, 'inventory.stock-transfer', 'approve');
+    if (!canReject) return res.status(403).json({ error: 'Insufficient permissions to reject' });
 
     await dbRun(
       'UPDATE stock_movements SET approval_status = 0, approved_by_supervisor_id = NULL, approved_by_manager_id = NULL, approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?',
@@ -430,56 +401,41 @@ router.post('/stock-adjustments/:id/approve', authMiddleware, async (req: Reques
   try {
     const { id } = req.params;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
-
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const adjustment = await dbGet('SELECT * FROM stock_movements WHERE id = ?', [id]) as any;
-    if (!adjustment) {
-      return res.status(404).json({ error: 'Stock adjustment not found' });
-    }
+    if (!adjustment) return res.status(404).json({ error: 'Stock adjustment not found' });
 
     const currentStatus = adjustment.approval_status || 0;
+    const hasApprove = await checkUserPermission(userId, 'inventory.stock-adjustment', 'approve');
+    const hasApprove1 = await checkUserPermission(userId, 'inventory.stock-adjustment', 'approve_1');
+    const hasApprove2 = await checkUserPermission(userId, 'inventory.stock-adjustment', 'approve_2');
 
-    // Director & Master (Level 4+) - DIRECT APPROVAL
-    if (userLevel >= 4) {
-      const approverRow = await dbGet('SELECT id FROM users WHERE id = ?', [userId]) as { id: number } | undefined;
-      const approverId = approverRow ? userId : null;
-
+    if (hasApprove && currentStatus < 2) {
       await dbRun(
         'UPDATE stock_movements SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, approverId, id]
+        [userId, userId, id]
       );
-
       await executeStockAdjustment(adjustment);
-
       return res.json({ message: 'Stock adjustment fully approved and executed', approval_status: 2 });
     }
-
-    // Supervisor (Level 2)
-    if (userLevel === 2 && currentStatus === 0) {
+    if (hasApprove1 && currentStatus === 0) {
       await dbRun(
         'UPDATE stock_movements SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
         [userId, id]
       );
-      return res.json({ message: 'Stock adjustment approved by supervisor (1/2)', approval_status: 1 });
+      return res.json({ message: 'Stock adjustment approved (1/2)', approval_status: 1 });
     }
-
-    // Manager (Level 3)
-    if (userLevel === 3 && currentStatus === 1) {
+    if (hasApprove2 && currentStatus === 1) {
       await dbRun(
         'UPDATE stock_movements SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
         [userId, id]
       );
-
       await executeStockAdjustment(adjustment);
-
       return res.json({ message: 'Stock adjustment fully approved and executed (2/2)', approval_status: 2 });
     }
 
-    return res.status(403).json({ error: 'Not authorized to approve at this level' });
+    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
   } catch (error) {
     console.error('Error approving stock adjustment:', error);
     res.status(500).json({ error: 'Failed to approve stock adjustment' });
@@ -490,22 +446,18 @@ router.post('/stock-adjustments/:id/approve', authMiddleware, async (req: Reques
 router.post('/stock-adjustments/:id/reject', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const userLevel = (req as any).user?.userLevel || 1;
+    const userId = (req as any).user?.userId;
 
     const adjustment = await dbGet('SELECT approval_status FROM stock_movements WHERE id = ?', [id]) as any;
-    if (!adjustment) {
-      return res.status(404).json({ error: 'Stock adjustment not found' });
-    }
+    if (!adjustment) return res.status(404).json({ error: 'Stock adjustment not found' });
 
     const currentStatus = adjustment.approval_status || 0;
+    if (currentStatus === 0) return res.status(400).json({ error: 'Cannot reject pending item' });
 
-    if (userLevel < 2 || currentStatus === 0) {
-      return res.status(403).json({ error: 'Not authorized to reject' });
-    }
-
-    if (userLevel < 4 && currentStatus !== 1) {
-      return res.status(403).json({ error: 'Not authorized to reject at this level' });
-    }
+    const canReject = await checkUserPermission(userId, 'inventory.stock-adjustment', 'approve_1')
+      || await checkUserPermission(userId, 'inventory.stock-adjustment', 'approve_2')
+      || await checkUserPermission(userId, 'inventory.stock-adjustment', 'approve');
+    if (!canReject) return res.status(403).json({ error: 'Insufficient permissions to reject' });
 
     await dbRun(
       'UPDATE stock_movements SET approval_status = 0, approved_by_supervisor_id = NULL, approved_by_manager_id = NULL, approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?',
@@ -519,9 +471,190 @@ router.post('/stock-adjustments/:id/reject', authMiddleware, async (req: Request
   }
 });
 
-// ========================================
-// GENERIC INVENTORY ROUTES (AFTER stock-* routes)
-// ========================================
+// stock opname routes
+router.get('/opname', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const sessions = await dbAll(`
+      SELECT so.*, w.name as warehouse_name, u.full_name as created_by_name,
+        (SELECT COUNT(*) FROM stock_opname_items soi WHERE soi.opname_id = so.id) as item_count
+      FROM stock_opname so
+      LEFT JOIN warehouses w ON so.warehouse_id = w.id
+      LEFT JOIN users u ON so.created_by = u.id
+      ORDER BY so.created_at DESC
+    `, []);
+    res.json({ data: sessions });
+  } catch (error) {
+    console.error('Error fetching stock opname:', error);
+    res.status(500).json({ error: 'Failed to fetch stock opname sessions' });
+  }
+});
+
+router.post('/opname', authMiddleware, requirePermission('inventory.stock-opname', 'create'), async (req: Request, res: Response) => {
+  try {
+    const { warehouse_id, notes } = req.body;
+    const userId = (req as any).user?.userId;
+    const opnameNumber = generateCode('OPN');
+    const result = await dbRun(
+      `INSERT INTO stock_opname (opname_number, warehouse_id, notes, created_by) VALUES (?, ?, ?, ?)`,
+      [opnameNumber, warehouse_id, notes || null, userId]
+    ) as any;
+
+    // auto-populate items from inventory_stocks
+    await dbRun(`
+      INSERT INTO stock_opname_items (opname_id, product_id, system_qty)
+      SELECT ?, ist.product_id, ist.quantity
+      FROM inventory_stocks ist
+      WHERE ist.warehouse_id = ?
+    `, [result.insertId, warehouse_id]);
+
+    res.json({ data: { id: result.insertId, opname_number: opnameNumber } });
+  } catch (error) {
+    console.error('Error creating stock opname:', error);
+    res.status(500).json({ error: 'Failed to create stock opname' });
+  }
+});
+
+router.get('/opname/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const session = await dbGet(`
+      SELECT so.*, w.name as warehouse_name
+      FROM stock_opname so
+      LEFT JOIN warehouses w ON so.warehouse_id = w.id
+      WHERE so.id = ?
+    `, [req.params.id]);
+    if (!session) return res.status(404).json({ error: 'Opname session not found' });
+
+    const items = await dbAll(`
+      SELECT soi.*, p.name as product_name, p.sku
+      FROM stock_opname_items soi
+      JOIN products p ON soi.product_id = p.id
+      WHERE soi.opname_id = ?
+      ORDER BY p.name
+    `, [req.params.id]);
+
+    res.json({ data: { ...(session as any), items } });
+  } catch (error) {
+    console.error('Error fetching opname detail:', error);
+    res.status(500).json({ error: 'Failed to fetch opname detail' });
+  }
+});
+
+router.put('/opname/:id/items', authMiddleware, requirePermission('inventory.stock-opname', 'update'), async (req: Request, res: Response) => {
+  try {
+    const { items } = req.body;
+    for (const item of items) {
+      await dbRun(
+        `UPDATE stock_opname_items SET actual_qty = ?, notes = ? WHERE id = ?`,
+        [item.actual_qty, item.notes || null, item.id]
+      );
+    }
+    res.json({ message: 'Items updated' });
+  } catch (error) {
+    console.error('Error updating opname items:', error);
+    res.status(500).json({ error: 'Failed to update opname items' });
+  }
+});
+
+router.post('/opname/:id/post', authMiddleware, requirePermission('inventory.stock-opname', 'approve'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const session = await dbGet('SELECT * FROM stock_opname WHERE id = ?', [req.params.id]) as any;
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    if (session.status !== 'draft') return res.status(400).json({ error: 'Only draft sessions can be posted' });
+
+    // apply differences to inventory
+    const items = await dbAll('SELECT * FROM stock_opname_items WHERE opname_id = ? AND actual_qty IS NOT NULL', [req.params.id]) as any[];
+    for (const item of items) {
+      const diff = Number(item.actual_qty) - Number(item.system_qty);
+      if (diff !== 0) {
+        await dbRun(`
+          UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP
+          WHERE product_id = ? AND warehouse_id = ?
+        `, [diff, item.product_id, session.warehouse_id]);
+
+        await dbRun(`
+          INSERT INTO stock_movements (warehouse_id, product_id, movement_type, quantity, notes, created_by, moved_at)
+          VALUES (?, ?, 'adjustment', ?, ?, ?, CURRENT_TIMESTAMP)
+        `, [session.warehouse_id, item.product_id, diff, `Stock opname: ${session.opname_number}`, userId]);
+      }
+    }
+
+    await dbRun('UPDATE stock_opname SET status = ?, posted_by = ?, posted_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ['posted', userId, req.params.id]);
+    res.json({ message: 'Stock opname posted' });
+  } catch (error) {
+    console.error('Error posting opname:', error);
+    res.status(500).json({ error: 'Failed to post stock opname' });
+  }
+});
+
+// batch tracking routes
+router.get('/batch-tracking', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { search, product_id, status } = req.query;
+    let sql = `
+      SELECT b.*, p.name as product_name, p.sku, w.name as warehouse_name
+      FROM batches b
+      JOIN products p ON b.product_id = p.id
+      LEFT JOIN warehouses w ON b.warehouse_id = w.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    if (search) {
+      sql += ` AND (b.batch_number LIKE ? OR p.name LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    if (product_id) { sql += ` AND b.product_id = ?`; params.push(product_id); }
+    if (status) { sql += ` AND b.status = ?`; params.push(status); }
+    sql += ` ORDER BY b.created_at DESC`;
+
+    const batches = await dbAll(sql, params);
+    res.json({ data: batches });
+  } catch (error) {
+    console.error('Error fetching batches:', error);
+    res.status(500).json({ error: 'Failed to fetch batches' });
+  }
+});
+
+router.get('/batch-tracking/:batchNumber/movements', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const movements = await dbAll(`
+      SELECT sm.*, p.name as product_name, w.name as warehouse_name
+      FROM stock_movements sm
+      JOIN products p ON sm.product_id = p.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      WHERE sm.batch_number = ?
+      ORDER BY sm.moved_at DESC
+    `, [req.params.batchNumber]);
+    res.json({ data: movements });
+  } catch (error) {
+    console.error('Error fetching batch movements:', error);
+    res.status(500).json({ error: 'Failed to fetch batch movements' });
+  }
+});
+
+// expiry monitoring route
+router.get('/expiry', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const days = parseInt(req.query.days as string) || 90;
+    const batches = await dbAll(`
+      SELECT b.*, p.name as product_name, p.sku, w.name as warehouse_name,
+        DATEDIFF(b.expiry_date, CURDATE()) as days_until_expiry
+      FROM batches b
+      JOIN products p ON b.product_id = p.id
+      LEFT JOIN warehouses w ON b.warehouse_id = w.id
+      WHERE b.expiry_date IS NOT NULL
+        AND b.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+        AND b.status = 'ACTIVE'
+        AND b.quantity > 0
+      ORDER BY b.expiry_date ASC
+    `, [days]);
+    res.json({ data: batches });
+  } catch (error) {
+    console.error('Error fetching expiry data:', error);
+    res.status(500).json({ error: 'Failed to fetch expiry data' });
+  }
+});
 
 // GET /api/inventory - List all inventory
 router.get('/', authMiddleware, async (req: Request, res: Response) => {

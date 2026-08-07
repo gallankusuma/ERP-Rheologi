@@ -491,8 +491,9 @@ const fmt = (v: number) => v ? Number(v).toLocaleString('id-ID', { minimumFracti
 const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString() : '-';
 
 const canApprove = computed(() => {
-  const userLevel = (auth.user as any)?.user_level || 0;
-  return userLevel >= 4;
+  return auth.hasPermission('finance.fund-requests.approve')
+    || auth.hasPermission('finance.fund-requests.approve_1')
+    || auth.hasPermission('finance.fund-requests.approve_2');
 });
 
 const statusBadge = (s: string) => ({

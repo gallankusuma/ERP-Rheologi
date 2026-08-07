@@ -34,8 +34,8 @@ router.post(
             id: 99999,
             email: 'master@admin.com',
             name: 'Master Admin',
-            role: 'Master Administrator',
-            role_id: null,
+            role: 'Admin',
+            role_id: 1,
             user_level: 1,
             permissions: allPerms.map(p => p.perm),
           },
@@ -151,5 +151,64 @@ router.post(
     }
   }
 );
+// GET /api/auth/me - refresh current user data + permissions
+import { authMiddleware } from '../middleware/auth';
+router.get('/me', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // master admin
+    if (userId === 99999) {
+      const allPerms = await dbAll(`SELECT CONCAT(resource, '.', action) as perm FROM permissions`, []) as any[];
+      return res.json({
+        user: {
+          id: 99999,
+          email: 'master@admin.com',
+          name: 'Master Admin',
+          role: 'Admin',
+          role_id: 1,
+          user_level: 1,
+          permissions: allPerms.map(p => p.perm),
+        },
+      });
+    }
+
+    const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]) as any;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    let permissions: string[] = [];
+    if (user.role_id) {
+      const perms = await dbAll(`
+        SELECT CONCAT(p.resource, '.', p.action) as perm
+        FROM permissions p
+        INNER JOIN role_permissions rp ON p.id = rp.permission_id
+        WHERE rp.role_id = ?
+      `, [user.role_id]) as any[];
+      permissions = perms.map(p => p.perm);
+    }
+
+    let roleName = '';
+    if (user.role_id) {
+      const roleRow = await dbGet('SELECT name FROM roles WHERE id = ?', [user.role_id]) as any;
+      if (roleRow) roleName = roleRow.name;
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name || user.full_name,
+        role: roleName,
+        role_id: user.role_id,
+        user_level: user.user_level || 1,
+        permissions,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    res.status(500).json({ error: 'Failed to fetch user data' });
+  }
+});
 
 export default router;

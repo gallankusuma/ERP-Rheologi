@@ -161,7 +161,7 @@ onMounted(async () => {
 
 const fetchWarehouses = async () => {
   try {
-    const res = await api.get('/api/warehouses');
+    const res = await api.get('/warehouses');
     warehouses.value = res.data.data || res.data || [];
   } catch (e) { console.error(e); }
 };
@@ -169,7 +169,7 @@ const fetchWarehouses = async () => {
 watch(selectedWarehouse, async () => {
   const params = selectedWarehouse.value ? `?warehouse_id=${selectedWarehouse.value}` : '';
   try {
-    const res = await api.get(`/api/inventory${params}`);
+    const res = await api.get(`/inventory${params}`);
     store.inventory = res.data.data || [];
   } catch (e) { console.error(e); }
 });
@@ -182,12 +182,12 @@ const filtered = computed(() => {
 });
 
 const totalSku = computed(() => store.inventory.length);
-const totalOnHand = computed(() => store.inventory.reduce((sum, inv) => sum + (inv.quantity_on_hand || 0), 0));
-const lowStock = computed(() => store.inventory.filter((inv) => (inv.quantity_on_hand || 0) > 0 && (inv.quantity_on_hand || 0) < (inv.reorder_point || 10)));
-const outOfStock = computed(() => store.inventory.filter((inv) => (inv.quantity_on_hand || 0) === 0).length);
+const totalOnHand = computed(() => store.inventory.reduce((sum, inv) => sum + Number(inv.quantity_on_hand || 0), 0));
+const lowStock = computed(() => store.inventory.filter((inv) => Number(inv.quantity_on_hand || 0) > 0 && Number(inv.quantity_on_hand || 0) < Number(inv.reorder_point || 10)));
+const outOfStock = computed(() => store.inventory.filter((inv) => Number(inv.quantity_on_hand || 0) === 0).length);
 
 const availabilityVariant = (inv: any): 'success' | 'warning' | 'danger' => {
-  const available = (inv.quantity_on_hand || 0) - (inv.quantity_reserved || 0);
+  const available = Number(inv.quantity_on_hand || 0) - Number(inv.quantity_reserved || 0);
   if (available <= 0) return 'danger';
   if (available < 10) return 'warning';
   return 'success';

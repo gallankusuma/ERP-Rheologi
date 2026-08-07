@@ -1549,7 +1549,7 @@ router.get('/forecast-monthly', authMiddleware, async (req: Request, res: Respon
 });
 
 // PUT /forecast-monthly - Save monthly forecast data
-router.put('/forecast-monthly', authMiddleware, requirePermission('ppic.forecast', 'edit'), async (req: Request, res: Response) => {
+router.put('/forecast-monthly', authMiddleware, requirePermission('ppic.forecast', 'update'), async (req: Request, res: Response) => {
   try {
     const { year, data } = req.body;
     if (!year || !Array.isArray(data)) {
@@ -1690,7 +1690,7 @@ function getISOWeek(date: Date): number {
 }
 
 // POST /forecast-monthly/push-to-mps - Push monthly forecast to MPS
-router.post('/forecast-monthly/push-to-mps', authMiddleware, requirePermission('ppic.mps', 'edit'), async (req: Request, res: Response) => {
+router.post('/forecast-monthly/push-to-mps', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
     const { year } = req.body;
     if (!year) return res.status(400).json({ error: 'year is required' });

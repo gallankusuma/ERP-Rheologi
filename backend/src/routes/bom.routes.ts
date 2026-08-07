@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requirePermission } from '../middleware/permission';
+import { requirePermission, checkUserPermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -209,53 +209,44 @@ router.delete('/:id', authMiddleware, requirePermission('master_data.bom', 'dele
   }
 });
 
-// POST /api/bom/:id/approve - 2-Tier Approval (Supervisor → Manager/Director)
-router.post('/:id/approve', authMiddleware, requirePermission('master_data.bom', 'approve_1'), async (req: Request, res: Response) => {
+// POST /api/bom/:id/approve - 2-Tier Approval
+router.post('/:id/approve', authMiddleware, async (req: Request, res: Response) => {
   try {
     const bomId = req.params.id;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
-
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const bom = await dbGet('SELECT id, approval_status FROM bom_headers WHERE id = ?', [bomId]) as any;
     if (!bom) return res.status(404).json({ error: 'BOM not found' });
 
     const currentStatus = bom.approval_status || 0;
-    const approverRow = await dbGet('SELECT id FROM users WHERE id = ?', [userId]) as { id: number } | undefined;
-    const approverId = approverRow ? userId : null;
+    const hasApprove = await checkUserPermission(userId, 'master_data.bom', 'approve');
+    const hasApprove1 = await checkUserPermission(userId, 'master_data.bom', 'approve_1');
+    const hasApprove2 = await checkUserPermission(userId, 'master_data.bom', 'approve_2');
 
-    // Director / Master (>=4): direct full approval
-    if (userLevel >= 4 && currentStatus < 2) {
+    if (hasApprove && currentStatus < 2) {
       await dbRun(
         'UPDATE bom_headers SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, approverId, bomId]
+        [userId, userId, bomId]
       );
       return res.json({ message: 'BOM fully approved (DIRECT)', approval_status: 2 });
     }
-
-    // Supervisor (2): 0 -> 1
-    if (userLevel === 2 && currentStatus === 0) {
+    if (hasApprove1 && currentStatus === 0) {
       await dbRun(
         'UPDATE bom_headers SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, bomId]
+        [userId, bomId]
       );
-      return res.json({ message: 'BOM approved by supervisor (1/2)', approval_status: 1 });
+      return res.json({ message: 'BOM approved (1/2)', approval_status: 1 });
     }
-
-    // Manager (3): 1 -> 2
-    if (userLevel === 3 && currentStatus === 1) {
+    if (hasApprove2 && currentStatus === 1) {
       await dbRun(
         'UPDATE bom_headers SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, bomId]
+        [userId, bomId]
       );
-      return res.json({ message: 'BOM approved by manager (2/2)', approval_status: 2 });
+      return res.json({ message: 'BOM approved (2/2)', approval_status: 2 });
     }
 
-    return res.status(400).json({
-      error: 'Cannot approve: insufficient level or invalid status',
-      debug: { userLevel, currentStatus, needLevel: currentStatus === 0 ? 2 : 3 }
-    });
+    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
   } catch (error) {
     console.error('Error approving BOM:', error);
     res.status(500).json({ error: 'Failed to approve BOM' });
@@ -263,19 +254,20 @@ router.post('/:id/approve', authMiddleware, requirePermission('master_data.bom',
 });
 
 // POST /api/bom/:id/reject - Reject BOM
-router.post('/:id/reject', authMiddleware, requirePermission('master_data.bom', 'approve_1'), async (req: Request, res: Response) => {
+router.post('/:id/reject', authMiddleware, async (req: Request, res: Response) => {
   try {
     const bomId = req.params.id;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
-
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    if (userLevel < 2) return res.status(403).json({ error: 'Insufficient permission to reject' });
+
+    const canReject = await checkUserPermission(userId, 'master_data.bom', 'approve_1')
+      || await checkUserPermission(userId, 'master_data.bom', 'approve_2')
+      || await checkUserPermission(userId, 'master_data.bom', 'approve');
+    if (!canReject) return res.status(403).json({ error: 'Insufficient permissions to reject' });
 
     const bom = await dbGet('SELECT id, approval_status FROM bom_headers WHERE id = ?', [bomId]) as any;
     if (!bom) return res.status(404).json({ error: 'BOM not found' });
 
-    // Reset approval
     await dbRun(
       'UPDATE bom_headers SET approval_status = -1, approved_by_supervisor_id = NULL, approved_by_manager_id = NULL, approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?',
       [bomId]

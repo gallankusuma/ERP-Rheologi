@@ -118,7 +118,7 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                     </button>
                     <button 
-                      v-if="(bom.approval_status || 0) >= 2 && (authStore.user?.user_level ?? 0) >= 3"
+                      v-if="(bom.approval_status || 0) >= 2 && authStore.hasPermission('master_data.bom.approve_2')"
                       @click="reopenBOM(bom.id)" 
                       class="p-1.5 rounded-md hover:bg-amber-100 text-amber-600 transition" title="Reopen"
                     >
@@ -376,12 +376,12 @@
               Approve
             </button>
             <button 
-              v-if="isEditing && editingBomId && (currentBOMApprovalStatus || 0) >= 2 && (authStore.user?.user_level ?? 0) >= 3"
+              v-if="isEditing && editingBomId && (currentBOMApprovalStatus || 0) >= 2 && authStore.hasPermission('master_data.bom.approve_2')"
               @click="reopenBOM(editingBomId)" 
               class="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium text-sm transition"
             >Reopen</button>
             <button 
-              v-if="isEditing && editingBomId && (currentBOMApprovalStatus || 0) !== -1 && (currentBOMApprovalStatus || 0) < 2 && (authStore.user?.user_level ?? 0) >= 2"
+              v-if="isEditing && editingBomId && (currentBOMApprovalStatus || 0) !== -1 && (currentBOMApprovalStatus || 0) < 2 && (authStore.hasPermission('master_data.bom.approve_1') || authStore.hasPermission('master_data.bom.approve_2') || authStore.hasPermission('master_data.bom.approve'))"
               @click="rejectBOM(editingBomId)" 
               class="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium text-sm transition"
             >Reject</button>
@@ -602,10 +602,9 @@ const openEditModal = async (bomId: string | number) => {
 const closeModal = () => { showModal.value = false; currentBOMApprovalStatus.value = null; editingBomId.value = null; isEditing.value = false; };
 
 const canApprove = (approvalStatus: number) => {
-  const level = authStore.user?.user_level || 1;
-  if (level >= 4) return approvalStatus < 2;
-  if (level === 2 && approvalStatus === 0) return true;
-  if (level === 3 && approvalStatus === 1) return true;
+  if (authStore.hasPermission('master_data.bom.approve')) return approvalStatus < 2;
+  if (authStore.hasPermission('master_data.bom.approve_1') && approvalStatus === 0) return true;
+  if (authStore.hasPermission('master_data.bom.approve_2') && approvalStatus === 1) return true;
   return false;
 };
 

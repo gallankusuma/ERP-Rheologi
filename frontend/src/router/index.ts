@@ -974,8 +974,7 @@ router.beforeEach((to, _from, next) => {
     if (resource) {
       let user: any = null;
       try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* ignore */ }
-      const isBypass = user && (user.role_id === 1 || user.user_level === 1);
-      const hasAccess = isBypass || !!user?.permissions?.includes(`${resource}.view`);
+      const hasAccess = !!user?.permissions?.includes(`${resource}.view`);
       if (!hasAccess) {
         next('/');
         return;

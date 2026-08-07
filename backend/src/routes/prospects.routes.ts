@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { dbGet, dbAll, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requirePermission } from '../middleware/permission';
+import { requirePermission, checkUserPermission } from '../middleware/permission';
 
 const router = express.Router();
 
@@ -185,8 +185,9 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
       whereClause = '1=1';
     }
 
-    // non-admin users can only see their own prospects or unassigned ones
-    if (user.roleId !== 1 && user.userLevel !== 1) {
+    // users without manage permission can only see their own prospects
+    const canManageAll = await checkUserPermission(user.userId, 'crm.prospects', 'manage');
+    if (!canManageAll) {
       whereClause += ` AND (p.assigned_to = ? OR p.assigned_to IS NULL OR p.created_by = ?)`;
       queryParams.push(user.userId, user.userId);
     }
@@ -459,11 +460,11 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
       return res.status(404).json({ error: 'Prospect not found' });
     }
 
-    // only admins or the assigned/creator user can edit
+    // only users with manage permission or the assigned/creator user can edit
     const user = (req as any).user;
+    const canManageAll = await checkUserPermission(user.userId, 'crm.prospects', 'manage');
     if (
-      user.roleId !== 1 &&
-      user.userLevel !== 1 &&
+      !canManageAll &&
       current.assigned_to !== user.userId &&
       current.created_by !== user.userId
     ) {

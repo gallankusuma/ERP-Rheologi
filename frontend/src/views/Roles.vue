@@ -261,6 +261,7 @@
 import { exportToCSV } from '../utils/export';
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRoleStore } from '../stores/roles';
+import { useAuthStore } from '../stores/auth';
 import { api } from '../lib/api';
 
 interface Permission {
@@ -273,6 +274,7 @@ interface Permission {
 }
 
 const roleStore = useRoleStore();
+const authStore = useAuthStore();
 
 // Role form state
 const showRoleModal = ref(false);
@@ -320,7 +322,7 @@ const moduleIcons: Record<string, string> = {
 const actionLabels: Record<string, string> = {
   'view': 'View',
   'create': 'Create',
-  'edit': 'Edit',
+  'update': 'Edit',
   'delete': 'Delete',
   'approve': 'Approve',
   'approve_1': 'Approve ①',
@@ -328,9 +330,11 @@ const actionLabels: Record<string, string> = {
   'export': 'Export',
   'convert': 'Convert',
   'manage': 'Manage',
+  'assign_permissions': 'Assign',
+  'issue_material': 'Issue Material',
 };
 
-const allActions = ['view', 'create', 'edit', 'delete', 'approve', 'approve_1', 'approve_2', 'export', 'convert', 'manage'];
+const allActions = ['view', 'create', 'update', 'delete', 'approve', 'approve_1', 'approve_2', 'export', 'convert', 'manage', 'assign_permissions', 'issue_material'];
 
 const groupedPermissions = computed(() => {
   const grouped: Record<string, Record<string, Permission[]>> = {};
@@ -529,6 +533,10 @@ const savePermissions = async () => {
   try {
     await roleStore.assignPermissions(permRole.value.id, Array.from(selectedPermIds.value));
     showToast('success', `Permissions saved for ${permRole.value.name}`);
+    // auto-refresh current user's permissions if the edited role matches
+    if (authStore.user?.role_id === permRole.value.id) {
+      await authStore.refreshPermissions();
+    }
     closePermModal();
   } catch (error: any) {
     showToast('error', error.response?.data?.error || 'Failed to save permissions');

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requirePermission } from '../middleware/permission';
+import { requirePermission, checkUserPermission } from '../middleware/permission';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -584,48 +584,44 @@ router.post('/purchase-requests/:id/approve', authMiddleware, async (req: Reques
   try {
     const prId = req.params.id;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
-
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const pr = await dbGet('SELECT approval_status FROM purchase_requests WHERE id = ?', [prId]) as any;
     if (!pr) return res.status(404).json({ error: 'Purchase request not found' });
 
     const currentStatus = pr.approval_status || 0;
-    const approverRow = await dbGet('SELECT id FROM users WHERE id = ?', [userId]) as { id: number } | undefined;
-    const approverId = approverRow ? userId : null;
+    const hasApprove = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve');
+    const hasApprove1 = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_1');
+    const hasApprove2 = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_2');
 
-    // Director / Master (>=4): direct full approval
-    if (userLevel >= 4 && currentStatus < 2) {
+    // full approve: direct 0->2 or 1->2
+    if (hasApprove && currentStatus < 2) {
       await dbRun(
         'UPDATE purchase_requests SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, approverId, prId]
+        [userId, userId, prId]
       );
       return res.json({ message: 'PR fully approved (DIRECT)', approval_status: 2 });
     }
 
-    // Supervisor (2): 0 -> 1
-    if (userLevel === 2 && currentStatus === 0) {
+    // approve_1: 0 -> 1
+    if (hasApprove1 && currentStatus === 0) {
       await dbRun(
         'UPDATE purchase_requests SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, prId]
+        [userId, prId]
       );
-      return res.json({ message: 'PR approved by supervisor (1/2)', approval_status: 1 });
+      return res.json({ message: 'PR approved (1/2)', approval_status: 1 });
     }
 
-    // Manager (3): 1 -> 2
-    if (userLevel === 3 && currentStatus === 1) {
+    // approve_2: 1 -> 2
+    if (hasApprove2 && currentStatus === 1) {
       await dbRun(
         'UPDATE purchase_requests SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, prId]
+        [userId, prId]
       );
-      return res.json({ message: 'PR approved by manager (2/2)', approval_status: 2 });
+      return res.json({ message: 'PR approved (2/2)', approval_status: 2 });
     }
 
-    return res.status(400).json({
-      error: 'Cannot approve: insufficient level or invalid status',
-      debug: { userLevel, currentStatus, needLevel: currentStatus === 0 ? 2 : 3 }
-    });
+    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
   } catch (error) {
     console.error('Error approving PR:', error);
     res.status(500).json({ error: 'Failed to approve purchase request' });
@@ -636,11 +632,12 @@ router.post('/purchase-requests/:id/reject', authMiddleware, async (req: Request
   try {
     const prId = req.params.id;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Only level 2+ can reject back to pending
-    if (userLevel >= 2) {
+    const canReject = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_1')
+      || await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_2')
+      || await checkUserPermission(userId, 'procurement.purchase-requests', 'approve');
+    if (canReject) {
       await dbRun(
         'UPDATE purchase_requests SET approval_status = 0, approved_by_supervisor_id = NULL, approved_by_manager_id = NULL, approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?',
         [prId]
@@ -648,7 +645,7 @@ router.post('/purchase-requests/:id/reject', authMiddleware, async (req: Request
       return res.json({ message: 'PR rejected and reset to pending', approval_status: 0 });
     }
 
-    return res.status(400).json({ error: 'Cannot reject: insufficient level' });
+    return res.status(403).json({ error: 'Insufficient permissions to reject' });
   } catch (error) {
     console.error('Error rejecting PR:', error);
     res.status(500).json({ error: 'Failed to reject purchase request' });
@@ -1469,44 +1466,39 @@ router.post('/purchase-orders/:id/approve', authMiddleware, async (req: Request,
   try {
     const poId = req.params.id;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const po = await dbGet('SELECT approval_status FROM purchase_orders WHERE id = ?', [poId]) as any;
     if (!po) return res.status(404).json({ error: 'Purchase order not found' });
 
     const currentStatus = po.approval_status || 0;
-    const approverRow = await dbGet('SELECT id FROM users WHERE id = ?', [userId]) as { id: number } | undefined;
-    const approverId = approverRow ? userId : null;
+    const hasApprove = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve');
+    const hasApprove1 = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_1');
+    const hasApprove2 = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_2');
 
-    if (userLevel >= 4 && currentStatus < 2) {
+    if (hasApprove && currentStatus < 2) {
       await dbRun(
         'UPDATE purchase_orders SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, approverId, poId]
+        [userId, userId, poId]
       );
       return res.json({ message: 'PO fully approved (DIRECT)', approval_status: 2 });
     }
-
-    if (userLevel === 2 && currentStatus === 0) {
+    if (hasApprove1 && currentStatus === 0) {
       await dbRun(
         'UPDATE purchase_orders SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, poId]
+        [userId, poId]
       );
-      return res.json({ message: 'PO approved by supervisor (1/2)', approval_status: 1 });
+      return res.json({ message: 'PO approved (1/2)', approval_status: 1 });
     }
-
-    if (userLevel === 3 && currentStatus === 1) {
+    if (hasApprove2 && currentStatus === 1) {
       await dbRun(
         'UPDATE purchase_orders SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [approverId, poId]
+        [userId, poId]
       );
-      return res.json({ message: 'PO approved by manager (2/2)', approval_status: 2 });
+      return res.json({ message: 'PO approved (2/2)', approval_status: 2 });
     }
 
-    return res.status(400).json({
-      error: 'Cannot approve: insufficient level or invalid status',
-      debug: { userLevel, currentStatus, needLevel: currentStatus === 0 ? 2 : 3 }
-    });
+    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
   } catch (error) {
     console.error('Error approving PO:', error);
     res.status(500).json({ error: 'Failed to approve purchase order' });
@@ -1517,10 +1509,12 @@ router.post('/purchase-orders/:id/reject', authMiddleware, async (req: Request, 
   try {
     const poId = req.params.id;
     const userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (userLevel >= 2) {
+    const canReject = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_1')
+      || await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_2')
+      || await checkUserPermission(userId, 'procurement.purchase-orders', 'approve');
+    if (canReject) {
       await dbRun(
         'UPDATE purchase_orders SET approval_status = 0, approved_by_supervisor_id = NULL, approved_by_manager_id = NULL, approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?',
         [poId]
@@ -1528,7 +1522,7 @@ router.post('/purchase-orders/:id/reject', authMiddleware, async (req: Request, 
       return res.json({ message: 'PO rejected and reset to pending', approval_status: 0 });
     }
 
-    return res.status(400).json({ error: 'Cannot reject: insufficient level' });
+    return res.status(403).json({ error: 'Insufficient permissions to reject' });
   } catch (error) {
     console.error('Error rejecting PO:', error);
     res.status(500).json({ error: 'Failed to reject purchase order' });
@@ -1764,26 +1758,19 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
   try {
     const { id } = req.params;
     let userId = (req as any).user?.userId;
-    const userLevel = (req as any).user?.userLevel || 1;
-
-    console.log('[GRN Approve] Request:', { id, userId, userLevel });
-
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     // Verify user exists in database
     const userExists = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
     if (!userExists) {
-      console.warn(`⚠️ Approve user ID ${userId} not found, using default admin (ID: 1)`);
+      console.warn(`Approve user ID ${userId} not found, using default admin (ID: 1)`);
       userId = 1;
     }
 
-    // Get GRN detail
     const grn = await dbGet(`SELECT * FROM goods_receipts WHERE id = ?`, [id]) as any;
-
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
 
     let currentStatus = Number(grn.approval_status || 0);
-    console.log('[GRN Approve] Current status:', currentStatus);
 
     // Parse items from notes
     let items: any[] = [];
@@ -1796,7 +1783,6 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
 
     // If rejected (-1), reset to pending (0) first
     if (currentStatus === -1) {
-      console.log('[GRN Approve] Resetting rejected GRN to pending');
       await dbRun(
         `UPDATE goods_receipts
          SET approval_status = 0, status = 'received',
@@ -1807,12 +1793,14 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
          WHERE id = ?`,
         [id]
       );
-      currentStatus = 0; // Update the variable
+      currentStatus = 0;
     }
 
-    // Director/Master (>=4): direct full approval
-    if (userLevel >= 4 && currentStatus < 2) {
-      console.log('[GRN Approve] Director/Master approval');
+    const hasApprove = await checkUserPermission(userId, 'procurement.grn', 'approve');
+    const hasApprove1 = await checkUserPermission(userId, 'procurement.grn', 'approve_1');
+    const hasApprove2 = await checkUserPermission(userId, 'procurement.grn', 'approve_2');
+
+    if (hasApprove && currentStatus < 2) {
       await dbRun(
         `UPDATE goods_receipts
          SET approval_status = 2, status = 'approved',
@@ -1823,9 +1811,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
          WHERE id = ?`,
         [userId, userId, id]
       );
-    } else if (userLevel === 2 && currentStatus === 0) {
-      console.log('[GRN Approve] Supervisor approval');
-      // Supervisor: 0 -> 1
+    } else if (hasApprove1 && currentStatus === 0) {
       await dbRun(
         `UPDATE goods_receipts
          SET approval_status = 1, status = 'received',
@@ -1834,9 +1820,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
          WHERE id = ?`,
         [userId, id]
       );
-    } else if (userLevel === 3 && currentStatus === 1) {
-      console.log('[GRN Approve] Manager approval');
-      // Manager: 1 -> 2
+    } else if (hasApprove2 && currentStatus === 1) {
       await dbRun(
         `UPDATE goods_receipts
          SET approval_status = 2, status = 'approved',
@@ -1846,11 +1830,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
         [userId, id]
       );
     } else {
-      console.log('[GRN Approve] Insufficient permissions', { userLevel, currentStatus });
-      return res.status(400).json({
-        error: 'Cannot approve: insufficient level or invalid status',
-        debug: { userLevel, currentStatus, needLevel: currentStatus === 0 ? 2 : 3 }
-      });
+      return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
     }
 
     // If now fully approved, create stock movements and update inventory
@@ -1909,8 +1889,11 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
 router.post('/goods-receipts/:id/reject', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const userLevel = (req as any).user?.userLevel || 1;
-    if (userLevel < 2) return res.status(400).json({ error: 'Insufficient level to reject' });
+    const userId = (req as any).user?.userId;
+    const canReject = await checkUserPermission(userId, 'procurement.grn', 'approve_1')
+      || await checkUserPermission(userId, 'procurement.grn', 'approve_2')
+      || await checkUserPermission(userId, 'procurement.grn', 'approve');
+    if (!canReject) return res.status(403).json({ error: 'Insufficient permissions to reject' });
 
     await dbRun(
       `UPDATE goods_receipts 
