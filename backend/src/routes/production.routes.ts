@@ -1161,7 +1161,7 @@ router.get('/mrp/dashboard', authMiddleware, async (req: Request, res: Response)
     const year = Number(req.query.year) || new Date().getFullYear();
 
     const totalWOs = await dbGet(
-      "SELECT COUNT(*) as count FROM work_orders WHERE YEAR(planned_start) = ? AND status NOT IN ('cancelled')",
+      "SELECT COUNT(*) as count FROM work_orders WHERE YEAR(scheduled_start) = ? AND status NOT IN ('cancelled')",
       [year]
     ) as any;
 
@@ -1170,7 +1170,7 @@ router.get('/mrp/dashboard', authMiddleware, async (req: Request, res: Response)
       FROM work_orders wo
       JOIN bom_items bi ON bi.bom_id = (SELECT bom_id FROM boms WHERE product_id = wo.product_id LIMIT 1)
       LEFT JOIN (SELECT product_id, SUM(quantity) as stock FROM inventory_transactions GROUP BY product_id) inv ON inv.product_id = bi.material_id
-      WHERE YEAR(wo.planned_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
       AND (COALESCE(inv.stock, 0) < bi.quantity * wo.qty)
     `, [year]) as any;
 
@@ -1185,7 +1185,7 @@ router.get('/mrp/dashboard', authMiddleware, async (req: Request, res: Response)
         FROM work_orders wo
         JOIN boms b ON b.product_id = wo.product_id
         JOIN bom_items bi ON bi.bom_id = b.id
-        WHERE YEAR(wo.planned_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+        WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
         GROUP BY bi.material_id
       ) req ON req.product_id = p.id
       WHERE req.required > 0
@@ -1194,12 +1194,12 @@ router.get('/mrp/dashboard', authMiddleware, async (req: Request, res: Response)
     `, [year]) as any[];
 
     const workOrders = await dbAll(`
-      SELECT wo.id, wo.wo_number, wo.status, wo.qty, wo.planned_start, wo.planned_end,
+      SELECT wo.id, wo.wo_number, wo.status, wo.qty, wo.scheduled_start, wo.scheduled_end,
              p.name as product_name, p.sku
       FROM work_orders wo
       JOIN products p ON wo.product_id = p.id
-      WHERE YEAR(wo.planned_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
-      ORDER BY wo.planned_start
+      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+      ORDER BY wo.scheduled_start
       LIMIT 50
     `, [year]) as any[];
 
