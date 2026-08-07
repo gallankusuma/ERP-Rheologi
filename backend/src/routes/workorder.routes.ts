@@ -240,4 +240,19 @@ router.delete('/:id', authMiddleware, requirePermission('production.workorders',
   }
 });
 
+// GET /summary - WO status summary for dashboard
+router.get('/summary', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const summary = await dbAll(`
+      SELECT status, COUNT(*) as count
+      FROM work_orders
+      GROUP BY status
+    `, []);
+    res.json({ data: summary });
+  } catch (error) {
+    console.error('Error fetching WO summary:', error);
+    res.status(500).json({ error: 'Failed to fetch summary' });
+  }
+});
+
 export default router;

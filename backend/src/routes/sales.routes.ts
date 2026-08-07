@@ -556,4 +556,103 @@ router.post('/sales-orders/:id/create-project', authMiddleware, requirePermissio
   }
 });
 
+// GET /orders - Alias for /sales-orders (used by SalesOrders.vue, Deliveries.vue)
+router.get('/orders', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const orders = await dbAll(`
+      SELECT so.*, c.name as customer_name
+      FROM sales_orders so
+      LEFT JOIN customers c ON so.customer_id = c.id
+      ORDER BY so.created_at DESC
+    `, []);
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// POST /orders - Create sales order
+router.post('/orders', authMiddleware, requirePermission('crm.sales', 'create'), async (req: Request, res: Response) => {
+  try {
+    const { customer_id, items, notes, delivery_date } = req.body;
+    const soNumber = generateCode('SO');
+    const result = await dbRun(
+      'INSERT INTO sales_orders (so_number, customer_id, notes, delivery_date, status) VALUES (?, ?, ?, ?, ?)',
+      [soNumber, customer_id, notes || null, delivery_date || null, 'Draft']
+    );
+    if (items && Array.isArray(items)) {
+      for (const item of items) {
+        await dbRun(
+          'INSERT INTO sales_order_items (sales_order_id, product_id, qty, unit_price, total) VALUES (?, ?, ?, ?, ?)',
+          [result.insertId, item.product_id, item.qty, item.unit_price, (item.qty * item.unit_price)]
+        );
+      }
+    }
+    res.json({ id: result.insertId, so_number: soNumber });
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// GET /payments - List all payments
+router.get('/payments', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const payments = await dbAll(`
+      SELECT sp.*, c.name as customer_name,
+             si.invoice_number
+      FROM sales_payments sp
+      LEFT JOIN customers c ON sp.customer_id = c.id
+      LEFT JOIN sales_invoices si ON sp.invoice_id = si.id
+      ORDER BY sp.payment_date DESC
+    `, []);
+    res.json(payments);
+  } catch (error) {
+    console.error('Error fetching payments:', error);
+    res.status(500).json({ error: 'Failed to fetch payments' });
+  }
+});
+
+// POST /payments - Record a payment
+router.post('/payments', authMiddleware, requirePermission('crm.sales', 'create'), async (req: Request, res: Response) => {
+  try {
+    const { invoice_id, customer_id, amount, payment_date, payment_method, reference_number, notes } = req.body;
+    const result = await dbRun(
+      'INSERT INTO sales_payments (invoice_id, customer_id, payment_date, amount, payment_method, reference_number, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [invoice_id, customer_id, payment_date, amount, payment_method || 'bank_transfer', reference_number || null, notes || null, 'confirmed']
+    );
+    // update invoice paid amount
+    if (invoice_id) {
+      await dbRun(`
+        UPDATE sales_invoices SET paid_amount = COALESCE(paid_amount, 0) + ?,
+        status = CASE WHEN COALESCE(paid_amount, 0) + ? >= total_amount THEN 'paid' ELSE 'partial' END
+        WHERE id = ?
+      `, [amount, amount, invoice_id]);
+    }
+    res.json({ id: result.insertId, message: 'Payment recorded' });
+  } catch (error) {
+    console.error('Error recording payment:', error);
+    res.status(500).json({ error: 'Failed to record payment' });
+  }
+});
+
+// GET /payments/summary - Payment summary stats
+router.get('/payments/summary', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const totalReceived = await dbGet('SELECT COALESCE(SUM(amount), 0) as total FROM sales_payments WHERE status = ?', ['confirmed']) as any;
+    const pendingInvoices = await dbGet("SELECT COUNT(*) as count, COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as total FROM sales_invoices WHERE status IN ('sent', 'partial')") as any;
+    const overdueInvoices = await dbGet("SELECT COUNT(*) as count FROM sales_invoices WHERE status IN ('sent', 'partial') AND due_date < CURDATE()") as any;
+    res.json({
+      total_received: Number(totalReceived?.total || 0),
+      pending_count: pendingInvoices?.count || 0,
+      pending_amount: Number(pendingInvoices?.total || 0),
+      overdue_count: overdueInvoices?.count || 0,
+    });
+  } catch (error) {
+    console.error('Error fetching payment summary:', error);
+    res.status(500).json({ error: 'Failed to fetch payment summary' });
+  }
+});
+
 export default router;

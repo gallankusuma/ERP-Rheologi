@@ -1155,4 +1155,70 @@ router.get('/history/stats', authMiddleware, async (_req: Request, res: Response
   }
 });
 
+// GET /mrp/dashboard - MRP dashboard with shortage summary
+router.get('/mrp/dashboard', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+
+    const totalWOs = await dbGet(
+      "SELECT COUNT(*) as count FROM work_orders WHERE YEAR(planned_start) = ? AND status NOT IN ('cancelled')",
+      [year]
+    ) as any;
+
+    const woWithShortage = await dbGet(`
+      SELECT COUNT(DISTINCT wo.id) as count
+      FROM work_orders wo
+      JOIN bom_items bi ON bi.bom_id = (SELECT bom_id FROM boms WHERE product_id = wo.product_id LIMIT 1)
+      LEFT JOIN (SELECT product_id, SUM(quantity) as stock FROM inventory_transactions GROUP BY product_id) inv ON inv.product_id = bi.material_id
+      WHERE YEAR(wo.planned_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+      AND (COALESCE(inv.stock, 0) < bi.quantity * wo.qty)
+    `, [year]) as any;
+
+    const materials = await dbAll(`
+      SELECT p.id, p.name, p.sku, COALESCE(inv.stock, 0) as current_stock,
+             COALESCE(req.required, 0) as required_qty,
+             COALESCE(inv.stock, 0) - COALESCE(req.required, 0) as gap
+      FROM products p
+      LEFT JOIN (SELECT product_id, SUM(quantity) as stock FROM inventory_transactions GROUP BY product_id) inv ON inv.product_id = p.id
+      LEFT JOIN (
+        SELECT bi.material_id as product_id, SUM(bi.quantity * wo.qty) as required
+        FROM work_orders wo
+        JOIN boms b ON b.product_id = wo.product_id
+        JOIN bom_items bi ON bi.bom_id = b.id
+        WHERE YEAR(wo.planned_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+        GROUP BY bi.material_id
+      ) req ON req.product_id = p.id
+      WHERE req.required > 0
+      ORDER BY gap ASC
+      LIMIT 50
+    `, [year]) as any[];
+
+    const workOrders = await dbAll(`
+      SELECT wo.id, wo.wo_number, wo.status, wo.qty, wo.planned_start, wo.planned_end,
+             p.name as product_name, p.sku
+      FROM work_orders wo
+      JOIN products p ON wo.product_id = p.id
+      WHERE YEAR(wo.planned_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+      ORDER BY wo.planned_start
+      LIMIT 50
+    `, [year]) as any[];
+
+    res.json({
+      data: {
+        summary: {
+          totalWOs: totalWOs?.count || 0,
+          woWithShortage: woWithShortage?.count || 0,
+          totalMaterials: materials.length,
+          shortMaterials: materials.filter((m: any) => m.gap < 0).length,
+        },
+        materials,
+        workOrders,
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching MRP dashboard:', error);
+    res.status(500).json({ error: 'Failed to fetch MRP dashboard' });
+  }
+});
+
 export default router;

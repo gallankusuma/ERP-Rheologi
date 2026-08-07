@@ -1511,4 +1511,267 @@ router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppi
   }
 });
 
+// GET /forecast-monthly - Get monthly forecast data for a year
+router.get('/forecast-monthly', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const brands = await dbAll(`
+      SELECT fb.id, fb.brand_name, fb.type, fb.product_id, fb.conversion_rate, fb.conversion_uom,
+             p.name as product_name, p.sku as product_sku
+      FROM forecast_brands fb
+      LEFT JOIN products p ON fb.product_id = p.id
+      WHERE fb.is_active = 1
+      ORDER BY fb.brand_name
+    `) as any[];
+
+    const monthlyData = await dbAll(
+      'SELECT * FROM forecast_monthly_data WHERE year = ?',
+      [year]
+    ) as any[];
+
+    // attach monthly data to brands
+    for (const brand of brands) {
+      brand.months = {};
+      for (let m = 1; m <= 12; m++) {
+        const md = monthlyData.find((d: any) => d.brand_id === brand.id && d.month === m);
+        brand.months[m] = {
+          forecast_qty: md ? Number(md.forecast_qty) : 0,
+          product_qty: md ? Number(md.product_qty) : 0,
+        };
+      }
+    }
+
+    res.json({ data: { brands, year } });
+  } catch (error) {
+    console.error('Error fetching monthly forecast:', error);
+    res.status(500).json({ error: 'Failed to fetch monthly forecast' });
+  }
+});
+
+// PUT /forecast-monthly - Save monthly forecast data
+router.put('/forecast-monthly', authMiddleware, requirePermission('ppic.forecast', 'edit'), async (req: Request, res: Response) => {
+  try {
+    const { year, data } = req.body;
+    if (!year || !Array.isArray(data)) {
+      return res.status(400).json({ error: 'year and data[] are required' });
+    }
+
+    for (const entry of data) {
+      const { brand_id, month, forecast_qty } = entry;
+      // get brand conversion
+      const brand = await dbGet('SELECT conversion_rate FROM forecast_brands WHERE id = ?', [brand_id]) as any;
+      const rate = brand ? Number(brand.conversion_rate || 1) : 1;
+      const product_qty = Number(forecast_qty) * rate;
+
+      const existing = await dbGet(
+        'SELECT id FROM forecast_monthly_data WHERE year = ? AND brand_id = ? AND month = ?',
+        [year, brand_id, month]
+      );
+      if (existing) {
+        await dbRun(
+          'UPDATE forecast_monthly_data SET forecast_qty = ?, product_qty = ? WHERE year = ? AND brand_id = ? AND month = ?',
+          [forecast_qty, product_qty, year, brand_id, month]
+        );
+      } else {
+        await dbRun(
+          'INSERT INTO forecast_monthly_data (year, brand_id, month, forecast_qty, product_qty) VALUES (?, ?, ?, ?, ?)',
+          [year, brand_id, month, forecast_qty, product_qty]
+        );
+      }
+    }
+
+    // clear months not in payload
+    const brandMonthPairs = data.map((d: any) => `${d.brand_id}_${d.month}`);
+    const allData = await dbAll(
+      'SELECT id, brand_id, month FROM forecast_monthly_data WHERE year = ?',
+      [year]
+    ) as any[];
+    for (const row of allData) {
+      if (!brandMonthPairs.includes(`${row.brand_id}_${row.month}`)) {
+        await dbRun('DELETE FROM forecast_monthly_data WHERE id = ?', [row.id]);
+      }
+    }
+
+    res.json({ message: 'Monthly forecast saved' });
+  } catch (error) {
+    console.error('Error saving monthly forecast:', error);
+    res.status(500).json({ error: 'Failed to save monthly forecast' });
+  }
+});
+
+// POST /forecast-monthly/distribute - Distribute monthly to weekly
+router.post('/forecast-monthly/distribute', authMiddleware, requirePermission('ppic.forecast', 'create'), async (req: Request, res: Response) => {
+  try {
+    const { year } = req.body;
+    if (!year) return res.status(400).json({ error: 'year is required' });
+
+    const monthlyData = await dbAll(
+      'SELECT * FROM forecast_monthly_data WHERE year = ? AND forecast_qty > 0',
+      [year]
+    ) as any[];
+
+    if (monthlyData.length === 0) {
+      return res.status(400).json({ error: 'No monthly forecast data to distribute' });
+    }
+
+    let created = 0;
+    let updated = 0;
+
+    for (const md of monthlyData) {
+      // find weeks in this month
+      const weeksInMonth = getWeeksInMonth(md.month, year);
+      const weeklyQty = Number(md.forecast_qty) / weeksInMonth.length;
+      const brand = await dbGet('SELECT conversion_rate FROM forecast_brands WHERE id = ?', [md.brand_id]) as any;
+      const rate = brand ? Number(brand.conversion_rate || 1) : 1;
+      const weeklyProductQty = weeklyQty * rate;
+
+      // find or create forecast header for this month
+      let header = await dbGet(
+        'SELECT id FROM forecast_headers WHERE period_year = ? AND period_month = ?',
+        [year, md.month]
+      ) as any;
+
+      if (!header) {
+        const fcNum = `FC-${year}-${String(md.month).padStart(2, '0')}`;
+        const result = await dbRun(
+          'INSERT INTO forecast_headers (forecast_number, period_year, period_month, status) VALUES (?, ?, ?, ?)',
+          [fcNum, year, md.month, 'Draft']
+        );
+        header = { id: result.insertId };
+        created++;
+      }
+
+      for (const w of weeksInMonth) {
+        const existing = await dbGet(
+          'SELECT id FROM forecast_week_data WHERE forecast_header_id = ? AND brand_id = ? AND week_number = ? AND year = ?',
+          [header.id, md.brand_id, w, year]
+        ) as any;
+
+        if (existing) {
+          await dbRun(
+            'UPDATE forecast_week_data SET forecast_qty = ?, product_qty = ? WHERE id = ?',
+            [weeklyQty.toFixed(2), weeklyProductQty.toFixed(2), existing.id]
+          );
+        } else {
+          await dbRun(
+            'INSERT INTO forecast_week_data (forecast_header_id, brand_id, week_number, year, forecast_qty, product_qty) VALUES (?, ?, ?, ?, ?, ?)',
+            [header.id, md.brand_id, w, year, weeklyQty.toFixed(2), weeklyProductQty.toFixed(2)]
+          );
+        }
+        updated++;
+      }
+    }
+
+    res.json({ message: `Distributed to ${updated} weekly cells, ${created} new forecast headers created` });
+  } catch (error) {
+    console.error('Error distributing forecast:', error);
+    res.status(500).json({ error: 'Failed to distribute forecast' });
+  }
+});
+
+// helper: get ISO week numbers for a given month
+function getWeeksInMonth(month: number, year: number): number[] {
+  const weeks = new Set<number>();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month - 1, d);
+    const week = getISOWeek(date);
+    weeks.add(week);
+  }
+  return Array.from(weeks).sort((a, b) => a - b);
+}
+
+function getISOWeek(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+// POST /forecast-monthly/push-to-mps - Push monthly forecast to MPS
+router.post('/forecast-monthly/push-to-mps', authMiddleware, requirePermission('ppic.mps', 'edit'), async (req: Request, res: Response) => {
+  try {
+    const { year } = req.body;
+    if (!year) return res.status(400).json({ error: 'year is required' });
+
+    // find active Draft MPS
+    const mps = await dbGet("SELECT * FROM mps_headers WHERE status = 'Draft' ORDER BY id DESC LIMIT 1") as any;
+    if (!mps) return res.status(400).json({ error: 'No active Draft MPS found' });
+
+    const monthlyData = await dbAll(
+      'SELECT fmd.*, fb.product_id, fb.conversion_rate FROM forecast_monthly_data fmd JOIN forecast_brands fb ON fmd.brand_id = fb.id WHERE fmd.year = ? AND fmd.forecast_qty > 0 AND fb.product_id IS NOT NULL',
+      [year]
+    ) as any[];
+
+    let matched = 0;
+    let createdDetails = 0;
+    let updatedWeeks = 0;
+
+    // group by product_id
+    const productMap: Record<number, any[]> = {};
+    for (const md of monthlyData) {
+      if (!productMap[md.product_id]) productMap[md.product_id] = [];
+      productMap[md.product_id].push(md);
+    }
+
+    for (const [productId, entries] of Object.entries(productMap)) {
+      // find or create mps_detail
+      let detail = await dbGet(
+        'SELECT id FROM mps_details WHERE mps_header_id = ? AND product_id = ?',
+        [mps.id, productId]
+      ) as any;
+
+      if (!detail) {
+        const result = await dbRun(
+          'INSERT INTO mps_details (mps_header_id, product_id) VALUES (?, ?)',
+          [mps.id, productId]
+        );
+        detail = { id: result.insertId };
+        createdDetails++;
+      }
+      matched++;
+
+      // distribute each month entry to its weeks
+      for (const md of entries) {
+        const weeksInMonth = getWeeksInMonth(md.month, year);
+        const rate = Number(md.conversion_rate || 1);
+        const weeklyForecast = (Number(md.forecast_qty) * rate) / weeksInMonth.length;
+
+        for (const w of weeksInMonth) {
+          const existing = await dbGet(
+            'SELECT id FROM mps_week_data WHERE mps_detail_id = ? AND week_number = ? AND year = ?',
+            [detail.id, w, year]
+          ) as any;
+
+          if (existing) {
+            await dbRun(
+              'UPDATE mps_week_data SET forecast_qty = ? WHERE id = ?',
+              [weeklyForecast.toFixed(2), existing.id]
+            );
+          } else {
+            await dbRun(
+              'INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty) VALUES (?, ?, ?, ?, 0, 0, 0, 0)',
+              [detail.id, w, year, weeklyForecast.toFixed(2)]
+            );
+          }
+          updatedWeeks++;
+        }
+      }
+    }
+
+    res.json({
+      message: `Forecast pushed to MPS ${mps.mps_number}`,
+      mps_id: mps.id,
+      mps_number: mps.mps_number,
+      products_matched: matched,
+      products_created: createdDetails,
+      weeks_updated: updatedWeeks
+    });
+  } catch (error) {
+    console.error('Error pushing monthly forecast to MPS:', error);
+    res.status(500).json({ error: 'Failed to push forecast to MPS' });
+  }
+});
+
 export default router;
