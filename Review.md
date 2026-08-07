@@ -1,72 +1,103 @@
-Team, hasil review terakhir untuk revisi Roles & Permissions di commit `be834df` sudah jauh lebih baik dan secara arsitektur sudah sesuai arah yang kita mau.
+1. crm.prospects.manage belum terlihat di permission seed ⚠️
 
-Yang sudah dianggap benar:
+Prospect sekarang menggunakan:
 
-- Access control tidak lagi bergantung pada `user_level`.
-- Source of truth akses sekarang: User → Role → Role Permissions → Permission.
-- Frontend menu/route guard sudah membaca permission user.
-- Backend mutation sudah menggunakan permission resource/action.
-- `edit` sudah distandardisasi menjadi `update`.
-- Permission refresh melalui `/auth/me` sudah membantu sinkronisasi setelah perubahan role/permission.
-- Perubahan RBAC terakhir tidak terlihat merusak core business flow CRM.
+checkUserPermission(user.userId, 'crm.prospects', 'manage')
 
-Untuk tahap ini, jangan lakukan refactor besar lagi pada Roles & Permissions. Fokus hanya pada hardening yang terarah.
+untuk menentukan siapa boleh melihat/mengedit semua Prospect.
 
-Satu catatan yang masih perlu dibereskan:
+Tapi migration CRM yang gue cek hanya membuat:
 
-Saat ini sebagian besar GET endpoint hanya menggunakan `authMiddleware`, sementara permission `view` lebih banyak ditegakkan di frontend.
+view
+create
+update
+delete
+convert
 
-Kita perlu membedakan dua tipe GET:
+tidak ada manage.
 
-1. Business Data Endpoint
-   Contoh:
+Jadi tim harus memastikan permission ini memang ada di DB:
 
-- GET prospects
-- GET prospect detail
-- GET leads
-- GET client detail
-- GET CRM dashboard
-- GET sales orders
+crm.prospects.manage
 
-Endpoint seperti ini seharusnya tetap enforce permission `resource.view` di backend.
+dan diberikan minimal kepada role yang memang boleh melihat semua Prospect, misalnya Sales Manager/Admin sesuai konfigurasi perusahaan.
 
-2. Reference / Lookup Endpoint
-   Contoh:
+Kalau permission itu tidak ada, semua role akan dianggap bukan manage all dan terkena ownership filter.
 
-- dropdown user
-- product lookup
-- unit lookup
-- client lookup
-- category lookup
-- reference data lintas modul
+Ini yang paling penting dicek dulu.
 
-Endpoint lookup seperti ini boleh tetap `authMiddleware` saja jika memang dibutuhkan oleh modul lain.
+2. CRM Dashboard & Tasks masih auth-only
 
-Mohon jangan mengembalikan `requirePermission(view)` ke seluruh GET endpoint secara massal, karena pendekatan tersebut sebelumnya menyebabkan banyak reference data terkena 403 dan mengganggu workflow aplikasi.
+Sekarang masih:
 
-Target implementasi:
-`Business GET → require view permission`
-`Reference GET → authenticated user`
+router.get('/dashboard', authMiddleware, ...)
+router.get('/tasks', authMiddleware, ...)
 
-Selain itu, mohon jangan mengubah lagi core RBAC kecuali ada bug nyata.
+Padahal ini jelas business data.
 
-Untuk CRM, setelah perubahan security ini kita lanjutkan hanya dengan final functional smoke test:
+Harusnya minimal:
 
-Prospect
-→ Lead
-→ Proposal
-→ Negotiation
-→ Client
-→ Sales Order dengan item
-→ Client 360
-→ CRM Dashboard
+/crm/dashboard
+→ crm.dashboard.view
 
-Tambahkan satu scenario Sample Request apabila memang termasuk flow CRM.
+/crm/tasks
+→ crm.tasks.view
 
-Jika flow tersebut berjalan normal tanpa regression, CRM bisa kita nyatakan Firm / Freeze dan lanjut ke final Manual Book v1.0.
+Ini perbaikan kecil.
 
-Jadi prioritas sekarang:
+3. Client Management belum ikut hardening
 
-1. Targeted backend view-permission hardening.
-2. CRM final smoke test.
-3. Jangan expand scope/refactor lagi di Roles & Permissions tanpa kebutuhan yang jelas.
+clients.routes.ts sekarang masih:
+
+GET /clients
+GET /clients/dashboard
+GET /clients/:id
+→ authMiddleware saja
+
+Mutation-nya sudah benar:
+
+create → crm.clients.create
+update → crm.clients.update
+delete → crm.clients.delete
+
+Tapi gue jangan sarankan langsung lock seluruh /clients, karena endpoint client kemungkinan juga dipakai dropdown lintas modul.
+
+Lebih clean:
+
+GET /clients
+GET /clients/:id
+GET /clients/dashboard
+→ crm.clients.view
+
+GET /clients/lookup
+→ authMiddleware
+→ hanya id, code, name
+
+Jadi Sales/Lead/SO tetap bisa mengambil dropdown Client tanpa harus memiliki akses penuh ke Client Management.
+
+Satu cleanup kecil tambahan
+
+Di Leads, Stage Manager mutation masih cuma:
+
+authMiddleware
+
+misalnya reorder/update stage.
+
+Karena pipeline stage adalah konfigurasi bisnis, paling sederhana kasih:
+
+crm.leads.update
+
+Tidak perlu bikin permission engine baru.
+
+Verdict
+Area Status
+RBAC architecture ✅ Firm
+Level tidak menentukan akses ✅ Firm
+Business GET hardening ✅ Mayoritas selesai
+Prospect ✅ kecuali verify manage
+Lead reads ✅
+Sample Request ✅
+CRM Dashboard permission ⚠️ minor
+Client Management view ⚠️ minor
+Reference endpoint strategy ✅ Benar
+CI automated evidence ⚠️ belum ada

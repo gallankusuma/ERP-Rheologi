@@ -10,7 +10,7 @@ const router = express.Router();
 // ============================================
 
 // GET /api/clients - List all clients with filters
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, group_id, label_id, has_due, has_open_projects, my_clients, page = 1, limit = 10 } = req.query;
 
@@ -105,7 +105,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/clients/dashboard - Dashboard overview metrics
-router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     // Total clients
     const totalClients = await dbGet('SELECT COUNT(*) as count FROM clients WHERE is_active = 1', []);
@@ -197,7 +197,22 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // GET /api/clients/:id - Get single client with full details
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+// GET /api/clients/lookup - lightweight dropdown (no permission required beyond auth)
+router.get('/lookup', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const clients = await dbAll(
+      `SELECT id, code, name, organization FROM clients ORDER BY name`,
+      []
+    );
+    res.json({ data: clients });
+  } catch (error) {
+    console.error('Error fetching client lookup:', error);
+    res.status(500).json({ error: 'Failed to fetch client lookup' });
+  }
+});
+
+// GET /api/clients/:id - Full client detail
+router.get('/:id', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const client = await dbGet(
       `SELECT c.*, cg.name as group_name, cg.color as group_color

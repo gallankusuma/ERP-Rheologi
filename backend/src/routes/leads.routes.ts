@@ -186,14 +186,14 @@ router.get('/stages', authMiddleware, async (_req: Request, res: Response) => {
 // POST /leads/stages — disabled: the Lead pipeline uses a fixed set of business stages for
 // this CRM version (Review.md P0 #3) — custom stages have no transition rules and can dead-end
 // a Lead. Stage Manager may still reorder stages and change their colors via the endpoints below.
-router.post('/stages', authMiddleware, async (_req: Request, res: Response) => {
+router.post('/stages', authMiddleware, requirePermission('crm.leads', 'update'), async (_req: Request, res: Response) => {
   res.status(400).json({
     error: 'Custom pipeline stages are not supported. The Lead pipeline uses a fixed set of business stages for this CRM version — you can still reorder stages and change their colors.'
   });
 });
 
 // PUT /leads/stages/reorder — Reorder stages (must be before /:id)
-router.put('/stages/reorder', authMiddleware, async (req: Request, res: Response) => {
+router.put('/stages/reorder', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { order } = req.body; // array of { id, sort_order }
     if (!Array.isArray(order)) return res.status(400).json({ error: 'order array is required' });
@@ -208,7 +208,7 @@ router.put('/stages/reorder', authMiddleware, async (req: Request, res: Response
 });
 
 // PUT /leads/stages/:id — Update a stage (system stages: color only)
-router.put('/stages/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/stages/:id', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, color } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Stage name is required' });
@@ -233,7 +233,7 @@ router.put('/stages/:id', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // DELETE /leads/stages/:id — Delete a stage (system stages protected)
-router.delete('/stages/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/stages/:id', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const stage = await dbGet('SELECT * FROM lead_stages WHERE id = ?', [req.params.id]) as any;
     if (!stage) return res.status(404).json({ error: 'Stage not found' });
