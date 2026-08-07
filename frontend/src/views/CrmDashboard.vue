@@ -53,7 +53,7 @@
               </div>
               <div class="mt-3 pt-3 border-t border-white/20">
                 <p class="text-white/70 text-xs">Pipeline Value</p>
-                <p class="text-lg font-bold">{{ formatCurrency(data.prospects?.pipeline_value) }}</p>
+                <p class="text-lg font-bold">{{ formatCurrencyMap(data.prospects?.pipeline_value_by_currency) }}</p>
               </div>
             </div>
           </div>
@@ -77,7 +77,7 @@
               </div>
               <div class="mt-3 pt-3 border-t border-white/20">
                 <p class="text-white/70 text-xs">Pipeline Value</p>
-                <p class="text-lg font-bold">{{ formatCurrency(data.leads?.pipeline_value) }}</p>
+                <p class="text-lg font-bold">{{ formatCurrencyMap(data.leads?.pipeline_value_by_currency) }}</p>
               </div>
             </div>
           </div>
@@ -174,7 +174,7 @@
                 >
                   <div class="absolute inset-x-0 -top-6 text-center opacity-0 group-hover:opacity-100 transition-opacity">
                     <span class="bg-slate-800 text-white text-[10px] px-2 py-1 rounded font-medium whitespace-nowrap">
-                      {{ formatCurrency(getStageValue(stage.name)) }}
+                      {{ getStageValue(stage.name) }}
                     </span>
                   </div>
                 </div>
@@ -183,10 +183,10 @@
             </div>
             <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
               <p class="text-sm text-slate-500">
-                Total Pipeline: <strong class="text-slate-800">{{ formatCurrency(data.leads?.pipeline_value) }}</strong>
+                Total Pipeline: <strong class="text-slate-800">{{ formatCurrencyMap(data.leads?.pipeline_value_by_currency) }}</strong>
               </p>
               <p class="text-sm text-slate-500" title="Sum of Lead's own estimated value for Won deals — not confirmed Sales Order or invoiced revenue">
-                Won Estimated Value: <strong class="text-emerald-600">{{ formatCurrency(data.leads?.won_value) }}</strong>
+                Won Estimated Value: <strong class="text-emerald-600">{{ formatCurrencyMap(data.leads?.won_value_by_currency) }}</strong>
               </p>
             </div>
           </div>
@@ -304,9 +304,9 @@ const getStageCount = (stage: string): number => {
   return found?.count || 0;
 };
 
-const getStageValue = (stage: string): number => {
+const getStageValue = (stage: string): string => {
   const found = data.value.leadsByStage?.find((s: any) => s.stage === stage);
-  return found?.total_value || 0;
+  return formatCurrencyMap(found?.total_value_by_currency);
 };
 
 const getStageHeight = (stage: string): number => {
@@ -322,12 +322,21 @@ const getRateColor = (rate: number) => {
   return 'text-slate-500';
 };
 
-const formatCurrency = (val: any) => {
+const formatCurrency = (val: any, currency: string = 'IDR') => {
   const num = Number(val) || 0;
-  if (num >= 1e9) return 'Rp ' + (num / 1e9).toFixed(1) + 'B';
-  if (num >= 1e6) return 'Rp ' + (num / 1e6).toFixed(1) + 'M';
-  if (num >= 1e3) return 'Rp ' + (num / 1e3).toFixed(0) + 'K';
-  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
+  const prefix = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : 'Rp ';
+  if (num >= 1e9) return prefix + (num / 1e9).toFixed(1) + 'B';
+  if (num >= 1e6) return prefix + (num / 1e6).toFixed(1) + 'M';
+  if (num >= 1e3) return prefix + (num / 1e3).toFixed(0) + 'K';
+  if (currency === 'IDR') return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 0 }).format(num);
+};
+
+const formatCurrencyMap = (map: Record<string, number> | undefined | null): string => {
+  if (!map || typeof map !== 'object') return formatCurrency(0);
+  const entries = Object.entries(map).filter(([, v]) => Number(v) !== 0);
+  if (entries.length === 0) return formatCurrency(0);
+  return entries.map(([cur, val]) => formatCurrency(val, cur)).join(' + ');
 };
 
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : '';

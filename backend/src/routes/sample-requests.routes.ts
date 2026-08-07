@@ -165,6 +165,12 @@ router.put('/:id/feedback', authMiddleware, requirePermission('crm.sample-reques
     const current = await dbGet('SELECT * FROM sample_requests WHERE id = ?', [req.params.id]) as any;
     if (!current) return res.status(404).json({ error: 'Sample request not found' });
 
+    if (current.status !== 'Delivered') {
+      return res.status(400).json({
+        error: `Cannot record feedback: status is '${current.status}', must be 'Delivered'`,
+      });
+    }
+
     await dbRun(
       `UPDATE sample_requests SET status = 'Feedback Received', client_feedback = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [client_feedback || null, req.params.id]

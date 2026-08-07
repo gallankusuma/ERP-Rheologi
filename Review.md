@@ -1,4 +1,16 @@
-P0 — CRM Dashboard multi-currency masih salah secara finansial. Backend masih melakukan SUM(estimated_value) dan SUM(value) tanpa grouping currency untuk Prospect Pipeline, Lead Pipeline, Won Value, stage totals, dan monthly trend. Frontend kemudian selalu menampilkan angka itu sebagai Rp/IDR. Jadi IDR + USD masih bisa tercampur menjadi satu angka Rupiah.
-P1 — Client list/dashboard masih memakai source legacy. Client Detail memang sudah canonical, tetapi list masih join client_invoices dan filter c.due_amount, sedangkan dashboard masih menghitung invoice dari client_invoices, order dari client_orders, bahkan inProgress: 1 masih hardcoded. Ini bisa membuat Client list/dashboard berbeda dengan Client 360.
-P1 — Sample Request belum punya state machine. Endpoint status masih menerima status dari payload dan langsung menyimpannya tanpa validasi transition. Jadi secara backend bisa lompat Requested → Delivered, Delivered → In Progress, atau status arbitrer. Yang kita mau cukup:
-Requested → In Progress → Ready for Delivery → Delivered → Feedback Received, dengan Cancelled dari active states.
+Arah revisinya benar dan sangat dekat selesai, tapi belum gue kasih CRM FIRM/FREEZE karena tiga blocker lama ternyata baru sebagian tertutup.
+
+P0 Multi-currency — backend sudah benar, frontend belum ikut. Backend sekarang sudah memisahkan pipeline_value_by_currency, won_value_by_currency, stage value per currency, dan monthly trend per currency. Tapi CrmDashboard.vue masih membaca field lama seperti data.prospects.pipeline_value, data.leads.pipeline_value, won_value, dan found.total_value, lalu semuanya diformat sebagai IDR. Jadi kontrak backend/frontend sekarang mismatch dan nilai dashboard berpotensi tampil Rp 0 atau salah. Ini tinggal frontend adjustment, bukan ubah backend lagi.
+P1 Client canonical source — mayoritas sudah fix, tersisa dua titik. Client list sudah pakai sales_orders, dan Client dashboard sudah membuang client_invoices/client_orders serta hardcoded inProgress: 1. Itu bagus. Tetapi filter has_due masih memakai c.due_amount, yang merupakan kolom legacy/stale. Selain itu CRM Dashboard global masih menghitung total_revenue dan total_due langsung dari clients.total_invoiced/due_amount, bukan dari canonical invoices/payments. Jadi tinggal dua query itu yang harus diarahkan ke canonical Sales data.
+P1 Sample Request — state machine sudah ada, tapi masih ada satu bypass. /status sekarang sudah bagus: Requested → In Progress → Ready for Delivery → Delivered → Feedback Received, plus Cancelled dari active states. Tetapi endpoint /feedback masih bisa langsung mengubah status menjadi Feedback Received tanpa memastikan current status adalah Delivered. Cukup tambahkan guard current.status === 'Delivered', atau gunakan validator transition yang sama.
+
+Jadi statusnya sekarang:
+
+Area Status
+RBAC / Security ✅ FIRM / CLOSED
+CRM Multi-currency backend ✅
+CRM Multi-currency frontend ❌ P0 kecil
+Client canonical migration 🟡 Hampir selesai
+Sample Request lifecycle 🟡 Hampir selesai
+New blocker Tidak ada
+CI automated evidence ⚠️ Belum ada

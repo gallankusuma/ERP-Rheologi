@@ -41,7 +41,7 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
     }
 
     if (has_due === 'true') {
-      query += ` AND c.due_amount > 0`;
+      query += ` AND EXISTS (SELECT 1 FROM sales_orders WHERE client_id = c.id AND status NOT IN ('draft','cancelled','completed','delivered') AND total_amount > 0)`;
     }
 
     if (has_open_projects === 'true') {
@@ -85,7 +85,7 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
     }
 
     if (has_due === 'true') {
-      countQuery += ` AND c.due_amount > 0`;
+      countQuery += ` AND EXISTS (SELECT 1 FROM sales_orders WHERE client_id = c.id AND status NOT IN ('draft','cancelled','completed','delivered') AND total_amount > 0)`;
     }
 
     const countResult = await dbGet(countQuery, countParams);

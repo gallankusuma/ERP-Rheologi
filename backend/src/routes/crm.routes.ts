@@ -66,8 +66,8 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
       SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-        COALESCE(SUM(total_invoiced), 0) as total_revenue,
-        COALESCE(SUM(due_amount), 0) as total_due
+        COALESCE((SELECT SUM(total_amount) FROM sales_orders WHERE client_id IS NOT NULL AND status NOT IN ('cancelled','draft')), 0) as total_revenue,
+        COALESCE((SELECT SUM(total_amount) FROM sales_orders WHERE client_id IS NOT NULL AND status IN ('confirmed','processing','open')), 0) as total_outstanding
       FROM clients
     `);
 
