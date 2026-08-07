@@ -297,6 +297,7 @@ const toast = ref<{ type: string; message: string } | null>(null);
 
 const moduleIcons: Record<string, string> = {
   'Dashboard': '📊',
+  'CRM': '🤝',
   'Project': '💼',
   'Projects': '💼',
   'Estimator': '📐',
@@ -313,6 +314,7 @@ const moduleIcons: Record<string, string> = {
   'Reports': '📈',
   'Master Data': '🗄️',
   'Admin': '⚙️',
+  'System': '🔒',
 };
 
 const actionLabels: Record<string, string> = {
@@ -324,9 +326,11 @@ const actionLabels: Record<string, string> = {
   'approve_1': 'Approve ①',
   'approve_2': 'Approve ②',
   'export': 'Export',
+  'convert': 'Convert',
+  'manage': 'Manage',
 };
 
-const allActions = ['view', 'create', 'edit', 'delete', 'approve', 'approve_1', 'approve_2', 'export'];
+const allActions = ['view', 'create', 'edit', 'delete', 'approve', 'approve_1', 'approve_2', 'export', 'convert', 'manage'];
 
 const groupedPermissions = computed(() => {
   const grouped: Record<string, Record<string, Permission[]>> = {};

@@ -30,12 +30,18 @@ export function requirePermission(resource: string, action: string) {
         return next();
       }
 
+      // treat 'edit' and 'update' as equivalent actions
+      const actionsToCheck = [action];
+      if (action === 'update') actionsToCheck.push('edit');
+      if (action === 'edit') actionsToCheck.push('update');
+      const actionPlaceholders = actionsToCheck.map(() => '?').join(',');
+
       // check specific permission
       const permission = await dbGet(
         `SELECT rp.id FROM role_permissions rp
          JOIN permissions p ON rp.permission_id = p.id
-         WHERE rp.role_id = ? AND p.resource = ? AND p.action = ?`,
-        [roleId, resource, action]
+         WHERE rp.role_id = ? AND p.resource = ? AND p.action IN (${actionPlaceholders})`,
+        [roleId, resource, ...actionsToCheck]
       );
 
       if (permission) {
