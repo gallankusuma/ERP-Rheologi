@@ -25,7 +25,7 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
-            <tr v-for="req in requests" :key="req.id" class="hover:bg-slate-50/50 transition-colors">
+            <tr v-for="req in requests" :key="req.id" class="hover:bg-slate-50/50 transition-colors cursor-pointer" @click="viewDetails(req)">
               <td class="p-4 font-medium text-slate-900">{{ req.request_number }}</td>
               <td class="p-4 text-slate-600">{{ req.client_name }}</td>
               <td class="p-4 text-slate-600">
@@ -38,7 +38,7 @@
                   {{ req.status }}
                 </span>
               </td>
-              <td class="p-4 text-right space-x-2">
+              <td class="p-4 text-right space-x-2" @click.stop>
                 <button @click="viewDetails(req)" class="text-slate-400 hover:text-primary-600 transition-colors" title="View Details">
                   <svg class="w-5 h-5 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                 </button>
@@ -159,7 +159,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { api } from '@/lib/api';
+
+const router = useRouter();
 
 const requests = ref<any[]>([]);
 const clients = ref<any[]>([]);
@@ -271,8 +274,7 @@ const updateStatus = async () => {
 };
 
 const viewDetails = (req: any) => {
-  // Can be implemented later for a full detail page
-  openStatusModal(req);
+  router.push(`/sample-requests/${req.id}`);
 };
 
 const formatDate = (dateString: string) => {

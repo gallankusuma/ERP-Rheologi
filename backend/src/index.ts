@@ -105,6 +105,9 @@ app.use('/api/projects', projectRoutes);
 import prospectsRoutes from './routes/prospects.routes';
 app.use('/api/prospects', prospectsRoutes);
 
+import sampleRequestsRoutes from './routes/sample-requests.routes';
+app.use('/api/sample-requests', sampleRequestsRoutes);
+
 import notesRoutes2 from './routes/notes.routes';
 app.use('/api/notes', notesRoutes2);
 

@@ -246,6 +246,64 @@ const ensureCrmSchema = async (connection: any) => {
 
   // Carry Lead's company context through to Client (Review.md P1 #6)
   await execSchemaEnsure(connection, `ALTER TABLE clients ADD COLUMN IF NOT EXISTS industry VARCHAR(100) NULL`);
+
+  // Sample Requests (Sales <-> R&D) — table never existed, frontend was already built against
+  // a /api/sample-requests contract that had no backend at all (404 on every call)
+  await execSchemaEnsure(connection, `
+    CREATE TABLE IF NOT EXISTS sample_requests (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      request_number VARCHAR(50) NOT NULL UNIQUE,
+      client_id INT NOT NULL,
+      sales_user_id INT NULL,
+      product_name VARCHAR(255) NOT NULL,
+      specifications TEXT NULL,
+      quantity DECIMAL(15,2) NOT NULL DEFAULT 1,
+      unit VARCHAR(20) NULL DEFAULT 'pcs',
+      target_delivery_date DATE NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'Requested',
+      delivery_tracking VARCHAR(255) NULL,
+      client_feedback TEXT NULL,
+      created_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+      FOREIGN KEY (sales_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      INDEX idx_sr_client (client_id),
+      INDEX idx_sr_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // two-way discussion thread between Sales and R&D on a Sample Request
+  await execSchemaEnsure(connection, `
+    CREATE TABLE IF NOT EXISTS sample_request_comments (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      sample_request_id INT NOT NULL,
+      user_id INT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sample_request_id) REFERENCES sample_requests(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      INDEX idx_src_request (sample_request_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // categorized document uploads (Foto / Tanda Terima / COA) on a Sample Request
+  await execSchemaEnsure(connection, `
+    CREATE TABLE IF NOT EXISTS sample_request_files (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      sample_request_id INT NOT NULL,
+      category VARCHAR(50) NOT NULL DEFAULT 'foto',
+      file_name VARCHAR(255) NOT NULL,
+      file_path VARCHAR(500) NOT NULL,
+      file_size INT NULL,
+      uploaded_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sample_request_id) REFERENCES sample_requests(id) ON DELETE CASCADE,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+      INDEX idx_srf_request (sample_request_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 };
 
 const ensureRnDSchema = async (connection: any) => {
