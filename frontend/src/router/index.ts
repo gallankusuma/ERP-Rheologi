@@ -968,6 +968,21 @@ router.beforeEach((to, _from, next) => {
     return;
   }
 
+  // block direct URL access to pages the role can't view (mirrors sidebar filtering)
+  if (isAuthenticated) {
+    const resource = getResourceForPath(to.path);
+    if (resource) {
+      let user: any = null;
+      try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* ignore */ }
+      const isBypass = user && (user.role_id === 1 || user.user_level === 1);
+      const hasAccess = isBypass || !!user?.permissions?.includes(`${resource}.view`);
+      if (!hasAccess) {
+        next('/');
+        return;
+      }
+    }
+  }
+
   next();
 });
 
