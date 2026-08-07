@@ -232,6 +232,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useTheme } from '../composables/useTheme';
 import { api } from '../lib/api';
+import { getResourceForPath } from '../config/menuPermissions';
 
 const router = useRouter();
 const route = useRoute();
@@ -685,13 +686,29 @@ const mainMenus: MenuItem[] = [
   },
 ];
 
-// Split menus: left (all except last 2), right (Master Data + Admin)
-const mainMenusLeft = computed(() => mainMenus.slice(0, -2).filter(menu => authStore.hasModuleAccess(menu.id)));
-const mainMenusRight = computed(() => mainMenus.slice(-2).filter(menu => authStore.hasModuleAccess(menu.id)));
+// A submenu is visible only if the current role has view access to its resource — items with
+// no tracked resource (rare, not yet in the menu/permission map) stay visible rather than
+// disappearing silently. Menus whose every submenu gets hidden this way are dropped entirely.
+const canViewSubmenu = (sub: Submenu): boolean => {
+  if (!sub.route) return true;
+  const resource = getResourceForPath(sub.route);
+  if (!resource) return true;
+  return authStore.hasPermission(`${resource}.view`);
+};
+
+const filterMenuList = (list: MenuItem[]): MenuItem[] =>
+  list
+    .map(menu => ({ ...menu, submenus: menu.submenus.filter(canViewSubmenu) }))
+    .filter(menu => menu.submenus.length > 0);
+
+// Split menus: left (all except last 2), right (Master Data + Admin) — split BEFORE filtering
+// so the left/right grouping stays anchored to menu position, not to what survives filtering
+const mainMenusLeft = computed(() => filterMenuList(mainMenus.slice(0, -2)));
+const mainMenusRight = computed(() => filterMenuList(mainMenus.slice(-2)));
 
 const getSubmenus = (): Submenu[] => {
   const menuId = selectedMainMenu.value || activeMenuId.value;
-  const menu = mainMenus.find(m => m.id === menuId);
+  const menu = [...mainMenusLeft.value, ...mainMenusRight.value].find(m => m.id === menuId);
   return menu?.submenus || [];
 };
 

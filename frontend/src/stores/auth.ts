@@ -27,18 +27,13 @@ export const useAuthStore = defineStore('auth', {
   }),
 
   getters: {
-    /** Check if the user has a specific permission like 'inventory.view' */
+    /** Check if the user has a specific permission like 'inventory.dashboard.view' —
+     * mirrors the backend's requirePermission bypass exactly (role_id===1 or userLevel===1),
+     * not a user_level>=10 threshold that no real user_level actually reaches. */
     hasPermission: (state) => (permission: string): boolean => {
       if (!state.user) return false;
-      // Master admin has all permissions
-      if (state.user.user_level && state.user.user_level >= 10) return true;
+      if (state.user.role_id === 1 || state.user.user_level === 1) return true;
       return state.user.permissions?.includes(permission) || false;
-    },
-    /** Check if the user has any permission for a given module like 'inventory' */
-    hasModuleAccess: (state) => (module: string): boolean => {
-      if (!state.user) return false;
-      if (state.user.user_level && state.user.user_level >= 10) return true;
-      return state.user.permissions?.some(p => p.startsWith(module + '.')) || false;
     },
   },
 

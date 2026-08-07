@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
 import Dashboard from '../views/Dashboard.vue';
 import Login from '../views/Login.vue';
+import { getResourceForPath } from '../config/menuPermissions';
 
 const placeholderComponent = () => import('../views/PlaceholderPage.vue');
 
@@ -952,17 +953,37 @@ const router = createRouter({
   routes,
 });
 
-// Navigation guard for authentication
+// Navigation guard for authentication + per-menu permission (mirrors the sidebar filtering in
+// Layout.vue — this covers direct URL entry / bookmarks / back-button to a page whose menu
+// entry was hidden because the current role isn't granted view access to it).
 router.beforeEach((to, _from, next) => {
   const isAuthenticated = localStorage.getItem('token');
 
   if (to.meta.requiresAuth && !isAuthenticated) {
     next('/login');
-  } else if (to.name === 'Login' && isAuthenticated) {
-    next('/');
-  } else {
-    next();
+    return;
   }
+  if (to.name === 'Login' && isAuthenticated) {
+    next('/');
+    return;
+  }
+
+  if (isAuthenticated) {
+    const resource = getResourceForPath(to.path);
+    if (resource) {
+      let user: any = null;
+      try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* ignore */ }
+      const isBypass = user && (user.role_id === 1 || user.user_level === 1);
+      const hasAccess = isBypass || !!user?.permissions?.includes(`${resource}.view`);
+      if (!hasAccess) {
+        alert('Anda tidak memiliki akses ke halaman ini. Hubungi admin untuk meminta akses.');
+        next('/');
+        return;
+      }
+    }
+  }
+
+  next();
 });
 
 export default router;
