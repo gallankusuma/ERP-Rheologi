@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -235,7 +236,7 @@ router.put('/inbox/:id/reject', authMiddleware, async (req: Request, res: Respon
 // ─── HISTORY ────────────────────────────────────────────
 
 // GET /history — all past approval actions for current user or all
-router.get('/history', authMiddleware, async (req: Request, res: Response) => {
+router.get('/history', authMiddleware, requirePermission('approval.history', 'view'), async (req: Request, res: Response) => {
   try {
     const { module, entity_type, status, from_date, to_date } = req.query;
 
@@ -272,7 +273,7 @@ router.get('/history', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /history/stats — aggregate stats
-router.get('/history/stats', authMiddleware, async (req: Request, res: Response) => {
+router.get('/history/stats', authMiddleware, requirePermission('approval.history', 'view'), async (req: Request, res: Response) => {
   try {
     const stats = await dbGet(`
       SELECT
@@ -293,7 +294,7 @@ router.get('/history/stats', authMiddleware, async (req: Request, res: Response)
 // ─── RULES ──────────────────────────────────────────────
 
 // GET /rules — list all approval rules with their steps
-router.get('/rules', authMiddleware, async (req: Request, res: Response) => {
+router.get('/rules', authMiddleware, requirePermission('approval.rules', 'view'), async (req: Request, res: Response) => {
   try {
     const rules = await dbAll(`
       SELECT ar.*, r.name AS approver_role_name
@@ -322,7 +323,7 @@ router.get('/rules', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /rules — create a new approval rule
-router.post('/rules', authMiddleware, async (req: Request, res: Response) => {
+router.post('/rules', authMiddleware, requirePermission('approval.rules', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, module, condition_field, min_value, max_value, approver_role_id, sequence, steps } = req.body;
 
@@ -351,7 +352,7 @@ router.post('/rules', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /rules/:id — update an approval rule
-router.put('/rules/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/rules/:id', authMiddleware, requirePermission('approval.rules', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { name, module, condition_field, min_value, max_value, approver_role_id, sequence, is_active, steps } = req.body;
@@ -382,7 +383,7 @@ router.put('/rules/:id', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // DELETE /rules/:id
-router.delete('/rules/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/rules/:id', authMiddleware, requirePermission('approval.rules', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM approval_rules WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Rule deleted' });
@@ -395,7 +396,7 @@ router.delete('/rules/:id', authMiddleware, async (req: Request, res: Response) 
 // ─── DELEGATION ─────────────────────────────────────────
 
 // GET /delegations
-router.get('/delegations', authMiddleware, async (req: Request, res: Response) => {
+router.get('/delegations', authMiddleware, requirePermission('approval.delegation', 'view'), async (req: Request, res: Response) => {
   try {
     const delegations = await dbAll(`
       SELECT d.*, 
@@ -414,7 +415,7 @@ router.get('/delegations', authMiddleware, async (req: Request, res: Response) =
 });
 
 // POST /delegations — create delegation
-router.post('/delegations', authMiddleware, async (req: Request, res: Response) => {
+router.post('/delegations', authMiddleware, requirePermission('approval.delegation', 'create'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const { to_user_id, module, start_date, end_date, reason } = req.body;
@@ -433,7 +434,7 @@ router.post('/delegations', authMiddleware, async (req: Request, res: Response) 
 });
 
 // PUT /delegations/:id/deactivate
-router.put('/delegations/:id/deactivate', authMiddleware, async (req: Request, res: Response) => {
+router.put('/delegations/:id/deactivate', authMiddleware, requirePermission('approval.delegation', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun('UPDATE approval_delegations SET is_active = FALSE WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Delegation deactivated' });
@@ -444,7 +445,7 @@ router.put('/delegations/:id/deactivate', authMiddleware, async (req: Request, r
 });
 
 // DELETE /delegations/:id
-router.delete('/delegations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/delegations/:id', authMiddleware, requirePermission('approval.delegation', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM approval_delegations WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Delegation deleted' });
@@ -457,7 +458,7 @@ router.delete('/delegations/:id', authMiddleware, async (req: Request, res: Resp
 // ─── ESCALATION ─────────────────────────────────────────
 
 // GET /escalations
-router.get('/escalations', authMiddleware, async (req: Request, res: Response) => {
+router.get('/escalations', authMiddleware, requirePermission('approval.escalation', 'view'), async (req: Request, res: Response) => {
   try {
     const escalations = await dbAll(`
       SELECT e.*, u.full_name AS escalate_to_name
@@ -473,7 +474,7 @@ router.get('/escalations', authMiddleware, async (req: Request, res: Response) =
 });
 
 // POST /escalations
-router.post('/escalations', authMiddleware, async (req: Request, res: Response) => {
+router.post('/escalations', authMiddleware, requirePermission('approval.escalation', 'create'), async (req: Request, res: Response) => {
   try {
     const { module, hours_threshold, escalate_to_user_id, escalate_to_role_id, notify_requester, notify_admin } = req.body;
 
@@ -491,7 +492,7 @@ router.post('/escalations', authMiddleware, async (req: Request, res: Response) 
 });
 
 // PUT /escalations/:id
-router.put('/escalations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/escalations/:id', authMiddleware, requirePermission('approval.escalation', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { module, hours_threshold, escalate_to_user_id, escalate_to_role_id, notify_requester, notify_admin, is_active } = req.body;
@@ -510,7 +511,7 @@ router.put('/escalations/:id', authMiddleware, async (req: Request, res: Respons
 });
 
 // DELETE /escalations/:id
-router.delete('/escalations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/escalations/:id', authMiddleware, requirePermission('approval.escalation', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM approval_escalations WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Escalation rule deleted' });

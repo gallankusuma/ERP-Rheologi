@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -39,7 +40,7 @@ function validateTransition(currentStatus: string, newStatus: string): { valid: 
 }
 
 // GET /api/workorders
-router.get('/', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
   try {
     const workOrders = await dbAll(
       `SELECT w.*, p.name as product_name, p.sku,
@@ -59,7 +60,7 @@ router.get('/', authMiddleware, async (_req: Request, res: Response) => {
 });
 
 // GET /api/workorders/:id
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {
     const workOrder = await dbGet(
       `SELECT w.*, p.name as product_name, p.sku,
@@ -85,7 +86,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/workorders — always creates in 'draft' status
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('production.workorders', 'create'), async (req: Request, res: Response) => {
   try {
     const { product_id, quantity, priority, scheduled_start, scheduled_end, line_process_id } = req.body;
 
@@ -120,7 +121,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/workorders/:id — update with state machine validation
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('production.workorders', 'update'), async (req: Request, res: Response) => {
   try {
     const { quantity, status, priority, scheduled_start, scheduled_end, actual_start, actual_end, line_process_id } = req.body;
     const woId = req.params.id;
@@ -202,7 +203,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/workorders/:id — soft-delete for WOs with transactions
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('production.workorders', 'delete'), async (req: Request, res: Response) => {
   try {
     const woId = req.params.id;
     

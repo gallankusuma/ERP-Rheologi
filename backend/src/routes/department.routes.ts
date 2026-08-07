@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/departments - Get all departments
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.departments', 'view'), async (req: Request, res: Response) => {
   try {
     const departments = await dbAll(
       `
@@ -26,7 +27,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/departments/:id - Get specific department with users
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.departments', 'view'), async (req: Request, res: Response) => {
   try {
     const department = await dbGet(
       `
@@ -60,7 +61,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/departments - Create department
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.departments', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, name, description } = req.body;
 
@@ -87,7 +88,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/departments/:id - Update department
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.departments', 'update'), async (req: Request, res: Response) => {
   try {
     const { code, name, description, head_user_id, active } = req.body;
 
@@ -108,7 +109,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/departments/:id - Delete department
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.departments', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('UPDATE departments SET active = 0 WHERE id = ?', [req.params.id]);
 

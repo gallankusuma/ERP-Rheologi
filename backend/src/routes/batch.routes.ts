@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/batches - Get all batches with product info
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('inventory.batch-tracking', 'view'), async (req: Request, res: Response) => {
   try {
     const { status, qc_status, product_id } = req.query;
     
@@ -47,7 +48,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/batches/:id - Get batch details with QC results
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('inventory.batch-tracking', 'view'), async (req: Request, res: Response) => {
   try {
     const batch = await dbGet(`
       SELECT b.*, p.name as product_name, p.sku,
@@ -86,7 +87,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/batches - Create new batch
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('inventory.batch-tracking', 'create'), async (req: Request, res: Response) => {
   try {
     const { 
       batch_number, product_id, quantity,
@@ -126,7 +127,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/batches/:id - Update batch
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('inventory.batch-tracking', 'update'), async (req: Request, res: Response) => {
   try {
     const { 
       quantity, mfg_date, exp_date, warehouse_id, 
@@ -152,7 +153,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/batches/:id/release - Release batch for use (after QC approval)
-router.post('/:id/release', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/release', authMiddleware, requirePermission('inventory.batch-tracking', 'update'), async (req: Request, res: Response) => {
   try {
     // Check if batch has passed QC
     const batch = await dbGet(`
@@ -183,7 +184,7 @@ router.post('/:id/release', authMiddleware, async (req: Request, res: Response) 
 });
 
 // GET /api/batches/expiring/soon - Get batches expiring soon (FEFO alert)
-router.get('/expiring/soon', authMiddleware, async (req: Request, res: Response) => {
+router.get('/expiring/soon', authMiddleware, requirePermission('inventory.expiry-monitoring', 'view'), async (req: Request, res: Response) => {
   try {
     const daysAhead = parseInt(req.query.days as string) || 30;
     

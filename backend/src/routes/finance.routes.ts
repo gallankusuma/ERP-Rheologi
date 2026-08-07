@@ -1,6 +1,7 @@
 ﻿import express, { Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
@@ -111,7 +112,7 @@ const autoPayApFromFundRequestItem = async (itemId: number) => {
 
 // ===== COGS TRACKING =====
 
-router.get('/cogs', authMiddleware, async (req: Request, res: Response) => {
+router.get('/cogs', authMiddleware, requirePermission('finance.cogs', 'view'), async (req: Request, res: Response) => {
   try {
     const cogs = await dbAll(
       `SELECT c.*, b.batch_number, p.sku, p.name as product_name
@@ -127,7 +128,7 @@ router.get('/cogs', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/cogs/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/cogs/:id', authMiddleware, requirePermission('finance.cogs', 'view'), async (req: Request, res: Response) => {
   try {
     const cogs = await dbGet(
       `SELECT c.*, b.batch_number, p.sku, p.name as product_name
@@ -145,7 +146,7 @@ router.get('/cogs/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/cogs', authMiddleware, async (req: Request, res: Response) => {
+router.post('/cogs', authMiddleware, requirePermission('finance.cogs', 'create'), async (req: Request, res: Response) => {
   try {
     const {
       batch_id,
@@ -196,7 +197,7 @@ router.post('/cogs', authMiddleware, async (req: Request, res: Response) => {
 
 // ===== PROFITABILITY =====
 
-router.get('/profitability', authMiddleware, async (req: Request, res: Response) => {
+router.get('/profitability', authMiddleware, requirePermission('finance.cost-analysis', 'view'), async (req: Request, res: Response) => {
   try {
     const profitability = await dbAll(
       `SELECT p.*, pr.sku, pr.name as product_name
@@ -211,7 +212,7 @@ router.get('/profitability', authMiddleware, async (req: Request, res: Response)
   }
 });
 
-router.post('/profitability', authMiddleware, async (req: Request, res: Response) => {
+router.post('/profitability', authMiddleware, requirePermission('finance.cost-analysis', 'create'), async (req: Request, res: Response) => {
   try {
     const {
       product_id,
@@ -262,7 +263,7 @@ router.post('/profitability', authMiddleware, async (req: Request, res: Response
 
 // ===== ACCOUNTS PAYABLE (AP) =====
 
-router.get('/accounts-payable', authMiddleware, async (req: Request, res: Response) => {
+router.get('/accounts-payable', authMiddleware, requirePermission('finance.ap', 'view'), async (req: Request, res: Response) => {
   try {
     const ap = await dbAll(
       `SELECT ap.*, po.po_number, v.name as vendor_name, po.total_amount,
@@ -280,7 +281,7 @@ router.get('/accounts-payable', authMiddleware, async (req: Request, res: Respon
   }
 });
 
-router.post('/accounts-payable', authMiddleware, async (req: Request, res: Response) => {
+router.post('/accounts-payable', authMiddleware, requirePermission('finance.ap', 'create'), async (req: Request, res: Response) => {
   try {
     const {
       po_id,
@@ -341,7 +342,7 @@ router.post('/accounts-payable', authMiddleware, async (req: Request, res: Respo
 
 // ===== ACCOUNTS RECEIVABLE (AR) =====
 
-router.get('/accounts-receivable', authMiddleware, async (req: Request, res: Response) => {
+router.get('/accounts-receivable', authMiddleware, requirePermission('finance.ar', 'view'), async (req: Request, res: Response) => {
   try {
     const ar = await dbAll(
       `SELECT ar.*, inv.invoice_number, inv.total_amount as amount
@@ -356,7 +357,7 @@ router.get('/accounts-receivable', authMiddleware, async (req: Request, res: Res
   }
 });
 
-router.post('/accounts-receivable', authMiddleware, async (req: Request, res: Response) => {
+router.post('/accounts-receivable', authMiddleware, requirePermission('finance.ar', 'create'), async (req: Request, res: Response) => {
   try {
     const {
       invoice_id,
@@ -400,7 +401,7 @@ router.post('/accounts-receivable', authMiddleware, async (req: Request, res: Re
 
 // ===== FINANCIAL SUMMARY =====
 
-router.get('/financial-summary', authMiddleware, async (req: Request, res: Response) => {
+router.get('/financial-summary', authMiddleware, requirePermission('finance.financial-summary', 'view'), async (req: Request, res: Response) => {
   try {
     const summary = await dbAll(
       `SELECT fs.*, 
@@ -420,7 +421,7 @@ router.get('/financial-summary', authMiddleware, async (req: Request, res: Respo
 
 // ===== COST ANALYSIS =====
 
-router.get('/cost-analysis', authMiddleware, async (req: Request, res: Response) => {
+router.get('/cost-analysis', authMiddleware, requirePermission('finance.cost-analysis', 'view'), async (req: Request, res: Response) => {
   try {
     // Per-product cost breakdown with standard vs actual comparison
     const analysis = await dbAll(
@@ -448,7 +449,7 @@ router.get('/cost-analysis', authMiddleware, async (req: Request, res: Response)
   }
 });
 
-router.get('/cost-analysis/trends', authMiddleware, async (req: Request, res: Response) => {
+router.get('/cost-analysis/trends', authMiddleware, requirePermission('finance.cost-analysis', 'view'), async (req: Request, res: Response) => {
   try {
     const trends = await dbAll(
       `SELECT DATE_FORMAT(c.created_at, '%Y-%m') as period,
@@ -469,7 +470,7 @@ router.get('/cost-analysis/trends', authMiddleware, async (req: Request, res: Re
 
 // ===== MARGIN ANALYSIS =====
 
-router.get('/margin-analysis', authMiddleware, async (req: Request, res: Response) => {
+router.get('/margin-analysis', authMiddleware, requirePermission('finance.margin-analysis', 'view'), async (req: Request, res: Response) => {
   try {
     const margins = await dbAll(
       `SELECT pt.*, pr.name as product_name, pr.sku,
@@ -486,7 +487,7 @@ router.get('/margin-analysis', authMiddleware, async (req: Request, res: Respons
   }
 });
 
-router.get('/margin-analysis/summary', authMiddleware, async (req: Request, res: Response) => {
+router.get('/margin-analysis/summary', authMiddleware, requirePermission('finance.margin-analysis', 'view'), async (req: Request, res: Response) => {
   try {
     const summary = await dbAll(
       `SELECT DATE_FORMAT(CONCAT(pt.period, '-01'), '%Y-%m') as period,
@@ -573,7 +574,7 @@ router.put('/accounts-receivable/:id/pay', authMiddleware, async (req: Request, 
 // ===== FUND REQUESTS =====
 
 // GET /fund-requests â€” list all fund requests with item counts
-router.get('/fund-requests', authMiddleware, async (req: Request, res: Response) => {
+router.get('/fund-requests', authMiddleware, requirePermission('finance.fund-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const { status } = req.query;
     let sql = `
@@ -603,7 +604,7 @@ router.get('/fund-requests', authMiddleware, async (req: Request, res: Response)
 });
 
 // GET /fund-requests/:id â€” detail with items
-router.get('/fund-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/fund-requests/:id', authMiddleware, requirePermission('finance.fund-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const fr = await dbGet(
       `SELECT fr.*, u.full_name as submitter_name,
@@ -639,7 +640,7 @@ router.get('/fund-requests/:id', authMiddleware, async (req: Request, res: Respo
 });
 
 // POST /fund-requests â€” create new fund request with items
-router.post('/fund-requests', authMiddleware, async (req: Request, res: Response) => {
+router.post('/fund-requests', authMiddleware, requirePermission('finance.fund-requests', 'create'), async (req: Request, res: Response) => {
   try {
     const { purpose, needed_date, notes, cash_account, cash_account_note, items } = req.body;
     if (!purpose || !needed_date) {
@@ -683,7 +684,7 @@ router.post('/fund-requests', authMiddleware, async (req: Request, res: Response
 });
 
 // PUT /fund-requests/:id â€” update draft fund request
-router.put('/fund-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/fund-requests/:id', authMiddleware, requirePermission('finance.fund-requests', 'update'), async (req: Request, res: Response) => {
   try {
     const fr = await dbGet('SELECT * FROM fund_requests WHERE id = ?', [req.params.id]) as any;
     if (!fr) return res.status(404).json({ error: 'Fund request not found' });
@@ -860,7 +861,7 @@ router.put('/fund-requests/:id/items/:itemId/reject', authMiddleware, async (req
 });
 
 // DELETE /fund-requests/:id â€” delete draft fund request
-router.delete('/fund-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/fund-requests/:id', authMiddleware, requirePermission('finance.fund-requests', 'delete'), async (req: Request, res: Response) => {
   try {
     const fr = await dbGet('SELECT * FROM fund_requests WHERE id = ?', [req.params.id]) as any;
     if (!fr) return res.status(404).json({ error: 'Fund request not found' });

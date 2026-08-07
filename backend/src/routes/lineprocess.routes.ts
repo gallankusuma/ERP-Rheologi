@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/line-processes - Get all line processes with products
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.line-processes', 'view'), async (req: Request, res: Response) => {
   try {
     const lines = await dbAll(
       `SELECT lp.*, u.name as unit_name, u.code as unit_code
@@ -36,7 +37,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/line-processes/:id - Get specific line process
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.line-processes', 'view'), async (req: Request, res: Response) => {
   try {
     const line = await dbGet(
       `SELECT lp.*, u.name as unit_name, u.code as unit_code
@@ -66,7 +67,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/line-processes - Create line process
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.line-processes', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, code, description, capacity_per_hour, capacity_unit_id, active, product_ids } = req.body;
 
@@ -104,7 +105,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/line-processes/:id - Update line process
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.line-processes', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, code, description, capacity_per_hour, capacity_unit_id, active, product_ids } = req.body;
 
@@ -137,7 +138,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/line-processes/:id - Delete line process
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.line-processes', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM line_processes WHERE id = ?', [req.params.id]);
     res.json({ message: 'Line process deleted successfully' });

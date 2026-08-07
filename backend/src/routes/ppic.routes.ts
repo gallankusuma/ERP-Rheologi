@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -21,7 +22,7 @@ const ppicLog = async (req: Request, action: string, entityType: string, entityI
 // ==========================================
 // ITEM MASTER (FG, RM, PM)
 // ==========================================
-router.get('/items', authMiddleware, async (req: Request, res: Response) => {
+router.get('/items', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
     try {
         const { type } = req.query;
         let query = `
@@ -46,7 +47,7 @@ router.get('/items', authMiddleware, async (req: Request, res: Response) => {
 // ==========================================
 // BILL OF MATERIALS (BOM)
 // ==========================================
-router.get('/boms', authMiddleware, async (req: Request, res: Response) => {
+router.get('/boms', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
     try {
         const boms = await dbAll(`
             SELECT b.*, p.name as product_name, p.sku as product_sku
@@ -57,7 +58,7 @@ router.get('/boms', authMiddleware, async (req: Request, res: Response) => {
     } catch (error) { res.status(500).json({ error: 'Failed to fetch BOMs' }); }
 });
 
-router.get('/boms/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/boms/:id', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
     try {
         const bomId = req.params.id;
         const header = await dbGet(`
@@ -105,7 +106,7 @@ function getWeekDateRange(year: number, week: number): { start: string; end: str
 }
 
 // GET /mps - List MPS headers
-router.get('/mps', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mps', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
   try {
     const { year, month, status } = req.query;
     let query = `
@@ -130,7 +131,7 @@ router.get('/mps', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /mps/:id - Get MPS with details + weekly grid
-router.get('/mps/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const header = await dbGet(`
@@ -261,7 +262,7 @@ router.get('/mps/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /mps - Create new MPS header
-router.post('/mps', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mps', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { period_year, period_month, scheme, notes } = req.body;
     const userId = (req as any).user?.id || null;
@@ -285,7 +286,7 @@ router.post('/mps', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /mps/:id/pull-orders - Pull demand from SO Items + Projects into MPS
-router.post('/mps/:id/pull-orders', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
@@ -467,7 +468,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, async (req: Request, res: Re
 });
 
 // POST /mps/:id/add-item - Manually add an item to MPS (e.g. from forecast)
-router.post('/mps/:id/add-item', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mps/:id/add-item', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { product_id, bom_id: reqBomId, quantity, target_week, target_year, notes } = req.body;
@@ -534,7 +535,7 @@ router.post('/mps/:id/add-item', authMiddleware, async (req: Request, res: Respo
 });
 
 // PUT /mps/:id/details/:detailId/remark - Update remark info (stock, batch, lead time)
-router.put('/mps/:id/details/:detailId/remark', authMiddleware, async (req: Request, res: Response) => {
+router.put('/mps/:id/details/:detailId/remark', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
     const { current_stock, batch_no, batch_qty, lead_time_weeks } = req.body;
@@ -559,7 +560,7 @@ router.put('/mps/:id/details/:detailId/remark', authMiddleware, async (req: Requ
 });
 
 // PUT /mps/:id/week-data - Bulk update weekly grid cells
-router.put('/mps/:id/week-data', authMiddleware, async (req: Request, res: Response) => {
+router.put('/mps/:id/week-data', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { entries } = req.body; // [{ mps_detail_id, week_number, year, field, value }]
@@ -601,7 +602,7 @@ router.put('/mps/:id/week-data', authMiddleware, async (req: Request, res: Respo
 });
 
 // POST /mps/:id/confirm
-router.post('/mps/:id/confirm', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mps/:id/confirm', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = (req as any).user?.id || null;
@@ -620,7 +621,7 @@ router.post('/mps/:id/confirm', authMiddleware, async (req: Request, res: Respon
 });
 
 // POST /mps/:id/revert - Revert Confirmed MPS back to Draft
-router.post('/mps/:id/revert', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mps/:id/revert', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
@@ -638,7 +639,7 @@ router.post('/mps/:id/revert', authMiddleware, async (req: Request, res: Respons
 });
 
 // POST /mps/:id/details/:detailId/generate-wo
-router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
     const userId = (req as any).user?.id || null;
@@ -673,7 +674,7 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, async (req
 });
 
 // DELETE /mps/:id
-router.delete('/mps/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const header = await dbGet('SELECT status FROM mps_headers WHERE id = ?', [id]) as any;
@@ -692,7 +693,7 @@ router.delete('/mps/:id', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // DELETE /mps/:id/details/:detailId
-router.delete('/mps/:id/details/:detailId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/mps/:id/details/:detailId', authMiddleware, requirePermission('ppic.mps', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
     const header = await dbGet('SELECT status FROM mps_headers WHERE id = ?', [id]) as any;
@@ -705,7 +706,7 @@ router.delete('/mps/:id/details/:detailId', authMiddleware, async (req: Request,
 });
 
 // GET /pending-orders
-router.get('/pending-orders', authMiddleware, async (req: Request, res: Response) => {
+router.get('/pending-orders', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
   try {
     const soItems = await dbAll(`
       SELECT si.id as so_item_id, si.so_id, si.product_id, si.quantity,
@@ -726,7 +727,7 @@ router.get('/pending-orders', authMiddleware, async (req: Request, res: Response
 // ==========================================
 
 // GET /mps/:id/details/:detailId/mrp - Explode BOM → MRP breakdown
-router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
     
@@ -833,7 +834,7 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
 });
 
 // PUT /mps/:id/details/:detailId/mrp - Save MRP planned order receipts
-router.put('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request, res: Response) => {
+router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
     const { detailId } = req.params;
     const { entries } = req.body; // [{ material_id, week_number, year, planned_order_receipt }]
@@ -868,7 +869,7 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
 // ==========================================
 
 // GET /mrp - Standalone MRP: aggregate gross requirements per unique raw material across all confirmed MPS
-router.get('/mrp', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const currentYear = now.getFullYear();
@@ -1034,7 +1035,7 @@ router.get('/mrp', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /mrp - Save standalone MRP planned_order_release & planned_order_receipt (global, mps_detail_id=0)
-router.put('/mrp', authMiddleware, async (req: Request, res: Response) => {
+router.put('/mrp', authMiddleware, requirePermission('ppic.mrp', 'update'), async (req: Request, res: Response) => {
   try {
     const { entries } = req.body; // [{ material_id, week_number, year, planned_order_receipt, planned_order_release }]
 
@@ -1066,7 +1067,7 @@ router.put('/mrp', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /mrp/generate-pr - Generate Purchase Request from MRP Net Requirements
-router.post('/mrp/generate-pr', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'create'), async (req: Request, res: Response) => {
   try {
     const { materials, year, notes } = req.body;
     // materials: [{ material_id, material_name, uom_name, total_net_requirement, lead_time }]
@@ -1169,7 +1170,7 @@ router.post('/mrp/generate-pr', authMiddleware, async (req: Request, res: Respon
 // ============================================================
 
 // GET /forecast-brands - List all brands
-router.get('/forecast-brands', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/forecast-brands', authMiddleware, requirePermission('master_data.forecast-brands', 'view'), async (_req: Request, res: Response) => {
   try {
     const brands = await dbAll(`
       SELECT fb.*, p.name as product_name, p.sku as product_sku
@@ -1184,7 +1185,7 @@ router.get('/forecast-brands', authMiddleware, async (_req: Request, res: Respon
 });
 
 // POST /forecast-brands - Create brand
-router.post('/forecast-brands', authMiddleware, async (req: Request, res: Response) => {
+router.post('/forecast-brands', authMiddleware, requirePermission('master_data.forecast-brands', 'create'), async (req: Request, res: Response) => {
   try {
     const { brand_name, type, product_id, conversion_rate, conversion_uom, notes } = req.body;
     if (!brand_name) return res.status(400).json({ error: 'Brand name is required' });
@@ -1200,7 +1201,7 @@ router.post('/forecast-brands', authMiddleware, async (req: Request, res: Respon
 });
 
 // PUT /forecast-brands/:id - Update brand
-router.put('/forecast-brands/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/forecast-brands/:id', authMiddleware, requirePermission('master_data.forecast-brands', 'update'), async (req: Request, res: Response) => {
   try {
     const { brand_name, type, product_id, conversion_rate, conversion_uom, notes, is_active } = req.body;
     await dbRun(
@@ -1214,7 +1215,7 @@ router.put('/forecast-brands/:id', authMiddleware, async (req: Request, res: Res
 });
 
 // DELETE /forecast-brands/:id
-router.delete('/forecast-brands/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/forecast-brands/:id', authMiddleware, requirePermission('master_data.forecast-brands', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM forecast_brands WHERE id = ?', [req.params.id]);
     res.json({ message: 'Brand deleted' });
@@ -1224,7 +1225,7 @@ router.delete('/forecast-brands/:id', authMiddleware, async (req: Request, res: 
 });
 
 // GET /forecasts - List forecast headers
-router.get('/forecasts', authMiddleware, async (req: Request, res: Response) => {
+router.get('/forecasts', authMiddleware, requirePermission('ppic.forecast', 'view'), async (req: Request, res: Response) => {
   try {
     const { year, month } = req.query;
     let sql = 'SELECT * FROM forecast_headers';
@@ -1242,7 +1243,7 @@ router.get('/forecasts', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // POST /forecasts - Create new forecast
-router.post('/forecasts', authMiddleware, async (req: Request, res: Response) => {
+router.post('/forecasts', authMiddleware, requirePermission('ppic.forecast', 'create'), async (req: Request, res: Response) => {
   try {
     const { period_year, period_month, notes } = req.body;
     // Check duplicate
@@ -1265,7 +1266,7 @@ router.post('/forecasts', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /forecasts/:id - Get forecast with grid data
-router.get('/forecasts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/forecasts/:id', authMiddleware, requirePermission('ppic.forecast', 'view'), async (req: Request, res: Response) => {
   try {
     const header = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]);
     if (!header) return res.status(404).json({ error: 'Forecast not found' });
@@ -1320,7 +1321,7 @@ router.get('/forecasts/:id', authMiddleware, async (req: Request, res: Response)
 });
 
 // POST /forecasts/:id/generate-grid - Generate 12-week grid for all active brands
-router.post('/forecasts/:id/generate-grid', authMiddleware, async (req: Request, res: Response) => {
+router.post('/forecasts/:id/generate-grid', authMiddleware, requirePermission('ppic.forecast', 'create'), async (req: Request, res: Response) => {
   try {
     const header = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]) as any;
     if (!header) return res.status(404).json({ error: 'Forecast not found' });
@@ -1357,7 +1358,7 @@ router.post('/forecasts/:id/generate-grid', authMiddleware, async (req: Request,
 });
 
 // PUT /forecasts/:id/week-data - Save weekly forecast data (batch)
-router.put('/forecasts/:id/week-data', authMiddleware, async (req: Request, res: Response) => {
+router.put('/forecasts/:id/week-data', authMiddleware, requirePermission('ppic.forecast', 'update'), async (req: Request, res: Response) => {
   try {
     const header = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]) as any;
     if (!header) return res.status(404).json({ error: 'Forecast not found' });
@@ -1390,7 +1391,7 @@ router.put('/forecasts/:id/week-data', authMiddleware, async (req: Request, res:
 });
 
 // PUT /forecasts/:id/status - Change status
-router.put('/forecasts/:id/status', authMiddleware, async (req: Request, res: Response) => {
+router.put('/forecasts/:id/status', authMiddleware, requirePermission('ppic.forecast', 'update'), async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
     if (!['Draft', 'Confirmed'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
@@ -1403,7 +1404,7 @@ router.put('/forecasts/:id/status', authMiddleware, async (req: Request, res: Re
 });
 
 // DELETE /forecasts/:id
-router.delete('/forecasts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/forecasts/:id', authMiddleware, requirePermission('ppic.forecast', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM forecast_headers WHERE id = ?', [req.params.id]);
     await ppicLog(req, 'DELETE', 'FORECAST', req.params.id, null, null);
@@ -1414,7 +1415,7 @@ router.delete('/forecasts/:id', authMiddleware, async (req: Request, res: Respon
 });
 
 // POST /forecasts/:id/push-to-mps - Push forecast data into MPS forecast_qty row
-router.post('/forecasts/:id/push-to-mps', authMiddleware, async (req: Request, res: Response) => {
+router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppic.forecast', 'create'), async (req: Request, res: Response) => {
   try {
     const forecast = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]) as any;
     if (!forecast) return res.status(404).json({ error: 'Forecast not found' });

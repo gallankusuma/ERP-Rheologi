@@ -149,7 +149,7 @@ router.post('/:id/permissions', authMiddleware, requirePermission('system.roles'
       // audit log
       const userId = (req as any).user?.userId || null;
       await conn.execute(
-        `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details, created_at)
+        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, new_values, created_at)
          VALUES (?, 'assign_permissions', 'role', ?, ?, NOW())`,
         [userId, roleId, JSON.stringify({ role: role.name, permission_count: permission_ids.length })]
       );

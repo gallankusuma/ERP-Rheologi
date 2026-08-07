@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -21,7 +22,7 @@ const generateCode = (prefix: string) => {
 // ========================================
 
 // GET /api/inventory/stock-transfers - List all stock transfers
-router.get('/stock-transfers', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stock-transfers', authMiddleware, requirePermission('inventory.stock-transfer', 'view'), async (req: Request, res: Response) => {
   try {
     const transfers = await dbAll(`
       SELECT 
@@ -47,7 +48,7 @@ router.get('/stock-transfers', authMiddleware, async (req: Request, res: Respons
 });
 
 // POST /api/inventory/stock-transfers - Create stock transfer
-router.post('/stock-transfers', authMiddleware, async (req: Request, res: Response) => {
+router.post('/stock-transfers', authMiddleware, requirePermission('inventory.stock-transfer', 'create'), async (req: Request, res: Response) => {
   try {
     const { 
       product_id, 
@@ -111,7 +112,7 @@ router.post('/stock-transfers', authMiddleware, async (req: Request, res: Respon
 });
 
 // PUT /api/inventory/stock-transfers/:id - Update stock transfer (only if approval_status = 0)
-router.put('/stock-transfers/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/stock-transfers/:id', authMiddleware, requirePermission('inventory.stock-transfer', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { quantity, notes } = req.body;
@@ -140,7 +141,7 @@ router.put('/stock-transfers/:id', authMiddleware, async (req: Request, res: Res
 });
 
 // DELETE /api/inventory/stock-transfers/:id - Delete stock transfer (only if approval_status = 0)
-router.delete('/stock-transfers/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/stock-transfers/:id', authMiddleware, requirePermission('inventory.stock-transfer', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -323,7 +324,7 @@ async function executeStockTransfer(transfer: any) {
 // ========================================
 
 // GET /api/inventory/stock-adjustments - List all stock adjustments
-router.get('/stock-adjustments', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stock-adjustments', authMiddleware, requirePermission('inventory.stock-adjustment', 'view'), async (req: Request, res: Response) => {
   try {
     const adjustments = await dbAll(`
       SELECT 
@@ -347,7 +348,7 @@ router.get('/stock-adjustments', authMiddleware, async (req: Request, res: Respo
 });
 
 // POST /api/inventory/stock-adjustments - Create stock adjustment
-router.post('/stock-adjustments', authMiddleware, async (req: Request, res: Response) => {
+router.post('/stock-adjustments', authMiddleware, requirePermission('inventory.stock-adjustment', 'create'), async (req: Request, res: Response) => {
   try {
     const { 
       product_id, 
@@ -403,7 +404,7 @@ router.post('/stock-adjustments', authMiddleware, async (req: Request, res: Resp
 });
 
 // DELETE /api/inventory/stock-adjustments/:id - Delete stock adjustment
-router.delete('/stock-adjustments/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/stock-adjustments/:id', authMiddleware, requirePermission('inventory.stock-adjustment', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -523,7 +524,7 @@ router.post('/stock-adjustments/:id/reject', authMiddleware, async (req: Request
 // ========================================
 
 // GET /api/inventory - List all inventory
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('inventory.dashboard', 'view'), async (req: Request, res: Response) => {
   try {
     const warehouseId = req.query.warehouse_id as string;
     const showAll = req.query.all === '1';
@@ -570,7 +571,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/inventory/:id - Get single inventory item
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('inventory.dashboard', 'view'), async (req: Request, res: Response) => {
   try {
     const item = await dbGet(`
       SELECT i.*, p.name as product_name, p.sku 
@@ -591,7 +592,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/inventory - Create inventory entry
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('inventory.dashboard', 'create'), async (req: Request, res: Response) => {
   try {
     const { product_id, warehouse_id, quantity } = req.body;
 
@@ -624,7 +625,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/inventory/:id - Update inventory
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('inventory.dashboard', 'update'), async (req: Request, res: Response) => {
   try {
     const { quantity } = req.body;
 
@@ -642,7 +643,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/inventory/:id/transaction - Record inventory transaction
-router.post('/:id/transaction', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/transaction', authMiddleware, requirePermission('inventory.stock-card', 'create'), async (req: Request, res: Response) => {
   try {
     const { transaction_type, quantity, reference_type, reference_id, notes } = req.body;
 
@@ -666,7 +667,7 @@ router.post('/:id/transaction', authMiddleware, async (req: Request, res: Respon
 });
 
 // GET /api/inventory/transactions/:productId - List transactions by product
-router.get('/transactions/:productId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/transactions/:productId', authMiddleware, requirePermission('inventory.stock-card', 'view'), async (req: Request, res: Response) => {
   try {
     const productId = Number(req.params.productId);
     if (!productId) {

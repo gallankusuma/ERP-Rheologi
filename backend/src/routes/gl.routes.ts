@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ const router = express.Router();
 // ===========================
 
 // GET /gl/coa — List all accounts (tree-ready)
-router.get('/coa', authMiddleware, async (req: Request, res: Response) => {
+router.get('/coa', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { type, active_only } = req.query;
     let sql = 'SELECT * FROM chart_of_accounts';
@@ -37,7 +38,7 @@ router.get('/coa', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /gl/coa/:id
-router.get('/coa/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/coa/:id', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const account = await dbGet('SELECT * FROM chart_of_accounts WHERE id = ?', [req.params.id]);
     if (!account) return res.status(404).json({ error: 'Account not found' });
@@ -48,7 +49,7 @@ router.get('/coa/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /gl/coa — Create account
-router.post('/coa', authMiddleware, async (req: Request, res: Response) => {
+router.post('/coa', authMiddleware, requirePermission('finance.general-ledger', 'create'), async (req: Request, res: Response) => {
   try {
     const { account_code, account_name, account_type, parent_id, level, is_header, normal_balance, description, opening_balance, currency } = req.body;
     if (!account_code || !account_name || !account_type || !normal_balance) {
@@ -71,7 +72,7 @@ router.post('/coa', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /gl/coa/:id
-router.put('/coa/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/coa/:id', authMiddleware, requirePermission('finance.general-ledger', 'update'), async (req: Request, res: Response) => {
   try {
     const { account_name, account_type, parent_id, level, is_header, normal_balance, description, is_active, currency } = req.body;
     await dbRun(
@@ -88,7 +89,7 @@ router.put('/coa/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /gl/coa/:id
-router.delete('/coa/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/coa/:id', authMiddleware, requirePermission('finance.general-ledger', 'delete'), async (req: Request, res: Response) => {
   try {
     // Check if account has journal lines
     const hasEntries = await dbGet('SELECT COUNT(*) as cnt FROM journal_lines WHERE account_id = ?', [req.params.id]) as any;
@@ -106,7 +107,7 @@ router.delete('/coa/:id', authMiddleware, async (req: Request, res: Response) =>
 // FISCAL PERIODS
 // ===========================
 
-router.get('/fiscal-periods', authMiddleware, async (req: Request, res: Response) => {
+router.get('/fiscal-periods', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { year } = req.query;
     let sql = 'SELECT * FROM fiscal_periods';
@@ -135,7 +136,7 @@ const generateJournalNumber = () => {
 };
 
 // GET /gl/journal-entries
-router.get('/journal-entries', authMiddleware, async (req: Request, res: Response) => {
+router.get('/journal-entries', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { status, from_date, to_date, reference_type, limit: lim } = req.query;
     let sql = `
@@ -164,7 +165,7 @@ router.get('/journal-entries', authMiddleware, async (req: Request, res: Respons
 });
 
 // GET /gl/journal-entries/:id — Detail with lines
-router.get('/journal-entries/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/journal-entries/:id', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const entry = await dbGet(
       `SELECT je.*, u.full_name as created_by_name
@@ -190,7 +191,7 @@ router.get('/journal-entries/:id', authMiddleware, async (req: Request, res: Res
 });
 
 // POST /gl/journal-entries — Create manual journal entry
-router.post('/journal-entries', authMiddleware, async (req: Request, res: Response) => {
+router.post('/journal-entries', authMiddleware, requirePermission('finance.general-ledger', 'create'), async (req: Request, res: Response) => {
   try {
     const { entry_date, description, reference_type, reference_id, reference_number, lines } = req.body;
 
@@ -247,7 +248,7 @@ router.post('/journal-entries', authMiddleware, async (req: Request, res: Respon
 });
 
 // PUT /gl/journal-entries/:id/post — Post journal entry (update account balances)
-router.put('/journal-entries/:id/post', authMiddleware, async (req: Request, res: Response) => {
+router.put('/journal-entries/:id/post', authMiddleware, requirePermission('finance.general-ledger', 'update'), async (req: Request, res: Response) => {
   try {
     const entry = await dbGet('SELECT * FROM journal_entries WHERE id = ?', [req.params.id]) as any;
     if (!entry) return res.status(404).json({ error: 'Journal entry not found' });
@@ -290,7 +291,7 @@ router.put('/journal-entries/:id/post', authMiddleware, async (req: Request, res
 });
 
 // PUT /gl/journal-entries/:id/void — Void a posted journal entry (reverse balances)
-router.put('/journal-entries/:id/void', authMiddleware, async (req: Request, res: Response) => {
+router.put('/journal-entries/:id/void', authMiddleware, requirePermission('finance.general-ledger', 'update'), async (req: Request, res: Response) => {
   try {
     const entry = await dbGet('SELECT * FROM journal_entries WHERE id = ?', [req.params.id]) as any;
     if (!entry) return res.status(404).json({ error: 'Journal entry not found' });
@@ -333,7 +334,7 @@ router.put('/journal-entries/:id/void', authMiddleware, async (req: Request, res
 // TRIAL BALANCE
 // ===========================
 
-router.get('/trial-balance', authMiddleware, async (req: Request, res: Response) => {
+router.get('/trial-balance', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { as_of_date } = req.query;
 
@@ -380,7 +381,7 @@ router.get('/trial-balance', authMiddleware, async (req: Request, res: Response)
 // ===========================
 
 // GET /gl/reports/income-statement
-router.get('/reports/income-statement', authMiddleware, async (req: Request, res: Response) => {
+router.get('/reports/income-statement', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { from_date, to_date } = req.query;
     if (!from_date || !to_date) {
@@ -473,7 +474,7 @@ router.get('/reports/income-statement', authMiddleware, async (req: Request, res
 });
 
 // GET /gl/reports/balance-sheet
-router.get('/reports/balance-sheet', authMiddleware, async (req: Request, res: Response) => {
+router.get('/reports/balance-sheet', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { as_of_date } = req.query;
     const asOf = as_of_date || new Date().toISOString().split('T')[0];
@@ -521,7 +522,7 @@ router.get('/reports/balance-sheet', authMiddleware, async (req: Request, res: R
 });
 
 // GET /gl/reports/cash-flow
-router.get('/reports/cash-flow', authMiddleware, async (req: Request, res: Response) => {
+router.get('/reports/cash-flow', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const { from_date, to_date } = req.query;
     if (!from_date || !to_date) {
@@ -581,7 +582,7 @@ router.get('/reports/cash-flow', authMiddleware, async (req: Request, res: Respo
 // GL DASHBOARD
 // ===========================
 
-router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, requirePermission('finance.general-ledger', 'view'), async (req: Request, res: Response) => {
   try {
     const accountSummary = await dbGet(`
       SELECT

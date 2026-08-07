@@ -1,5 +1,7 @@
 import express, { Request, Response } from 'express';
 import { dbQuery, dbGet, dbAll, dbRun } from '../config/database';
+import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
@@ -33,7 +35,7 @@ const ensureNotesTable = async () => {
 ensureNotesTable();
 
 // GET / — list notes
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.notes', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, category, linked_type, pinned } = req.query;
     let where = '1=1';
@@ -61,7 +63,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // POST /
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('crm.notes', 'create'), async (req: Request, res: Response) => {
   try {
     const { title, content, color, category, linked_type, linked_id, linked_name } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
@@ -80,7 +82,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // PUT /:id
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('crm.notes', 'update'), async (req: Request, res: Response) => {
   try {
     const { title, content, color, category, is_pinned, linked_type, linked_id, linked_name } = req.body;
     await dbRun(`
@@ -96,7 +98,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 // PATCH /:id/pin — toggle pin
-router.patch('/:id/pin', async (req: Request, res: Response) => {
+router.patch('/:id/pin', authMiddleware, requirePermission('crm.notes', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun(`UPDATE crm_notes SET is_pinned = NOT is_pinned WHERE id = ?`, [req.params.id]);
     res.json({ message: 'Pin toggled' });
@@ -106,7 +108,7 @@ router.patch('/:id/pin', async (req: Request, res: Response) => {
 });
 
 // DELETE /:id
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('crm.notes', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM crm_notes WHERE id = ?', [req.params.id]);
     res.json({ message: 'Note deleted' });

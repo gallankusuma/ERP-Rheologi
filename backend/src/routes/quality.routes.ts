@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -12,7 +13,7 @@ const generateCode = (prefix: string) => {
 };
 
 // QC Tests (Master Data)
-router.get('/tests', authMiddleware, async (req: Request, res: Response) => {
+router.get('/tests', authMiddleware, requirePermission('quality.test-methods', 'view'), async (req: Request, res: Response) => {
   try {
     const tests = await dbAll(`
       SELECT * FROM qc_tests 
@@ -25,7 +26,7 @@ router.get('/tests', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/tests', authMiddleware, async (req: Request, res: Response) => {
+router.post('/tests', authMiddleware, requirePermission('quality.test-methods', 'create'), async (req: Request, res: Response) => {
   try {
     const { test_code, name, test_type, test_method, acceptance_criteria, product_id } = req.body;
 
@@ -49,7 +50,7 @@ router.post('/tests', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // QC Test Definitions (per product)
-router.get('/test-definitions', authMiddleware, async (req: Request, res: Response) => {
+router.get('/test-definitions', authMiddleware, requirePermission('quality.test-methods', 'view'), async (req: Request, res: Response) => {
   try {
     const { product_id } = req.query;
 
@@ -77,7 +78,7 @@ router.get('/test-definitions', authMiddleware, async (req: Request, res: Respon
   }
 });
 
-router.post('/test-definitions', authMiddleware, async (req: Request, res: Response) => {
+router.post('/test-definitions', authMiddleware, requirePermission('quality.test-methods', 'create'), async (req: Request, res: Response) => {
   try {
     const { product_id, test_id, min_value, max_value, target_value, is_required } = req.body;
 
@@ -105,7 +106,7 @@ router.post('/test-definitions', authMiddleware, async (req: Request, res: Respo
 });
 
 // QC Results
-router.get('/results', authMiddleware, async (req: Request, res: Response) => {
+router.get('/results', authMiddleware, requirePermission('quality.results', 'view'), async (req: Request, res: Response) => {
   try {
     const { batch_id, status } = req.query;
 
@@ -144,7 +145,7 @@ router.get('/results', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/results', authMiddleware, async (req: Request, res: Response) => {
+router.post('/results', authMiddleware, requirePermission('quality.results', 'create'), async (req: Request, res: Response) => {
   try {
     const { batch_id, test_id, result_value, result_status, notes } = req.body;
     const user_id = (req as any).user?.userId;
@@ -177,7 +178,7 @@ router.post('/results', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/results/:id/approve', authMiddleware, async (req: Request, res: Response) => {
+router.put('/results/:id/approve', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
   try {
     const user_id = (req as any).user?.userId;
     const { notes } = req.body;
@@ -216,7 +217,7 @@ router.put('/results/:id/approve', authMiddleware, async (req: Request, res: Res
   }
 });
 
-router.put('/results/:id/reject', authMiddleware, async (req: Request, res: Response) => {
+router.put('/results/:id/reject', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
   try {
     const user_id = (req as any).user?.userId;
     const { notes } = req.body;
@@ -248,7 +249,7 @@ router.put('/results/:id/reject', authMiddleware, async (req: Request, res: Resp
 });
 
 // Batches
-router.get('/batches', authMiddleware, async (req: Request, res: Response) => {
+router.get('/batches', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const batches = await dbAll(
       `SELECT b.*, p.sku, p.name as product_name
@@ -263,7 +264,7 @@ router.get('/batches', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/batches/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/batches/:id', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const batch = await dbGet(
       `SELECT b.*, p.sku, p.name as product_name
@@ -279,7 +280,7 @@ router.get('/batches/:id', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.post('/batches', authMiddleware, async (req: Request, res: Response) => {
+router.post('/batches', authMiddleware, requirePermission('quality.qc-master', 'create'), async (req: Request, res: Response) => {
   try {
     const { batch_number, product_id, manufacture_date, expiry_date, mfg_date, exp_date, quantity, status } = req.body;
     if (!product_id) return res.status(400).json({ error: 'product_id is required' });
@@ -299,7 +300,7 @@ router.post('/batches', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/batches/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/batches/:id', authMiddleware, requirePermission('quality.qc-master', 'update'), async (req: Request, res: Response) => {
   try {
     const { product_id, manufacture_date, expiry_date, status } = req.body;
     await dbRun(
@@ -314,7 +315,7 @@ router.put('/batches/:id', authMiddleware, async (req: Request, res: Response) =
 });
 
 // QC Tests (master)
-router.get('/qc-tests', authMiddleware, async (req: Request, res: Response) => {
+router.get('/qc-tests', authMiddleware, requirePermission('quality.results', 'view'), async (req: Request, res: Response) => {
   try {
     const tests = await dbAll('SELECT * FROM qc_tests ORDER BY name ASC', []);
     res.json({ data: tests });
@@ -324,7 +325,7 @@ router.get('/qc-tests', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/qc-tests', authMiddleware, async (req: Request, res: Response) => {
+router.post('/qc-tests', authMiddleware, requirePermission('quality.results', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, code, description, product_id, test_type, test_method, acceptance_criteria } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
@@ -341,7 +342,7 @@ router.post('/qc-tests', authMiddleware, async (req: Request, res: Response) => 
   }
 });
 
-router.put('/qc-tests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/qc-tests/:id', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, description } = req.body;
     await dbRun('UPDATE qc_tests SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
@@ -356,7 +357,7 @@ router.put('/qc-tests/:id', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
-router.delete('/qc-tests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/qc-tests/:id', authMiddleware, requirePermission('quality.results', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_tests WHERE id = ?', [req.params.id]);
     res.json({ message: 'QC test deleted' });
@@ -367,7 +368,7 @@ router.delete('/qc-tests/:id', authMiddleware, async (req: Request, res: Respons
 });
 
 // QC Results
-router.get('/qc-results', authMiddleware, async (req: Request, res: Response) => {
+router.get('/qc-results', authMiddleware, requirePermission('quality.results', 'view'), async (req: Request, res: Response) => {
   try {
     const { batch_id } = req.query;
     let query =
@@ -390,7 +391,7 @@ router.get('/qc-results', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.post('/qc-results', authMiddleware, async (req: Request, res: Response) => {
+router.post('/qc-results', authMiddleware, requirePermission('quality.results', 'create'), async (req: Request, res: Response) => {
   try {
     const { batch_id, test_id, result, status, tested_at, tester_id, notes } = req.body;
     if (!batch_id || !test_id) return res.status(400).json({ error: 'batch_id and test_id are required' });
@@ -408,7 +409,7 @@ router.post('/qc-results', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.put('/qc-results/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/qc-results/:id', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
   try {
     const { result, status, tested_at, tester_id, notes } = req.body;
     await dbRun(
@@ -425,7 +426,7 @@ router.put('/qc-results/:id', authMiddleware, async (req: Request, res: Response
 // ============================================================
 // QC Sampling Plans
 // ============================================================
-router.get('/sampling', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/sampling', authMiddleware, requirePermission('quality.sampling', 'view'), async (_req: Request, res: Response) => {
   try {
     const plans = await dbAll(
       `SELECT sp.*, p.name AS product_name, p.sku,
@@ -442,7 +443,7 @@ router.get('/sampling', authMiddleware, async (_req: Request, res: Response) => 
   }
 });
 
-router.post('/sampling', authMiddleware, async (req: Request, res: Response) => {
+router.post('/sampling', authMiddleware, requirePermission('quality.sampling', 'create'), async (req: Request, res: Response) => {
   try {
     const { product_id, test_id, sample_size, frequency, aql_level, inspection_level, notes } = req.body;
     if (!product_id) return res.status(400).json({ error: 'product_id is required' });
@@ -458,7 +459,7 @@ router.post('/sampling', authMiddleware, async (req: Request, res: Response) => 
   }
 });
 
-router.put('/sampling/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/sampling/:id', authMiddleware, requirePermission('quality.sampling', 'update'), async (req: Request, res: Response) => {
   try {
     const { product_id, test_id, sample_size, frequency, aql_level, inspection_level, notes } = req.body;
     await dbRun(
@@ -471,7 +472,7 @@ router.put('/sampling/:id', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
-router.delete('/sampling/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/sampling/:id', authMiddleware, requirePermission('quality.sampling', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_sampling_plans WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Sampling plan deleted' });
@@ -483,7 +484,7 @@ router.delete('/sampling/:id', authMiddleware, async (req: Request, res: Respons
 // ============================================================
 // Batch Release
 // ============================================================
-router.get('/batch-release', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/batch-release', authMiddleware, requirePermission('quality.batch-release', 'view'), async (_req: Request, res: Response) => {
   try {
     const batches = await dbAll(
       `SELECT b.id, b.batch_number, b.quantity, b.manufacture_date, b.expiry_date, b.status,
@@ -545,7 +546,7 @@ router.post('/batch-release/:batchId/hold', authMiddleware, async (req: Request,
 // ============================================================
 // Non-Conformance Reports (NCR)
 // ============================================================
-router.get('/ncr', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/ncr', authMiddleware, requirePermission('quality.ncr', 'view'), async (_req: Request, res: Response) => {
   try {
     const ncrs = await dbAll(
       `SELECT n.*, p.name AS product_name, b.batch_number,
@@ -565,7 +566,7 @@ router.get('/ncr', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/ncr/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/ncr/:id', authMiddleware, requirePermission('quality.ncr', 'view'), async (req: Request, res: Response) => {
   try {
     const ncr = await dbGet(
       `SELECT n.*, p.name AS product_name, b.batch_number,
@@ -590,7 +591,7 @@ router.get('/ncr/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/ncr', authMiddleware, async (req: Request, res: Response) => {
+router.post('/ncr', authMiddleware, requirePermission('quality.ncr', 'create'), async (req: Request, res: Response) => {
   try {
     const { ncr_number, product_id, batch_id, category, severity, description, root_cause, assigned_to } = req.body;
     if (!description) return res.status(400).json({ error: 'description is required' });
@@ -610,7 +611,7 @@ router.post('/ncr', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/ncr/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/ncr/:id', authMiddleware, requirePermission('quality.ncr', 'update'), async (req: Request, res: Response) => {
   try {
     const { category, severity, description, root_cause, corrective_action, preventive_action, status, assigned_to } = req.body;
     await dbRun(
@@ -641,7 +642,7 @@ router.post('/ncr/:id/actions', authMiddleware, async (req: Request, res: Respon
 // ============================================================
 // Rework Orders
 // ============================================================
-router.get('/rework', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/rework', authMiddleware, requirePermission('quality.rework', 'view'), async (_req: Request, res: Response) => {
   try {
     const reworks = await dbAll(
       `SELECT r.*, n.ncr_number, p.name AS product_name, b.batch_number,
@@ -661,7 +662,7 @@ router.get('/rework', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/rework', authMiddleware, async (req: Request, res: Response) => {
+router.post('/rework', authMiddleware, requirePermission('quality.rework', 'create'), async (req: Request, res: Response) => {
   try {
     const { ncr_id, product_id, batch_id, wo_id, quantity, description, instructions } = req.body;
     const userId = (req as any).user?.userId;
@@ -678,7 +679,7 @@ router.post('/rework', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/rework/:id/status', authMiddleware, async (req: Request, res: Response) => {
+router.put('/rework/:id/status', authMiddleware, requirePermission('quality.rework', 'update'), async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
     await dbRun('UPDATE qc_rework_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [status, req.params.id]);
@@ -691,7 +692,7 @@ router.put('/rework/:id/status', authMiddleware, async (req: Request, res: Respo
 // ============================================================
 // QC Reports — aggregated stats
 // ============================================================
-router.get('/reports/summary', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/reports/summary', authMiddleware, requirePermission('quality.reports', 'view'), async (_req: Request, res: Response) => {
   try {
     const stats = await dbGet(
       `SELECT

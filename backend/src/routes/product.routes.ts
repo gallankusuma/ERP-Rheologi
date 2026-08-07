@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/products
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.items', 'view'), async (req: Request, res: Response) => {
   try {
     const products = await dbAll(`
       SELECT 
@@ -31,7 +32,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/products/:id
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.items', 'view'), async (req: Request, res: Response) => {
   try {
     const product = await dbGet('SELECT * FROM products WHERE id = ?', [req.params.id]);
     
@@ -47,7 +48,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/products
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.items', 'create'), async (req: Request, res: Response) => {
   try {
     const { sku, name, description, unit_id, category_id, product_type_id, is_active, standard_cost, reorder_point, lead_time_days } = req.body;
 
@@ -75,7 +76,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/products/:id
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.items', 'update'), async (req: Request, res: Response) => {
   try {
     const { sku, name, description, unit_id, category_id, product_type_id, is_active, standard_cost, reorder_point, lead_time_days } = req.body;
     
@@ -94,7 +95,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/products/:id
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.items', 'delete'), async (req: Request, res: Response) => {
   try {
     const result = await dbRun('DELETE FROM products WHERE id = ?', [req.params.id]);
     if (result.affectedRows === 0) {

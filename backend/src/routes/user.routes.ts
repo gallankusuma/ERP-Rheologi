@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import { hashPassword, verifyPassword, validateEmail } from '../utils/auth.utils';
 
 const router = Router();
@@ -43,7 +44,7 @@ const deriveUsername = async (email: string, baseUsername?: string): Promise<str
   }
 };
 
-router.get('/', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('admin.users', 'view'), async (_req: Request, res: Response) => {
   try {
     const users = await dbAll(`${USER_SELECT} ORDER BY d.name, u.full_name ASC`, []);
     res.json({ data: users });
@@ -99,7 +100,7 @@ router.get('/profile/me', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('admin.users', 'view'), async (req: Request, res: Response) => {
   try {
     const user = await dbGet(`${USER_SELECT} WHERE u.id = ?`, [req.params.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -110,7 +111,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('admin.users', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, email, password, department_id, role_id, user_level, phone, address, username: providedUsername, is_active } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'name, email, and password are required' });
@@ -132,7 +133,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('admin.users', 'update'), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     const existing = await dbGet('SELECT id, email FROM users WHERE id = ?', [id]) as any;
@@ -168,7 +169,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('admin.users', 'delete'), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     const requesterId = (req as any).userId;

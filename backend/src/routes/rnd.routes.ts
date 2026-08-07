@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -19,7 +20,7 @@ const authMiddleware = (req: Request, res: Response, next: Function) => {
 // ==================== R&D PROJECTS ====================
 
 // GET all projects
-router.get('/projects', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT p.*, u.full_name as leader_name, d.name as department_name
@@ -33,7 +34,7 @@ router.get('/projects', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET single project
-router.get('/projects/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT p.*, u.full_name as leader_name, d.name as department_name
@@ -48,7 +49,7 @@ router.get('/projects/:id', authMiddleware, async (req: Request, res: Response) 
 });
 
 // POST create project
-router.post('/projects', authMiddleware, async (req: Request, res: Response) => {
+router.post('/projects', authMiddleware, requirePermission('rnd.rnd-projects', 'create'), async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
@@ -74,7 +75,7 @@ router.post('/projects', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // PUT update project
-router.put('/projects/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/projects/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'update'), async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
@@ -91,7 +92,7 @@ router.put('/projects/:id', authMiddleware, async (req: Request, res: Response) 
 });
 
 // PATCH update status only (for kanban drag-drop)
-router.patch('/projects/:id/status', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/projects/:id/status', authMiddleware, requirePermission('rnd.rnd-projects', 'update'), async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
     await pool.query('UPDATE rnd_projects SET status = ? WHERE id = ?', [status, req.params.id]);
@@ -100,7 +101,7 @@ router.patch('/projects/:id/status', authMiddleware, async (req: Request, res: R
 });
 
 // DELETE project (safe cascade for cancelled projects)
-router.delete('/projects/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/projects/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'delete'), async (req: Request, res: Response) => {
   try {
     const projectId = req.params.id;
     const [[project]]: any = await pool.query('SELECT id, name, status FROM rnd_projects WHERE id = ?', [projectId]);
@@ -145,7 +146,7 @@ router.delete('/projects/:id', authMiddleware, async (req: Request, res: Respons
 // ==================== FORMULATIONS ====================
 
 // GET all formulations
-router.get('/formulations', authMiddleware, async (req: Request, res: Response) => {
+router.get('/formulations', authMiddleware, requirePermission('rnd.rnd-formulations', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT f.*, p.name as project_name, u.full_name as approved_by_name
@@ -159,7 +160,7 @@ router.get('/formulations', authMiddleware, async (req: Request, res: Response) 
 });
 
 // GET single formulation with ingredients
-router.get('/formulations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/formulations/:id', authMiddleware, requirePermission('rnd.rnd-formulations', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT f.*, p.name as project_name FROM rnd_formulations f
@@ -177,7 +178,7 @@ router.get('/formulations/:id', authMiddleware, async (req: Request, res: Respon
 });
 
 // POST create formulation
-router.post('/formulations', authMiddleware, async (req: Request, res: Response) => {
+router.post('/formulations', authMiddleware, requirePermission('rnd.rnd-formulations', 'create'), async (req: Request, res: Response) => {
   try {
     const { formula_code, name, version, project_id, product_type_id, status, target_specs, description, notes, ingredients } = req.body;
     const [result] = await pool.query<ResultSetHeader>(
@@ -201,7 +202,7 @@ router.post('/formulations', authMiddleware, async (req: Request, res: Response)
 });
 
 // PUT update formulation
-router.put('/formulations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/formulations/:id', authMiddleware, requirePermission('rnd.rnd-formulations', 'update'), async (req: Request, res: Response) => {
   try {
     const { formula_code, name, version, project_id, product_type_id, status, target_specs, description, notes, ingredients } = req.body;
     await pool.query(
@@ -225,7 +226,7 @@ router.put('/formulations/:id', authMiddleware, async (req: Request, res: Respon
 });
 
 // DELETE formulation
-router.delete('/formulations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/formulations/:id', authMiddleware, requirePermission('rnd.rnd-formulations', 'delete'), async (req: Request, res: Response) => {
   try {
     await pool.query('DELETE FROM rnd_formulations WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });
@@ -401,7 +402,7 @@ router.delete('/stability/:id', authMiddleware, async (req: Request, res: Respon
 // ==================== PROJECT TASKS (per-project Kanban) ====================
 
 // GET tasks for a project
-router.get('/projects/:projectId/tasks', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects/:projectId/tasks', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT t.*, u.full_name as assigned_name FROM rnd_project_tasks t
@@ -413,7 +414,7 @@ router.get('/projects/:projectId/tasks', authMiddleware, async (req: Request, re
 });
 
 // POST create task
-router.post('/projects/:projectId/tasks', authMiddleware, async (req: Request, res: Response) => {
+router.post('/projects/:projectId/tasks', authMiddleware, requirePermission('rnd.rnd-projects', 'create'), async (req: Request, res: Response) => {
   try {
     const { title, description, status, priority, assigned_to, due_date, tags, sort_order } = req.body;
     const [result] = await pool.query<ResultSetHeader>(
@@ -426,7 +427,7 @@ router.post('/projects/:projectId/tasks', authMiddleware, async (req: Request, r
 });
 
 // PUT update task
-router.put('/tasks/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/tasks/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'update'), async (req: Request, res: Response) => {
   try {
     const { title, description, status, priority, assigned_to, due_date, completed_date, tags, sort_order } = req.body;
     await pool.query(
@@ -438,7 +439,7 @@ router.put('/tasks/:id', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // PATCH task status (kanban drag)
-router.patch('/tasks/:id/status', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/tasks/:id/status', authMiddleware, requirePermission('rnd.rnd-projects', 'update'), async (req: Request, res: Response) => {
   try {
     await pool.query('UPDATE rnd_project_tasks SET status = ? WHERE id = ?', [req.body.status, req.params.id]);
     res.json({ message: 'Status updated' });
@@ -446,7 +447,7 @@ router.patch('/tasks/:id/status', authMiddleware, async (req: Request, res: Resp
 });
 
 // DELETE task
-router.delete('/tasks/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/tasks/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'delete'), async (req: Request, res: Response) => {
   try {
     await pool.query('DELETE FROM rnd_project_tasks WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });
@@ -467,7 +468,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
 // ==================== MILESTONES ====================
 
 // GET milestones for a project
-router.get('/projects/:projectId/milestones', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects/:projectId/milestones', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT m.*, u.full_name as assigned_name FROM rnd_milestones m
@@ -479,7 +480,7 @@ router.get('/projects/:projectId/milestones', authMiddleware, async (req: Reques
 });
 
 // POST create milestone
-router.post('/projects/:projectId/milestones', authMiddleware, async (req: Request, res: Response) => {
+router.post('/projects/:projectId/milestones', authMiddleware, requirePermission('rnd.rnd-projects', 'create'), async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
@@ -496,7 +497,7 @@ router.post('/projects/:projectId/milestones', authMiddleware, async (req: Reque
 });
 
 // PUT update milestone
-router.put('/milestones/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/milestones/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'update'), async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const toNull = (v: any) => (v === '' || v === undefined) ? null : v;
@@ -512,7 +513,7 @@ router.put('/milestones/:id', authMiddleware, async (req: Request, res: Response
 });
 
 // DELETE milestone
-router.delete('/milestones/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/milestones/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'delete'), async (req: Request, res: Response) => {
   try {
     await pool.query('DELETE FROM rnd_milestones WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });
@@ -647,7 +648,7 @@ router.delete('/folders/:id', authMiddleware, async (req: Request, res: Response
 // ==================== R&D SPECIFICATIONS ====================
 
 // LIST specifications with search/filter/pagination
-router.get('/specifications', authMiddleware, async (req: Request, res: Response) => {
+router.get('/specifications', authMiddleware, requirePermission('rnd.specifications', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, process_type, sample_type, source, active, page = '1', limit = '50' } = req.query;
     const conditions: string[] = [];
@@ -694,7 +695,7 @@ router.get('/specifications', authMiddleware, async (req: Request, res: Response
 });
 
 // GET specification detail with samples, parameters, items
-router.get('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/specifications/:id', authMiddleware, requirePermission('rnd.specifications', 'view'), async (req: Request, res: Response) => {
   try {
     const [[spec]]: any = await pool.query<RowDataPacket[]>(
       'SELECT * FROM rnd_specifications WHERE id = ?', [req.params.id]
@@ -727,7 +728,7 @@ router.get('/specifications/:id', authMiddleware, async (req: Request, res: Resp
 });
 
 // CREATE specification
-router.post('/specifications', authMiddleware, async (req: Request, res: Response) => {
+router.post('/specifications', authMiddleware, requirePermission('rnd.specifications', 'create'), async (req: Request, res: Response) => {
   try {
     const { doc_number, doc_date, process_type, process_type_code, sample_name, sample_type, sample_type_code, active, notes, samples, items } = req.body;
     const userId = (req as any).user?.id;
@@ -778,7 +779,7 @@ router.post('/specifications', authMiddleware, async (req: Request, res: Respons
 });
 
 // UPDATE specification
-router.put('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/specifications/:id', authMiddleware, requirePermission('rnd.specifications', 'update'), async (req: Request, res: Response) => {
   try {
     const { doc_number, doc_date, process_type, process_type_code, sample_name, sample_type, sample_type_code, active, notes, revision, revision_no, approve_1, approve_1_by, samples, items } = req.body;
 
@@ -829,7 +830,7 @@ router.put('/specifications/:id', authMiddleware, async (req: Request, res: Resp
 });
 
 // DELETE specification
-router.delete('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/specifications/:id', authMiddleware, requirePermission('rnd.specifications', 'delete'), async (req: Request, res: Response) => {
   try {
     await pool.query('DELETE FROM rnd_specifications WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });

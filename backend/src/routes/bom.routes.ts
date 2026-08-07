@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/bom - Get all BOM headers
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.bom', 'view'), async (req: Request, res: Response) => {
   try {
     const boms = await dbAll(`
       SELECT bh.id, bh.product_name, bh.product_id, bh.version, bh.status, bh.notes, 
@@ -29,7 +30,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/bom/:id - Get specific BOM header with details
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.bom', 'view'), async (req: Request, res: Response) => {
   try {
     const bomHeader = await dbGet(`
       SELECT bh.id, bh.product_name, bh.product_id, bh.version, bh.status, bh.notes, 
@@ -71,7 +72,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/bom - Create BOM header with details
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.bom', 'create'), async (req: Request, res: Response) => {
   try {
     const { product_id, product_name, notes, details, bom_code, qty, unit, process_type, production_line } = req.body;
     const userId = (req as any).user?.userId;
@@ -137,7 +138,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/bom/:id - Update BOM header and details
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.bom', 'update'), async (req: Request, res: Response) => {
   try {
     const { product_id, product_name, notes, details, status, bom_code, qty, unit, process_type, production_line } = req.body;
 
@@ -184,7 +185,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/bom/:id - Delete BOM (cascade deletes details)
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.bom', 'delete'), async (req: Request, res: Response) => {
   try {
     const bomId = req.params.id;
 
@@ -209,7 +210,7 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/bom/:id/approve - 2-Tier Approval (Supervisor → Manager/Director)
-router.post('/:id/approve', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/approve', authMiddleware, requirePermission('master_data.bom', 'approve_1'), async (req: Request, res: Response) => {
   try {
     const bomId = req.params.id;
     const userId = (req as any).user?.userId;
@@ -262,7 +263,7 @@ router.post('/:id/approve', authMiddleware, async (req: Request, res: Response) 
 });
 
 // POST /api/bom/:id/reject - Reject BOM
-router.post('/:id/reject', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/reject', authMiddleware, requirePermission('master_data.bom', 'approve_1'), async (req: Request, res: Response) => {
   try {
     const bomId = req.params.id;
     const userId = (req as any).user?.userId;

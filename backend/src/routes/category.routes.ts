@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/categories - Get all categories
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.categories', 'view'), async (req: Request, res: Response) => {
   try {
     const categories = await dbAll('SELECT * FROM categories ORDER BY name ASC', []);
     res.json({ data: categories });
@@ -16,7 +17,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/categories/:id - Get specific category
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.categories', 'view'), async (req: Request, res: Response) => {
   try {
     const category = await dbGet('SELECT * FROM categories WHERE id = ?', [req.params.id]);
     
@@ -32,7 +33,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/categories - Create category
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.categories', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, description, active } = req.body;
 
@@ -58,7 +59,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/categories/:id - Update category
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.categories', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, description, active } = req.body;
 
@@ -80,7 +81,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/categories/:id - Delete category
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.categories', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM categories WHERE id = ?', [req.params.id]);
     res.json({ message: 'Category deleted successfully' });

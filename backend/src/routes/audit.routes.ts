@@ -1,12 +1,13 @@
 import express, { Request, Response } from 'express';
 import { dbGet, dbAll, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
 // ===== AUDIT LOG ENDPOINTS =====
 
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('admin.audit-log', 'view'), async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
@@ -39,7 +40,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/entity/:entityType/:entityId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/entity/:entityType/:entityId', authMiddleware, requirePermission('admin.audit-log', 'view'), async (req: Request, res: Response) => {
   try {
     const { entityType, entityId } = req.params;
 
@@ -103,7 +104,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/search', authMiddleware, async (req: Request, res: Response) => {
+router.get('/search', authMiddleware, requirePermission('admin.audit-log', 'view'), async (req: Request, res: Response) => {
   try {
     const {
       user_id,
@@ -194,7 +195,7 @@ router.get('/search', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/user/:userId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/user/:userId', authMiddleware, requirePermission('admin.audit-log', 'view'), async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
@@ -231,7 +232,7 @@ router.get('/user/:userId', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('admin.audit-log', 'delete'), async (req: Request, res: Response) => {
   try {
     const log = await dbGet('SELECT * FROM audit_log WHERE id = ?', [req.params.id]);
 

@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /api/item-types - Get all item types
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.item-types', 'view'), async (req: Request, res: Response) => {
   try {
     const types = await dbAll('SELECT * FROM product_types ORDER BY name ASC', []);
     res.json({ data: types });
@@ -16,7 +17,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/item-types/:id - Get specific item type
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.item-types', 'view'), async (req: Request, res: Response) => {
   try {
     const type = await dbGet('SELECT * FROM product_types WHERE id = ?', [req.params.id]);
     
@@ -32,7 +33,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/item-types - Create item type
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.item-types', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, name, description } = req.body;
 
@@ -56,7 +57,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/item-types/:id - Update item type
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.item-types', 'update'), async (req: Request, res: Response) => {
   try {
     const { code, name, description } = req.body;
 
@@ -77,7 +78,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/item-types/:id - Delete item type
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.item-types', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM product_types WHERE id = ?', [req.params.id]);
 

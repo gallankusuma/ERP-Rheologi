@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun } from '../config/database';
 
 const router = Router();
@@ -9,7 +10,7 @@ const router = Router();
 // ============================================
 
 // Get all disciplines
-router.get('/disciplines', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/disciplines', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (_req: Request, res: Response) => {
   try {
     const disciplines = await dbAll(
       `SELECT id, code, name, order_no, is_active 
@@ -25,7 +26,7 @@ router.get('/disciplines', authMiddleware, async (_req: Request, res: Response) 
 });
 
 // Get sub-disciplines by discipline
-router.get('/disciplines/:disciplineId/sub-disciplines', authMiddleware, async (req: Request, res: Response) => {
+router.get('/disciplines/:disciplineId/sub-disciplines', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
   try {
     const subDisciplines = await dbAll(
       `SELECT id, discipline_id, code, name, order_no, is_active
@@ -42,7 +43,7 @@ router.get('/disciplines/:disciplineId/sub-disciplines', authMiddleware, async (
 });
 
 // Create sub-discipline
-router.post('/disciplines/:disciplineId/sub-disciplines', authMiddleware, async (req: Request, res: Response) => {
+router.post('/disciplines/:disciplineId/sub-disciplines', authMiddleware, requirePermission('estimator.ahsp', 'create'), async (req: Request, res: Response) => {
   try {
     const { disciplineId } = req.params;
     const { code, name } = req.body;
@@ -81,7 +82,7 @@ router.post('/disciplines/:disciplineId/sub-disciplines', authMiddleware, async 
 });
 
 // Get all labor
-router.get('/masters/labor', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/masters/labor', authMiddleware, requirePermission('estimator.masters', 'view'), async (_req: Request, res: Response) => {
   try {
     const labor = await dbAll(
       `SELECT id, code, name, satuan, harga, is_active
@@ -97,7 +98,7 @@ router.get('/masters/labor', authMiddleware, async (_req: Request, res: Response
 });
 
 // Create labor
-router.post('/masters/labor', authMiddleware, async (req: Request, res: Response) => {
+router.post('/masters/labor', authMiddleware, requirePermission('estimator.masters', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, name, satuan, harga } = req.body;
 
@@ -123,7 +124,7 @@ router.post('/masters/labor', authMiddleware, async (req: Request, res: Response
 });
 
 // Update labor
-router.put('/masters/labor/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/masters/labor/:id', authMiddleware, requirePermission('estimator.masters', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { code, name, satuan, harga } = req.body;
@@ -155,7 +156,7 @@ router.put('/masters/labor/:id', authMiddleware, async (req: Request, res: Respo
 });
 
 // Delete labor (soft delete)
-router.delete('/masters/labor/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/masters/labor/:id', authMiddleware, requirePermission('estimator.masters', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const existing = await dbGet('SELECT id FROM master_labor WHERE id = ?', [id]);
@@ -172,7 +173,7 @@ router.delete('/masters/labor/:id', authMiddleware, async (req: Request, res: Re
 });
 
 // Get all materials
-router.get('/masters/materials', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/masters/materials', authMiddleware, requirePermission('estimator.masters', 'view'), async (_req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT m.id, m.code, m.jenis, m.name, m.satuan, m.harga, m.vendor_id, v.name as vendor_name, m.is_active
@@ -189,7 +190,7 @@ router.get('/masters/materials', authMiddleware, async (_req: Request, res: Resp
 });
 
 // Create material
-router.post('/masters/materials', authMiddleware, async (req: Request, res: Response) => {
+router.post('/masters/materials', authMiddleware, requirePermission('estimator.masters', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, jenis, name, satuan, harga, vendor_id } = req.body;
 
@@ -215,7 +216,7 @@ router.post('/masters/materials', authMiddleware, async (req: Request, res: Resp
 });
 
 // Update material
-router.put('/masters/materials/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/masters/materials/:id', authMiddleware, requirePermission('estimator.masters', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { code, jenis, name, satuan, harga, vendor_id } = req.body;
@@ -247,7 +248,7 @@ router.put('/masters/materials/:id', authMiddleware, async (req: Request, res: R
 });
 
 // Delete material (soft delete)
-router.delete('/masters/materials/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/masters/materials/:id', authMiddleware, requirePermission('estimator.masters', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const existing = await dbGet('SELECT id FROM master_materials WHERE id = ?', [id]);
@@ -264,7 +265,7 @@ router.delete('/masters/materials/:id', authMiddleware, async (req: Request, res
 });
 
 // Get all equipment
-router.get('/masters/equipment', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/masters/equipment', authMiddleware, requirePermission('estimator.masters', 'view'), async (_req: Request, res: Response) => {
   try {
     const equipment = await dbAll(
       `SELECT e.id, e.code, e.name, e.satuan, e.harga, e.vendor_id, v.name as vendor_name, e.is_active
@@ -281,7 +282,7 @@ router.get('/masters/equipment', authMiddleware, async (_req: Request, res: Resp
 });
 
 // Create equipment
-router.post('/masters/equipment', authMiddleware, async (req: Request, res: Response) => {
+router.post('/masters/equipment', authMiddleware, requirePermission('estimator.masters', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, name, satuan, harga, vendor_id } = req.body;
 
@@ -307,7 +308,7 @@ router.post('/masters/equipment', authMiddleware, async (req: Request, res: Resp
 });
 
 // Update equipment
-router.put('/masters/equipment/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/masters/equipment/:id', authMiddleware, requirePermission('estimator.masters', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { code, name, satuan, harga, vendor_id } = req.body;
@@ -339,7 +340,7 @@ router.put('/masters/equipment/:id', authMiddleware, async (req: Request, res: R
 });
 
 // Delete equipment (soft delete)
-router.delete('/masters/equipment/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/masters/equipment/:id', authMiddleware, requirePermission('estimator.masters', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const existing = await dbGet('SELECT id FROM master_equipment WHERE id = ?', [id]);
@@ -360,7 +361,7 @@ router.delete('/masters/equipment/:id', authMiddleware, async (req: Request, res
 // ============================================
 
 // Get next AHSP code
-router.get('/ahsp/next-code', authMiddleware, async (req: Request, res: Response) => {
+router.get('/ahsp/next-code', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
   try {
     const { sub_discipline_id, discipline_id } = req.query;
     
@@ -407,7 +408,7 @@ router.get('/ahsp/next-code', authMiddleware, async (req: Request, res: Response
 });
 
 // Delete AHSP (Soft Delete)
-router.delete('/ahsp/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/ahsp/:id', authMiddleware, requirePermission('estimator.ahsp', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     console.log(`Attempting to delete AHSP with id: ${id}`);
@@ -421,7 +422,7 @@ router.delete('/ahsp/:id', authMiddleware, async (req: Request, res: Response) =
 });
 
 // Get AHSP list (with optional filtering by sub-discipline)
-router.get('/ahsp', authMiddleware, async (req: Request, res: Response) => {
+router.get('/ahsp', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
   try {
     const { sub_discipline_id, search } = req.query;
     
@@ -466,7 +467,7 @@ router.get('/ahsp', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Get AHSP detail with items breakdown
-router.get('/ahsp/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/ahsp/:id', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
   try {
     const ahsp = await dbGet(
       `SELECT h.*, sdm.sub_discipline_id
@@ -493,7 +494,7 @@ router.get('/ahsp/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Create AHSP
-router.post('/ahsp', authMiddleware, async (req: Request, res: Response) => {
+router.post('/ahsp', authMiddleware, requirePermission('estimator.ahsp', 'create'), async (req: Request, res: Response) => {
   try {
     const { kode, name, satuan, version, status, items, discipline_id, sub_discipline_id } = req.body;
     
@@ -571,7 +572,7 @@ router.post('/ahsp', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Update AHSP
-router.put('/ahsp/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/ahsp/:id', authMiddleware, requirePermission('estimator.ahsp', 'update'), async (req: Request, res: Response) => {
   try {
     const ahspId = req.params.id;
     const { kode, name, satuan, version, status, discipline_id, sub_discipline_id, items } = req.body;
@@ -664,7 +665,7 @@ router.put('/ahsp/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Calculate AHSP unit price (recalculate from items)
-router.post('/ahsp/:id/calculate', authMiddleware, async (req: Request, res: Response) => {
+router.post('/ahsp/:id/calculate', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
   try {
     const ahspId = req.params.id;
     
@@ -721,7 +722,7 @@ router.post('/ahsp/:id/calculate', authMiddleware, async (req: Request, res: Res
 // ============================================
 
 // Get all proposals
-router.get('/proposals', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/proposals', authMiddleware, requirePermission('estimator.proposals', 'view'), async (_req: Request, res: Response) => {
   try {
     const proposals = await dbAll(
       `SELECT p.*, u.username as created_by_name
@@ -737,7 +738,7 @@ router.get('/proposals', authMiddleware, async (_req: Request, res: Response) =>
 });
 
 // Get proposal detail
-router.get('/proposals/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/proposals/:id', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
   try {
     const proposal = await dbGet(
       `SELECT p.*, u.username as created_by_name
@@ -759,7 +760,7 @@ router.get('/proposals/:id', authMiddleware, async (req: Request, res: Response)
 });
 
 // Get proposal items (grouped by discipline & sub-discipline)
-router.get('/proposals/:id/items', authMiddleware, async (req: Request, res: Response) => {
+router.get('/proposals/:id/items', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
   try {
     const items = await dbAll(
       `SELECT 
@@ -782,7 +783,7 @@ router.get('/proposals/:id/items', authMiddleware, async (req: Request, res: Res
 });
 
 // Create proposal
-router.post('/proposals', authMiddleware, async (req: Request, res: Response) => {
+router.post('/proposals', authMiddleware, requirePermission('estimator.proposals', 'create'), async (req: Request, res: Response) => {
   try {
     const { project_name, client, client_id, lokasi, revision, proposal_type, design_params, template_sections } = req.body;
     const userId = (req as any).user?.user_id || 1;
@@ -875,7 +876,7 @@ router.post('/proposals', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // Update proposal
-router.put('/proposals/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/proposals/:id', authMiddleware, requirePermission('estimator.proposals', 'update'), async (req: Request, res: Response) => {
   try {
     const { project_name, client, client_id, lokasi, revision, status } = req.body;
     
@@ -894,7 +895,7 @@ router.put('/proposals/:id', authMiddleware, async (req: Request, res: Response)
 });
 
 // Delete proposal
-router.delete('/proposals/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/proposals/:id', authMiddleware, requirePermission('estimator.proposals', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM proposals WHERE id = ?', [req.params.id]);
     res.json({ message: 'Proposal deleted' });
@@ -909,7 +910,7 @@ router.delete('/proposals/:id', authMiddleware, async (req: Request, res: Respon
 // ============================================
 
 // Add item to proposal
-router.post('/proposals/:proposalId/items', authMiddleware, async (req: Request, res: Response) => {
+router.post('/proposals/:proposalId/items', authMiddleware, requirePermission('estimator.proposals', 'create'), async (req: Request, res: Response) => {
   try {
     const { ahsp_id, qty, discipline_id, sub_discipline_id } = req.body;
     const proposalId = req.params.proposalId;
@@ -961,7 +962,7 @@ router.post('/proposals/:proposalId/items', authMiddleware, async (req: Request,
 });
 
 // Update proposal item (qty)
-router.put('/proposals/:proposalId/items/:itemId', authMiddleware, async (req: Request, res: Response) => {
+router.put('/proposals/:proposalId/items/:itemId', authMiddleware, requirePermission('estimator.proposals', 'update'), async (req: Request, res: Response) => {
   try {
     const { qty, description, ahsp_id } = req.body;
     const { proposalId, itemId } = req.params;
@@ -1041,7 +1042,7 @@ router.put('/proposals/:proposalId/items/:itemId', authMiddleware, async (req: R
 });
 
 // Delete proposal item
-router.delete('/proposals/:proposalId/items/:itemId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/proposals/:proposalId/items/:itemId', authMiddleware, requirePermission('estimator.proposals', 'delete'), async (req: Request, res: Response) => {
   try {
     const { proposalId, itemId } = req.params;
     
@@ -1058,7 +1059,7 @@ router.delete('/proposals/:proposalId/items/:itemId', authMiddleware, async (req
 });
 
 // Get proposal summary/calculations
-router.get('/proposals/:id/summary', authMiddleware, async (req: Request, res: Response) => {
+router.get('/proposals/:id/summary', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
   try {
     const proposalId = req.params.id;
     
@@ -1139,7 +1140,7 @@ async function recalculateProposal(proposalId: string | number) {
 // ============================================
 
 // Get RAB Report Data (grouped by discipline and sub-discipline with calculations)
-router.get('/proposals/:id/rab', authMiddleware, async (req: Request, res: Response) => {
+router.get('/proposals/:id/rab', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
   try {
     const proposalId = req.params.id;
     
@@ -1270,7 +1271,7 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   deal: [],            // final state
 };
 
-router.put('/proposals/:id/status', authMiddleware, async (req: Request, res: Response) => {
+router.put('/proposals/:id/status', authMiddleware, requirePermission('estimator.proposals', 'update'), async (req: Request, res: Response) => {
   try {
     const { status: newStatus, notes } = req.body;
     const userId = (req as any).userId || 1;
@@ -1460,7 +1461,7 @@ router.put('/proposals/:id/status', authMiddleware, async (req: Request, res: Re
 // ============================================
 // PROPOSAL RESUME (Resource Summary)
 // ============================================
-router.get('/proposals/:id/resume', authMiddleware, async (req: Request, res: Response) => {
+router.get('/proposals/:id/resume', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
   try {
     const proposalId = req.params.id;
 

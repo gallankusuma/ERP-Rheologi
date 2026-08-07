@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -273,7 +274,7 @@ const upsertPaymentSchedules = async (params: {
 };
 
 // Vendors CRUD
-router.get('/vendors', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendors', authMiddleware, requirePermission('master_data.suppliers', 'view'), async (req: Request, res: Response) => {
   try {
     const vendors = await dbAll(
       `SELECT *
@@ -293,7 +294,7 @@ router.get('/vendors', authMiddleware, async (req: Request, res: Response) => {
 
 // GET /vendors/next-code/:category - auto-generate next vendor code for a category
 // IMPORTANT: Must be before /vendors/:id to avoid Express matching "next-code" as :id
-router.get('/vendors/next-code/:category', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendors/next-code/:category', authMiddleware, requirePermission('master_data.suppliers', 'view'), async (req: Request, res: Response) => {
   try {
     const category = req.params.category;
     // Map category to prefix
@@ -330,7 +331,7 @@ router.get('/vendors/next-code/:category', authMiddleware, async (req: Request, 
   }
 });
 
-router.get('/vendors/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendors/:id', authMiddleware, requirePermission('master_data.suppliers', 'view'), async (req: Request, res: Response) => {
   try {
     const vendor = await dbGet('SELECT * FROM vendors WHERE id = ?', [req.params.id]);
     if (!vendor) return res.status(404).json({ error: 'Vendor not found' });
@@ -341,7 +342,7 @@ router.get('/vendors/:id', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.post('/vendors', authMiddleware, async (req: Request, res: Response) => {
+router.post('/vendors', authMiddleware, requirePermission('master_data.suppliers', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, name, contact_person, contact, phone, email, address, city, country, payment_terms, supply_category } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
@@ -379,7 +380,7 @@ router.post('/vendors', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/vendors/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/vendors/:id', authMiddleware, requirePermission('master_data.suppliers', 'update'), async (req: Request, res: Response) => {
   try {
     const { code, name, contact_person, contact, phone, email, address, city, country, payment_terms, supply_category, is_active } = req.body;
     const contactValue = contact_person || contact || null;
@@ -395,7 +396,7 @@ router.put('/vendors/:id', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.delete('/vendors/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/vendors/:id', authMiddleware, requirePermission('master_data.suppliers', 'delete'), async (req: Request, res: Response) => {
   try {
     // Try hard delete first
     await dbRun('DELETE FROM vendors WHERE id = ?', [req.params.id]);
@@ -418,7 +419,7 @@ router.delete('/vendors/:id', authMiddleware, async (req: Request, res: Response
 });
 
 // Purchase Requests
-router.get('/purchase-requests', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const prs = await dbAll(
       `SELECT pr.*, u.full_name as requester_name,
@@ -439,7 +440,7 @@ router.get('/purchase-requests', authMiddleware, async (req: Request, res: Respo
   }
 });
 
-router.get('/purchase-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests/:id', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const pr = await dbGet(
       `SELECT pr.*, u.full_name as requester_name,
@@ -461,7 +462,7 @@ router.get('/purchase-requests/:id', authMiddleware, async (req: Request, res: R
   }
 });
 
-router.post('/purchase-requests', authMiddleware, async (req: Request, res: Response) => {
+router.post('/purchase-requests', authMiddleware, requirePermission('procurement.purchase-requests', 'create'), async (req: Request, res: Response) => {
   try {
     const { pr_number, requester_id, status, notes, department, request_date, needed_by, reason, project_id } = req.body;
     const number = pr_number || generateCode('PR');
@@ -512,7 +513,7 @@ router.post('/purchase-requests', authMiddleware, async (req: Request, res: Resp
   }
 });
 
-router.put('/purchase-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/purchase-requests/:id', authMiddleware, requirePermission('procurement.purchase-requests', 'update'), async (req: Request, res: Response) => {
   try {
     const { status, notes, department, request_date, needed_by, reason, project_id, vendor_comparisons, selected_vendor_id } = req.body;
     await dbRun(
@@ -527,7 +528,7 @@ router.put('/purchase-requests/:id', authMiddleware, async (req: Request, res: R
 });
 
 // Approve / Reject Purchase Requests
-router.delete('/purchase-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/purchase-requests/:id', authMiddleware, requirePermission('procurement.purchase-requests', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -657,7 +658,7 @@ router.post('/purchase-requests/:id/reject', authMiddleware, async (req: Request
 // ========== PR Bid Tabulation ==========
 
 // GET /purchase-requests/:prId/bids - list all bids for a PR with their items
-router.get('/purchase-requests/:prId/bids', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests/:prId/bids', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const { prId } = req.params;
     const bids = await dbAll(
@@ -685,7 +686,7 @@ router.get('/purchase-requests/:prId/bids', authMiddleware, async (req: Request,
 });
 
 // POST /purchase-requests/:prId/bids - create a new bid (vendor) and auto-generate item rows from PR items
-router.post('/purchase-requests/:prId/bids', authMiddleware, async (req: Request, res: Response) => {
+router.post('/purchase-requests/:prId/bids', authMiddleware, requirePermission('procurement.purchase-requests', 'create'), async (req: Request, res: Response) => {
   try {
     const { prId } = req.params;
     const { vendor_id, vendor_name, contact_person, phone, email, bid_date, delivery_time_days, notes, selected_items } = req.body;
@@ -772,7 +773,7 @@ router.post('/purchase-requests/:prId/bids', authMiddleware, async (req: Request
 });
 
 // PUT /purchase-requests/:prId/bids/:bidId - update bid header + all item prices
-router.put('/purchase-requests/:prId/bids/:bidId', authMiddleware, async (req: Request, res: Response) => {
+router.put('/purchase-requests/:prId/bids/:bidId', authMiddleware, requirePermission('procurement.purchase-requests', 'update'), async (req: Request, res: Response) => {
   try {
     const { bidId } = req.params;
     const { vendor_name, contact_person, phone, email, bid_date, delivery_time_days, notes, items } = req.body;
@@ -812,7 +813,7 @@ router.put('/purchase-requests/:prId/bids/:bidId', authMiddleware, async (req: R
 });
 
 // POST /purchase-requests/:prId/bids/:bidId/select - mark bid as selected (winner)
-router.post('/purchase-requests/:prId/bids/:bidId/select', authMiddleware, async (req: Request, res: Response) => {
+router.post('/purchase-requests/:prId/bids/:bidId/select', authMiddleware, requirePermission('procurement.purchase-requests', 'create'), async (req: Request, res: Response) => {
   try {
     const { prId, bidId } = req.params;
 
@@ -835,7 +836,7 @@ router.post('/purchase-requests/:prId/bids/:bidId/select', authMiddleware, async
 });
 
 // POST /purchase-requests/:prId/bids/:bidId/select-item/:itemIndex - select winner per item
-router.post('/purchase-requests/:prId/bids/:bidId/select-item/:itemIndex', authMiddleware, async (req: Request, res: Response) => {
+router.post('/purchase-requests/:prId/bids/:bidId/select-item/:itemIndex', authMiddleware, requirePermission('procurement.purchase-requests', 'create'), async (req: Request, res: Response) => {
   try {
     const { prId, bidId, itemIndex } = req.params;
     const idx = parseInt(itemIndex);
@@ -899,7 +900,7 @@ router.post('/purchase-requests/:prId/bids/:bidId/select-item/:itemIndex', authM
 });
 
 // DELETE /purchase-requests/:prId/bids/:bidId - delete a bid and its items
-router.delete('/purchase-requests/:prId/bids/:bidId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/purchase-requests/:prId/bids/:bidId', authMiddleware, requirePermission('procurement.purchase-requests', 'delete'), async (req: Request, res: Response) => {
   try {
     const { bidId } = req.params;
     await dbRun('DELETE FROM pr_bid_items WHERE bid_id = ?', [bidId]);
@@ -912,7 +913,7 @@ router.delete('/purchase-requests/:prId/bids/:bidId', authMiddleware, async (req
 });
 
 // POST /purchase-requests/:prId/bids/:bidId/upload - upload quotation file
-router.post('/purchase-requests/:prId/bids/:bidId/upload', authMiddleware, bidUpload.single('file'), async (req: Request, res: Response) => {
+router.post('/purchase-requests/:prId/bids/:bidId/upload', authMiddleware, requirePermission('procurement.purchase-requests', 'create'), bidUpload.single('file'), async (req: Request, res: Response) => {
   try {
     const { bidId } = req.params;
     const file = (req as any).file;
@@ -929,7 +930,7 @@ router.post('/purchase-requests/:prId/bids/:bidId/upload', authMiddleware, bidUp
 });
 
 // GET /purchase-requests/:prId/bid-progress - get bidding completion percentage
-router.get('/purchase-requests/:prId/bid-progress', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests/:prId/bid-progress', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const { prId } = req.params;
     
@@ -969,7 +970,7 @@ router.get('/purchase-requests/:prId/bid-progress', authMiddleware, async (req: 
 });
 
 // GET /purchase-requests/:prId/bid-winner - get winner data for PO auto-fill
-router.get('/purchase-requests/:prId/bid-winner', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests/:prId/bid-winner', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const { prId } = req.params;
     
@@ -1015,7 +1016,7 @@ router.get('/purchase-requests/:prId/bid-winner', authMiddleware, async (req: Re
 });
 
 // GET /purchase-requests/:prId/bid-summary - comparison summary of all vendors
-router.get('/purchase-requests/:prId/bid-summary', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests/:prId/bid-summary', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const { prId } = req.params;
     const bids = await dbAll('SELECT * FROM pr_bids WHERE pr_id = ? ORDER BY total_amount ASC', [prId]) as any[];
@@ -1082,7 +1083,7 @@ router.get('/purchase-requests/:prId/bid-summary', authMiddleware, async (req: R
 });
 
 // Purchase Orders with items
-router.get('/purchase-orders', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-orders', authMiddleware, requirePermission('procurement.purchase-orders', 'view'), async (req: Request, res: Response) => {
   try {
     const orders = await dbAll(
       `SELECT po.*, pr.pr_number, v.name as vendor_name,
@@ -1109,7 +1110,7 @@ router.get('/purchase-orders', authMiddleware, async (req: Request, res: Respons
   }
 });
 
-router.get('/purchase-orders/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-orders/:id', authMiddleware, requirePermission('procurement.purchase-orders', 'view'), async (req: Request, res: Response) => {
   try {
     const order = await dbGet(
       `SELECT po.*, v.name as vendor_name, pr.pr_number,
@@ -1150,7 +1151,7 @@ router.get('/purchase-orders/:id', authMiddleware, async (req: Request, res: Res
   }
 });
 
-router.post('/purchase-orders', authMiddleware, async (req: Request, res: Response) => {
+router.post('/purchase-orders', authMiddleware, requirePermission('procurement.purchase-orders', 'create'), async (req: Request, res: Response) => {
   try {
     const {
       po_number,
@@ -1349,7 +1350,7 @@ router.post('/purchase-orders', authMiddleware, async (req: Request, res: Respon
   }
 });
 
-router.put('/purchase-orders/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/purchase-orders/:id', authMiddleware, requirePermission('procurement.purchase-orders', 'update'), async (req: Request, res: Response) => {
   try {
     const {
       vendor_id,
@@ -1446,7 +1447,7 @@ router.put('/purchase-orders/:id', authMiddleware, async (req: Request, res: Res
   }
 });
 
-router.get('/purchase-orders/:id/payment-schedules', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-orders/:id/payment-schedules', authMiddleware, requirePermission('procurement.purchase-orders', 'view'), async (req: Request, res: Response) => {
   try {
     const schedules = await dbAll(
       `SELECT s.*, ap.invoice_number, ap.paid_amount as ap_paid_amount, ap.status as ap_status
@@ -1534,7 +1535,7 @@ router.post('/purchase-orders/:id/reject', authMiddleware, async (req: Request, 
   }
 });
 
-router.delete('/purchase-orders/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/purchase-orders/:id', authMiddleware, requirePermission('procurement.purchase-orders', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = (req as any).user?.userId;
@@ -1595,7 +1596,7 @@ router.delete('/purchase-orders/:id', authMiddleware, async (req: Request, res: 
 });
 
 // Goods Receipts
-router.get('/goods-receipts', authMiddleware, async (req: Request, res: Response) => {
+router.get('/goods-receipts', authMiddleware, requirePermission('procurement.grn', 'view'), async (req: Request, res: Response) => {
   try {
     const receipts = await dbAll(
       `SELECT gr.*, po.po_number, w.name as warehouse_name
@@ -1612,7 +1613,7 @@ router.get('/goods-receipts', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.get('/goods-receipts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/goods-receipts/:id', authMiddleware, requirePermission('procurement.grn', 'view'), async (req: Request, res: Response) => {
   try {
     const receipt = await dbGet(
       `SELECT gr.*, po.po_number, w.name as warehouse_name, u.full_name as received_by_name
@@ -1631,7 +1632,7 @@ router.get('/goods-receipts/:id', authMiddleware, async (req: Request, res: Resp
   }
 });
 
-router.post('/goods-receipts', authMiddleware, async (req: Request, res: Response) => {
+router.post('/goods-receipts', authMiddleware, requirePermission('procurement.grn', 'create'), async (req: Request, res: Response) => {
   try {
     const { grn_number, po_id, warehouse_id, status, received_date, received_at, notes, received_by } = req.body;
     if (!po_id) return res.status(400).json({ error: 'po_id is required' });
@@ -1687,7 +1688,7 @@ router.post('/goods-receipts', authMiddleware, async (req: Request, res: Respons
   }
 });
 
-router.put('/goods-receipts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/goods-receipts/:id', authMiddleware, requirePermission('procurement.grn', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { warehouse_id, status, received_date, received_at, notes } = req.body;
@@ -1707,7 +1708,7 @@ router.put('/goods-receipts/:id', authMiddleware, async (req: Request, res: Resp
   }
 });
 
-router.delete('/goods-receipts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/goods-receipts/:id', authMiddleware, requirePermission('procurement.grn', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -1992,7 +1993,7 @@ async function applyGrnToInventory(grn: any, items: any[]) {
 
 // ── Manual Price Search ─────────────────────────────────────────────────────
 // Search prices by product name/SKU — returns vendor_prices + PO history + standard cost
-router.get('/price-search', authMiddleware, async (req: Request, res: Response) => {
+router.get('/price-search', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const q = String(req.query.q || '').trim();
     const product_id = req.query.product_id ? Number(req.query.product_id) : null;
@@ -2080,7 +2081,7 @@ router.get('/price-search', authMiddleware, async (req: Request, res: Response) 
 });
 
 // Get last PO unit price for a product (for PR EST.PRICE reference)
-router.get('/products/:product_id/last-po-price', authMiddleware, async (req: Request, res: Response) => {
+router.get('/products/:product_id/last-po-price', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { product_id } = req.params;
     
@@ -2114,7 +2115,7 @@ router.get('/products/:product_id/last-po-price', authMiddleware, async (req: Re
 });
 
 // Vendor Price List
-router.get('/vendor-prices', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendor-prices', authMiddleware, requirePermission('procurement.vendor-price-list', 'view'), async (req: Request, res: Response) => {
   try {
     const { vendor_id, product_id } = req.query;
     let query = `
@@ -2148,7 +2149,7 @@ router.get('/vendor-prices', authMiddleware, async (req: Request, res: Response)
   }
 });
 
-router.post('/vendor-prices', authMiddleware, async (req: Request, res: Response) => {
+router.post('/vendor-prices', authMiddleware, requirePermission('procurement.vendor-price-list', 'create'), async (req: Request, res: Response) => {
   try {
     const { vendor_id, product_id, price, currency, effective_date, valid_until, min_order_qty, lead_time_days, notes } = req.body;
     const userId = (req as any).user?.userId;
@@ -2203,7 +2204,7 @@ router.post('/vendor-prices', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.put('/vendor-prices/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/vendor-prices/:id', authMiddleware, requirePermission('procurement.vendor-price-list', 'update'), async (req: Request, res: Response) => {
   try {
     const { price, currency, effective_date, valid_until, min_order_qty, lead_time_days, notes } = req.body;
     
@@ -2221,7 +2222,7 @@ router.put('/vendor-prices/:id', authMiddleware, async (req: Request, res: Respo
   }
 });
 
-router.delete('/vendor-prices/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/vendor-prices/:id', authMiddleware, requirePermission('procurement.vendor-price-list', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM vendor_prices WHERE id = ?', [req.params.id]);
     res.json({ message: 'Vendor price deleted' });
@@ -2232,7 +2233,7 @@ router.delete('/vendor-prices/:id', authMiddleware, async (req: Request, res: Re
 });
 
 // Procurement History (aggregated view of PR → PO → GRN)
-router.get('/procurement-history', authMiddleware, async (req: Request, res: Response) => {
+router.get('/procurement-history', authMiddleware, requirePermission('procurement.history', 'view'), async (req: Request, res: Response) => {
   try {
     const { start_date, end_date, vendor_id, product_id, status } = req.query;
     
@@ -2337,7 +2338,7 @@ router.get('/procurement-history', authMiddleware, async (req: Request, res: Res
 });
 
 // Get vendors that can supply a specific product
-router.get('/vendors-for-product/:product_id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendors-for-product/:product_id', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { product_id } = req.params;
     
@@ -2379,7 +2380,7 @@ router.get('/vendors-for-product/:product_id', authMiddleware, async (req: Reque
 });
 
 // Get vendor pricing details for a specific vendor-product combo
-router.get('/vendor-price-details/:vendor_id/:product_id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendor-price-details/:vendor_id/:product_id', authMiddleware, requirePermission('procurement.vendor-price-list', 'view'), async (req: Request, res: Response) => {
   try {
     const { vendor_id, product_id } = req.params;
     
@@ -2418,7 +2419,7 @@ router.get('/vendor-price-details/:vendor_id/:product_id', authMiddleware, async
 // ==================== MATERIAL VENDOR PRICES (Price Comparison) ====================
 
 // GET /material-prices - list with filters, grouped by material
-router.get('/material-prices', authMiddleware, async (req: Request, res: Response) => {
+router.get('/material-prices', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { material_id, source, search, page = '1', limit = '50' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -2473,7 +2474,7 @@ router.get('/material-prices', authMiddleware, async (req: Request, res: Respons
 });
 
 // GET /material-prices/comparison - materials with their vendor count + cheapest price
-router.get('/material-prices/comparison', authMiddleware, async (req: Request, res: Response) => {
+router.get('/material-prices/comparison', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, filter = 'all', page = '1', limit = '50' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -2543,7 +2544,7 @@ router.get('/material-prices/comparison', authMiddleware, async (req: Request, r
 });
 
 // GET /material-prices/material/:materialId - all vendor prices for a specific material
-router.get('/material-prices/material/:materialId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/material-prices/material/:materialId', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { materialId } = req.params;
 
@@ -2570,7 +2571,7 @@ router.get('/material-prices/material/:materialId', authMiddleware, async (req: 
 });
 
 // POST /material-prices - add vendor price for a material
-router.post('/material-prices', authMiddleware, async (req: Request, res: Response) => {
+router.post('/material-prices', authMiddleware, requirePermission('procurement.material-price-comparison', 'create'), async (req: Request, res: Response) => {
   try {
     const { material_id, vendor_id, vendor_name, source, price, currency, unit, url, rating, contact, location, min_order_qty, lead_time_days, notes, quoted_at, valid_until } = req.body;
     const userId = (req as any).userId || null;
@@ -2602,7 +2603,7 @@ router.post('/material-prices', authMiddleware, async (req: Request, res: Respon
 });
 
 // PUT /material-prices/:id - update vendor price
-router.put('/material-prices/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/material-prices/:id', authMiddleware, requirePermission('procurement.material-price-comparison', 'update'), async (req: Request, res: Response) => {
   try {
     const { vendor_name, source, price, currency, unit, url, rating, contact, location, min_order_qty, lead_time_days, notes, quoted_at, valid_until, is_selected } = req.body;
 
@@ -2627,7 +2628,7 @@ router.put('/material-prices/:id', authMiddleware, async (req: Request, res: Res
 });
 
 // DELETE /material-prices/:id
-router.delete('/material-prices/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/material-prices/:id', authMiddleware, requirePermission('procurement.material-price-comparison', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM material_vendor_prices WHERE id = ?', [req.params.id]);
     res.json({ message: 'Vendor price deleted' });
@@ -2638,7 +2639,7 @@ router.delete('/material-prices/:id', authMiddleware, async (req: Request, res: 
 });
 
 // POST /material-prices/:id/select - mark a vendor price as selected for procurement
-router.post('/material-prices/:id/select', authMiddleware, async (req: Request, res: Response) => {
+router.post('/material-prices/:id/select', authMiddleware, requirePermission('procurement.material-price-comparison', 'create'), async (req: Request, res: Response) => {
   try {
     const priceRecord = await dbGet('SELECT material_id FROM material_vendor_prices WHERE id = ?', [req.params.id]);
     if (!priceRecord) return res.status(404).json({ error: 'Price record not found' });
@@ -2655,7 +2656,7 @@ router.post('/material-prices/:id/select', authMiddleware, async (req: Request, 
 });
 
 // ─── PR Item Attachment Upload ─────────────────────────────
-router.post('/purchase-requests/:id/item-attachment', authMiddleware, prAttachUpload.single('file'), async (req: Request, res: Response) => {
+router.post('/purchase-requests/:id/item-attachment', authMiddleware, requirePermission('procurement.purchase-requests', 'create'), prAttachUpload.single('file'), async (req: Request, res: Response) => {
   try {
     const pr = await dbGet('SELECT id FROM purchase_requests WHERE id = ?', [req.params.id]);
     if (!pr) return res.status(404).json({ error: 'Purchase Request not found' });
@@ -2669,7 +2670,7 @@ router.post('/purchase-requests/:id/item-attachment', authMiddleware, prAttachUp
 });
 
 // Delete a PR item attachment file from disk
-router.delete('/purchase-requests/:id/item-attachment', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/purchase-requests/:id/item-attachment', authMiddleware, requirePermission('procurement.purchase-requests', 'delete'), async (req: Request, res: Response) => {
   try {
     const filePath = req.query.file_path as string;
     if (!filePath) return res.status(400).json({ error: 'file_path query param required' });

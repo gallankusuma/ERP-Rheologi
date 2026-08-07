@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // Get all units
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('master_data.units', 'view'), async (req: Request, res: Response) => {
   try {
     const units = await dbAll('SELECT * FROM uom ORDER BY name ASC', []);
     res.json({ data: units });
@@ -16,7 +17,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Get unit by ID
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('master_data.units', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const unit = await dbGet('SELECT * FROM uom WHERE id = ?', [id]);
@@ -33,7 +34,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Create new unit
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('master_data.units', 'create'), async (req: Request, res: Response) => {
   try {
     const { code, name, description, category, active } = req.body;
     
@@ -52,7 +53,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Update unit
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('master_data.units', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { code, name, description, category, active } = req.body;
@@ -76,7 +77,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Delete unit
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('master_data.units', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     

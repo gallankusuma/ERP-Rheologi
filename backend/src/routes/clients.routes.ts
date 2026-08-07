@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { dbQuery, dbGet, dbAll, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ const router = express.Router();
 // ============================================
 
 // GET /api/clients - List all clients with filters
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, group_id, label_id, has_due, has_open_projects, my_clients, page = 1, limit = 10 } = req.query;
 
@@ -104,7 +105,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/clients/dashboard - Dashboard overview metrics
-router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     // Total clients
     const totalClients = await dbGet('SELECT COUNT(*) as count FROM clients WHERE is_active = 1', []);
@@ -196,7 +197,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // GET /api/clients/:id - Get single client with full details
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const client = await dbGet(
       `SELECT c.*, cg.name as group_name, cg.color as group_color
@@ -283,7 +284,7 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/clients - Create new client
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('crm.clients', 'create'), async (req: Request, res: Response) => {
   try {
     const { client_type, name, organization, address, city, province, postal_code, phone, website, client_group_id } = req.body;
 
@@ -333,7 +334,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PUT /api/clients/:id - Update client
-router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('crm.clients', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, organization, address, city, province, postal_code, phone, website, client_group_id } = req.body;
 
@@ -353,7 +354,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /api/clients/:id - Delete (soft delete) client
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('crm.clients', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('UPDATE clients SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ message: 'Client deleted successfully' });
@@ -364,7 +365,7 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/clients/:id/labels - Assign label to client
-router.post('/:id/labels', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/labels', authMiddleware, requirePermission('crm.clients', 'create'), async (req: Request, res: Response) => {
   try {
     const { label_id } = req.body;
 
@@ -381,7 +382,7 @@ router.post('/:id/labels', authMiddleware, async (req: Request, res: Response) =
 });
 
 // DELETE /api/clients/:id/labels/:labelId - Remove label from client
-router.delete('/:id/labels/:labelId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id/labels/:labelId', authMiddleware, requirePermission('crm.clients', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun(
       'DELETE FROM client_label_map WHERE client_id = ? AND label_id = ?',
@@ -400,7 +401,7 @@ router.delete('/:id/labels/:labelId', authMiddleware, async (req: Request, res: 
 // ============================================
 
 // GET /api/clients/contacts/all - List all contacts
-router.get('/contacts/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/contacts/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
 
@@ -459,7 +460,7 @@ router.get('/contacts/all', authMiddleware, async (req: Request, res: Response) 
 });
 
 // POST /api/clients/:id/contacts - Create contact for client
-router.post('/:id/contacts', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/contacts', authMiddleware, requirePermission('crm.clients', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, job_title, email, phone, mobile, is_primary } = req.body;
 
@@ -487,7 +488,7 @@ router.post('/:id/contacts', authMiddleware, async (req: Request, res: Response)
 });
 
 // PUT /api/clients/contacts/:contactId - Update contact
-router.put('/contacts/:contactId', authMiddleware, async (req: Request, res: Response) => {
+router.put('/contacts/:contactId', authMiddleware, requirePermission('crm.clients', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, job_title, email, phone, mobile, is_primary } = req.body;
 
@@ -523,7 +524,7 @@ router.put('/contacts/:contactId', authMiddleware, async (req: Request, res: Res
 });
 
 // DELETE /api/clients/contacts/:contactId - Delete contact
-router.delete('/contacts/:contactId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/contacts/:contactId', authMiddleware, requirePermission('crm.clients', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('UPDATE contacts SET is_active = 0 WHERE id = ?', [req.params.contactId]);
     res.json({ message: 'Contact deleted successfully' });
@@ -538,7 +539,7 @@ router.delete('/contacts/:contactId', authMiddleware, async (req: Request, res: 
 // ============================================
 
 // GET /api/clients/labels - List all labels
-router.get('/labels/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/labels/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const labels = await dbAll('SELECT * FROM client_labels ORDER BY name ASC', []);
     res.json({ data: labels });
@@ -549,7 +550,7 @@ router.get('/labels/all', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /api/clients/groups - List all groups
-router.get('/groups/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/groups/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const groups = await dbAll('SELECT * FROM client_groups ORDER BY name ASC', []);
     res.json({ data: groups });
@@ -560,7 +561,7 @@ router.get('/groups/all', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /api/clients/event-types - List all event types
-router.get('/event-types/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/event-types/all', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
   try {
     const eventTypes = await dbAll('SELECT * FROM event_types ORDER BY name ASC', []);
     res.json({ data: eventTypes });
@@ -575,7 +576,7 @@ router.get('/event-types/all', authMiddleware, async (req: Request, res: Respons
 // ============================================
 
 // GET /api/clients/events/all - List all client events with visibility filtering
-router.get('/events/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/events/all', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
   try {
     const { page = 1, limit = 100 } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -636,7 +637,7 @@ router.get('/events/all', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /api/clients/:client_id/events - List events for a specific client
-router.get('/:client_id/events', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:client_id/events', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
   try {
     const { client_id } = req.params;
     const { page = 1, limit = 50 } = req.query;
@@ -673,7 +674,7 @@ router.get('/:client_id/events', authMiddleware, async (req: Request, res: Respo
 });
 
 // POST /api/clients/events - Create a new event with visibility
-router.post('/events', authMiddleware, async (req: Request, res: Response) => {
+router.post('/events', authMiddleware, requirePermission('crm.events', 'create'), async (req: Request, res: Response) => {
   try {
     const { client_id, contact_id, event_type, event_date, event_time, title, description, visibility, shared_user_ids } = req.body;
     const userId = (req as any).userId;
@@ -725,7 +726,7 @@ router.post('/events', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/clients/:id/tickets - Create a new ticket
-router.post('/:id/tickets', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/tickets', authMiddleware, requirePermission('crm.clients', 'create'), async (req: Request, res: Response) => {
   try {
     const { subject, description, priority, status, contact_id } = req.body;
 
@@ -763,7 +764,7 @@ router.post('/:id/tickets', authMiddleware, async (req: Request, res: Response) 
 });
 
 // PUT /api/clients/events/:id - Update an event with visibility
-router.put('/events/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/events/:id', authMiddleware, requirePermission('crm.events', 'update'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { client_id, contact_id, event_type, event_date, event_time, title, description, visibility, shared_user_ids } = req.body;
@@ -806,7 +807,7 @@ router.put('/events/:id', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // DELETE /api/clients/events/:id - Delete an event
-router.delete('/events/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/events/:id', authMiddleware, requirePermission('crm.events', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -826,7 +827,7 @@ router.delete('/events/:id', authMiddleware, async (req: Request, res: Response)
 
 
 // Update Contact
-router.put('/:id/contacts/:contactId', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id/contacts/:contactId', authMiddleware, requirePermission('crm.clients', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, job_title, email, phone, mobile, is_primary } = req.body;
     await dbRun(
@@ -843,7 +844,7 @@ router.put('/:id/contacts/:contactId', authMiddleware, async (req: Request, res:
 });
 
 // Delete Contact
-router.delete('/:id/contacts/:contactId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id/contacts/:contactId', authMiddleware, requirePermission('crm.clients', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM contacts WHERE id = ? AND client_id = ?', [req.params.contactId, req.params.id]);
     res.json({ message: 'Contact deleted successfully' });
@@ -854,7 +855,7 @@ router.delete('/:id/contacts/:contactId', authMiddleware, async (req: Request, r
 });
 
 // Create Invoice (Quick)
-router.post('/:id/invoices', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/invoices', authMiddleware, requirePermission('crm.clients', 'create'), async (req: Request, res: Response) => {
   try {
     const { invoice_date, due_date, total_amount, notes } = req.body;
     const client_id = req.params.id;
@@ -881,7 +882,7 @@ router.post('/:id/invoices', authMiddleware, async (req: Request, res: Response)
 });
 
 // Create Quote/Estimate (Quick)
-router.post('/:id/estimates', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/estimates', authMiddleware, requirePermission('crm.clients', 'create'), async (req: Request, res: Response) => {
   try {
     const { estimate_date, valid_until, total_amount, notes } = req.body;
     const client_id = req.params.id;
@@ -908,7 +909,7 @@ router.post('/:id/estimates', authMiddleware, async (req: Request, res: Response
 // ============================================
 
 // GET /api/clients/categories/all - List all categories
-router.get('/categories/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/categories/all', authMiddleware, requirePermission('master_data.client-categories', 'view'), async (req: Request, res: Response) => {
   try {
     const categories = await dbAll(
       'SELECT * FROM client_categories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC',
@@ -922,7 +923,7 @@ router.get('/categories/all', authMiddleware, async (req: Request, res: Response
 });
 
 // POST /api/clients/categories - Create category
-router.post('/categories', authMiddleware, async (req: Request, res: Response) => {
+router.post('/categories', authMiddleware, requirePermission('master_data.client-categories', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, code, description, color, sort_order } = req.body;
     if (!name || !code) {
@@ -944,7 +945,7 @@ router.post('/categories', authMiddleware, async (req: Request, res: Response) =
 });
 
 // PUT /api/clients/categories/:id - Update category
-router.put('/categories/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/categories/:id', authMiddleware, requirePermission('master_data.client-categories', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, code, description, color, sort_order } = req.body;
     const upperCode = code ? code.toUpperCase().substring(0, 10) : undefined;
@@ -963,7 +964,7 @@ router.put('/categories/:id', authMiddleware, async (req: Request, res: Response
 });
 
 // DELETE /api/clients/categories/:id - Soft delete category
-router.delete('/categories/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/categories/:id', authMiddleware, requirePermission('master_data.client-categories', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('UPDATE client_categories SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ message: 'Category deleted' });

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -23,7 +24,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
 
 // GET /api/docs - List documents
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('admin.document-control', 'view'), async (req: Request, res: Response) => {
   try {
     const docs = await dbAll('SELECT d.*, u.full_name as uploader_name FROM document_control d LEFT JOIN users u ON d.uploaded_by = u.id ORDER BY d.expiry_date ASC');
     res.json({ data: docs });
@@ -34,7 +35,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/docs - Create document (with optional file upload)
-router.post('/', authMiddleware, upload.single('file'), async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('admin.document-control', 'create'), upload.single('file'), async (req: Request, res: Response) => {
   try {
     const { document_name, document_number, document_type, issue_date, expiry_date, reminder_days, status, notes } = req.body;
     const userId = (req as any).user?.userId;
@@ -64,7 +65,7 @@ router.post('/', authMiddleware, upload.single('file'), async (req: Request, res
 });
 
 // PUT /api/docs/:id - Update document (with optional file upload)
-router.put('/:id', authMiddleware, upload.single('file'), async (req: Request, res: Response) => {
+router.put('/:id', authMiddleware, requirePermission('admin.document-control', 'update'), upload.single('file'), async (req: Request, res: Response) => {
   try {
     const { document_name, document_number, document_type, issue_date, expiry_date, reminder_days, status, notes } = req.body;
     const docId = req.params.id;
@@ -90,7 +91,7 @@ router.put('/:id', authMiddleware, upload.single('file'), async (req: Request, r
 });
 
 // DELETE /api/docs/:id - Delete document
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('admin.document-control', 'delete'), async (req: Request, res: Response) => {
   try {
     const docId = req.params.id;
     const doc = await dbGet('SELECT file_path FROM document_control WHERE id = ?', [docId]) as any;
@@ -111,7 +112,7 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/docs/check-expiry - Check expiries and generate notifications
-router.get('/check-expiry', authMiddleware, async (req: Request, res: Response) => {
+router.get('/check-expiry', authMiddleware, requirePermission('admin.document-control', 'view'), async (req: Request, res: Response) => {
   try {
     // Find documents that are expiring within reminder_days and have not been 'Renewed' or 'Expired'
     const docs = await dbAll("SELECT * FROM document_control WHERE expiry_date IS NOT NULL AND status NOT IN ('Renewed')");

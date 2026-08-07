@@ -8,7 +8,7 @@ const router = Router();
 // ============================================================
 // Production Events
 // ============================================================
-router.get('/events', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/events', authMiddleware, requirePermission('production.planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const events = await dbAll(
       `SELECT id, type, title, description, event_date, event_time, location, created_at
@@ -21,7 +21,7 @@ router.get('/events', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/events/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/events/:id', authMiddleware, requirePermission('production.planning', 'view'), async (req: Request, res: Response) => {
   try {
     const event = await dbGet(
       `SELECT id, type, title, description, event_date, event_time, location, created_at
@@ -34,7 +34,7 @@ router.get('/events/:id', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.post('/events', authMiddleware, async (req: Request, res: Response) => {
+router.post('/events', authMiddleware, requirePermission('production.planning', 'create'), async (req: Request, res: Response) => {
   try {
     const { type, title, description, event_date, event_time, location } = req.body;
     if (!type || !title || !event_date) {
@@ -50,7 +50,7 @@ router.post('/events', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/events/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/events/:id', authMiddleware, requirePermission('production.planning', 'update'), async (req: Request, res: Response) => {
   try {
     const { type, title, description, event_date, event_time, location } = req.body;
     await dbRun(
@@ -63,7 +63,7 @@ router.put('/events/:id', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.delete('/events/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/events/:id', authMiddleware, requirePermission('production.planning', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM production_events WHERE id = ?', [req.params.id]);
     res.json({ message: 'Event deleted' });
@@ -75,7 +75,7 @@ router.delete('/events/:id', authMiddleware, async (req: Request, res: Response)
 // ============================================================
 // Production Tasks
 // ============================================================
-router.get('/tasks', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/tasks', authMiddleware, requirePermission('production.planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const tasks = await dbAll(
       `SELECT t.id, t.task_name, t.priority, t.due_date, t.status, t.description,
@@ -91,7 +91,7 @@ router.get('/tasks', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/tasks', authMiddleware, async (req: Request, res: Response) => {
+router.post('/tasks', authMiddleware, requirePermission('production.planning', 'create'), async (req: Request, res: Response) => {
   try {
     const { task_name, wo_id, assigned_to_user_id, priority, due_date, status, description } = req.body;
     if (!task_name) return res.status(400).json({ error: 'task_name is required' });
@@ -105,7 +105,7 @@ router.post('/tasks', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/tasks/:id/status', authMiddleware, async (req: Request, res: Response) => {
+router.put('/tasks/:id/status', authMiddleware, requirePermission('production.planning', 'update'), async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
     if (!status) return res.status(400).json({ error: 'status is required' });
@@ -119,7 +119,7 @@ router.put('/tasks/:id/status', authMiddleware, async (req: Request, res: Respon
 // ============================================================
 // Production Planning — schedule & capacity
 // ============================================================
-router.get('/planning', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/planning', authMiddleware, requirePermission('production.planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const workOrders = await dbAll(
       `SELECT w.id, w.wo_number, w.quantity, w.status, w.scheduled_start, w.scheduled_end,
@@ -138,7 +138,7 @@ router.get('/planning', authMiddleware, async (_req: Request, res: Response) => 
   }
 });
 
-router.get('/planning/summary', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/planning/summary', authMiddleware, requirePermission('production.planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const summary = await dbAll(
       `SELECT status, COUNT(*) as count, SUM(quantity) as total_qty
@@ -158,7 +158,7 @@ router.get('/planning/summary', authMiddleware, async (_req: Request, res: Respo
 });
 
 // GET /planning/weekly — MPS-style weekly grid data
-router.get('/planning/weekly', authMiddleware, async (req: Request, res: Response) => {
+router.get('/planning/weekly', authMiddleware, requirePermission('production.planning', 'view'), async (req: Request, res: Response) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const month = Number(req.query.month) || (new Date().getMonth() + 1);
@@ -336,7 +336,7 @@ router.get('/planning/weekly', authMiddleware, async (req: Request, res: Respons
 // ============================================================
 // MRP — Material Requirement Planning
 // ============================================================
-router.get('/mrp', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/mrp', authMiddleware, requirePermission('production.mrp', 'view'), async (_req: Request, res: Response) => {
   try {
     // Get all pending/planned WOs and explode BOM to find material requirements
     const requirements = await dbAll(
@@ -364,7 +364,7 @@ router.get('/mrp', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/mrp/shortage', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/mrp/shortage', authMiddleware, requirePermission('production.mrp', 'view'), async (_req: Request, res: Response) => {
   try {
     const shortages = await dbAll(
       `SELECT rm.id AS product_id, rm.name AS material_name, rm.sku AS material_sku,
@@ -390,7 +390,7 @@ router.get('/mrp/shortage', authMiddleware, async (_req: Request, res: Response)
 // ============================================================
 // Issue Material — pick materials from warehouse for WO
 // ============================================================
-router.get('/issue-material', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/issue-material', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT wm.id, wm.wo_id, w.wo_number,
@@ -415,7 +415,7 @@ router.get('/issue-material', authMiddleware, async (_req: Request, res: Respons
   }
 });
 
-router.get('/issue-material/wo/:woId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/issue-material/wo/:woId', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT wm.id, wm.product_id, p.name AS material_name, p.sku AS material_sku,
@@ -503,7 +503,7 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
 });
 
 // Auto-generate WO material list from BOM
-router.post('/issue-material/generate/:woId', authMiddleware, async (req: Request, res: Response) => {
+router.post('/issue-material/generate/:woId', authMiddleware, requirePermission('production.workorders', 'issue_material'), async (req: Request, res: Response) => {
   try {
     const wo = await dbGet('SELECT * FROM work_orders WHERE id = ?', [req.params.woId]);
     if (!wo) return res.status(404).json({ error: 'Work order not found' });
@@ -536,7 +536,7 @@ router.post('/issue-material/generate/:woId', authMiddleware, async (req: Reques
 // ============================================================
 // Production Execution — real-time WO tracking & process logging
 // ============================================================
-router.get('/execution', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/execution', authMiddleware, requirePermission('production.execution', 'view'), async (_req: Request, res: Response) => {
   try {
     const active = await dbAll(
       `SELECT w.id, w.wo_number, w.quantity, w.status,
@@ -561,7 +561,7 @@ router.get('/execution', authMiddleware, async (_req: Request, res: Response) =>
   }
 });
 
-router.post('/execution/:woId/start', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/start', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     await dbRun(
       `UPDATE work_orders SET status='in_progress', actual_start=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
@@ -573,7 +573,7 @@ router.post('/execution/:woId/start', authMiddleware, async (req: Request, res: 
   }
 });
 
-router.post('/execution/:woId/pause', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/pause', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     await dbRun(
       `UPDATE work_orders SET status='on_hold', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
@@ -585,7 +585,7 @@ router.post('/execution/:woId/pause', authMiddleware, async (req: Request, res: 
   }
 });
 
-router.post('/execution/:woId/resume', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/resume', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     await dbRun(
       `UPDATE work_orders SET status='in_progress', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
@@ -597,7 +597,7 @@ router.post('/execution/:woId/resume', authMiddleware, async (req: Request, res:
   }
 });
 
-router.post('/execution/:woId/complete', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/complete', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     const woId = req.params.woId;
 
@@ -629,7 +629,7 @@ router.post('/execution/:woId/complete', authMiddleware, async (req: Request, re
 });
 
 // Process logs for a WO
-router.get('/execution/:woId/logs', authMiddleware, async (req: Request, res: Response) => {
+router.get('/execution/:woId/logs', authMiddleware, requirePermission('production.execution', 'view'), async (req: Request, res: Response) => {
   try {
     const logs = await dbAll(
       `SELECT wpl.*, COALESCE(u.full_name, u.username) AS recorded_by_name
@@ -644,7 +644,7 @@ router.get('/execution/:woId/logs', authMiddleware, async (req: Request, res: Re
   }
 });
 
-router.post('/execution/:woId/logs', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/logs', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     const { process_name, start_time, end_time, status, notes } = req.body;
     if (!process_name) return res.status(400).json({ error: 'process_name is required' });
@@ -729,7 +729,7 @@ router.post('/execution/:woId/logs', authMiddleware, async (req: Request, res: R
 // ============================================================
 // QC Checkpoints for Work Orders
 // ============================================================
-router.get('/execution/:woId/qc-checkpoints', authMiddleware, async (req: Request, res: Response) => {
+router.get('/execution/:woId/qc-checkpoints', authMiddleware, requirePermission('production.execution', 'view'), async (req: Request, res: Response) => {
   try {
     const checkpoints = await dbAll(
       `SELECT c.*, f.fpa_number, f.status as fpa_status, f.result as fpa_result
@@ -745,7 +745,7 @@ router.get('/execution/:woId/qc-checkpoints', authMiddleware, async (req: Reques
   }
 });
 
-router.post('/execution/:woId/qc-checkpoints', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/qc-checkpoints', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     const { stages } = req.body;
     // stages: [{ process_stage, is_mandatory, qc_type, notes }]
@@ -818,7 +818,7 @@ router.post('/execution/:woId/qc-checkpoints', authMiddleware, async (req: Reque
   }
 });
 
-router.delete('/execution/:woId/qc-checkpoints/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/execution/:woId/qc-checkpoints/:id', authMiddleware, requirePermission('production.execution', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM wo_qc_checkpoints WHERE id = ? AND wo_id = ?', [req.params.id, req.params.woId]);
     res.json({ success: true, message: 'Checkpoint deleted' });
@@ -828,7 +828,7 @@ router.delete('/execution/:woId/qc-checkpoints/:id', authMiddleware, async (req:
 });
 
 // Manual trigger QC for a checkpoint
-router.post('/execution/:woId/trigger-qc/:checkpointId', authMiddleware, async (req: Request, res: Response) => {
+router.post('/execution/:woId/trigger-qc/:checkpointId', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     const { woId, checkpointId } = req.params;
     const userId = (req as any).user?.userId;
@@ -887,7 +887,7 @@ router.post('/execution/:woId/trigger-qc/:checkpointId', authMiddleware, async (
 // ============================================================
 // Yield & Scrap — record output and losses
 // ============================================================
-router.get('/yield', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/yield', authMiddleware, requirePermission('production.yield-scrap', 'view'), async (_req: Request, res: Response) => {
   try {
     const results = await dbAll(
       `SELECT wr.id, wr.wo_id, w.wo_number,
@@ -909,7 +909,7 @@ router.get('/yield', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/yield/wo/:woId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/yield/wo/:woId', authMiddleware, requirePermission('production.yield-scrap', 'view'), async (req: Request, res: Response) => {
   try {
     const result = await dbGet(
       `SELECT wr.*, w.wo_number, w.quantity AS planned_quantity, p.name AS product_name
@@ -925,7 +925,7 @@ router.get('/yield/wo/:woId', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.post('/yield', authMiddleware, async (req: Request, res: Response) => {
+router.post('/yield', authMiddleware, requirePermission('production.yield-scrap', 'create'), async (req: Request, res: Response) => {
   try {
     const { wo_id, output_quantity, loss_quantity, batch_number, qc_status, notes } = req.body;
     if (!wo_id || output_quantity === undefined) {
@@ -948,7 +948,7 @@ router.post('/yield', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/yield/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/yield/:id', authMiddleware, requirePermission('production.yield-scrap', 'update'), async (req: Request, res: Response) => {
   try {
     const { output_quantity, loss_quantity, batch_number, qc_status, notes } = req.body;
     const totalOutput = Number(output_quantity) + Number(loss_quantity || 0);
@@ -967,7 +967,7 @@ router.put('/yield/:id', authMiddleware, async (req: Request, res: Response) => 
 // ============================================================
 // FG Receipt — receive finished goods into warehouse
 // ============================================================
-router.get('/fg-receipt', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-receipt', 'view'), async (_req: Request, res: Response) => {
   try {
     const receipts = await dbAll(
       `SELECT w.id AS wo_id, w.wo_number, w.quantity AS planned_qty, w.status,
@@ -1094,7 +1094,7 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
 // ============================================================
 // Production History — all WOs with full detail
 // ============================================================
-router.get('/history', authMiddleware, async (req: Request, res: Response) => {
+router.get('/history', authMiddleware, requirePermission('production.history', 'view'), async (req: Request, res: Response) => {
   try {
     const { status, from_date, to_date, search } = req.query;
     let sql = `SELECT w.id, w.wo_number, w.quantity, w.status,
@@ -1136,7 +1136,7 @@ router.get('/history', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/history/stats', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/history/stats', authMiddleware, requirePermission('production.history', 'view'), async (_req: Request, res: Response) => {
   try {
     const stats = await dbGet(
       `SELECT

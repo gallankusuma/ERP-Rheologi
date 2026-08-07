@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -17,7 +18,7 @@ const generateFPANumber = (type: string) => {
 // ============================================================
 
 // --- Parameters ---
-router.get('/parameters', authMiddleware, async (req: Request, res: Response) => {
+router.get('/parameters', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_parameters ORDER BY name ASC');
     res.json({ success: true, data });
@@ -26,7 +27,7 @@ router.get('/parameters', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.post('/parameters', authMiddleware, async (req: Request, res: Response) => {
+router.post('/parameters', authMiddleware, requirePermission('quality.qc-master', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, description } = req.body;
     const result = await dbRun('INSERT INTO qc_parameters (name, description) VALUES (?, ?)', [name, description]);
@@ -36,7 +37,7 @@ router.post('/parameters', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.put('/parameters/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/parameters/:id', authMiddleware, requirePermission('quality.qc-master', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, description } = req.body;
     await dbRun('UPDATE qc_parameters SET name=?, description=? WHERE id=?', [name, description, req.params.id]);
@@ -46,7 +47,7 @@ router.put('/parameters/:id', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.delete('/parameters/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/parameters/:id', authMiddleware, requirePermission('quality.qc-master', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_parameters WHERE id=?', [req.params.id]);
     res.json({ success: true, message: 'Parameter deleted' });
@@ -56,7 +57,7 @@ router.delete('/parameters/:id', authMiddleware, async (req: Request, res: Respo
 });
 
 // --- Methods ---
-router.get('/methods', authMiddleware, async (req: Request, res: Response) => {
+router.get('/methods', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_methods ORDER BY name ASC');
     res.json({ success: true, data });
@@ -65,7 +66,7 @@ router.get('/methods', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/methods', authMiddleware, async (req: Request, res: Response) => {
+router.post('/methods', authMiddleware, requirePermission('quality.qc-master', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, description } = req.body;
     const result = await dbRun('INSERT INTO qc_methods (name, description) VALUES (?, ?)', [name, description]);
@@ -75,7 +76,7 @@ router.post('/methods', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/methods/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/methods/:id', authMiddleware, requirePermission('quality.qc-master', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, description } = req.body;
     await dbRun('UPDATE qc_methods SET name=?, description=? WHERE id=?', [name, description, req.params.id]);
@@ -85,7 +86,7 @@ router.put('/methods/:id', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.delete('/methods/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/methods/:id', authMiddleware, requirePermission('quality.qc-master', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_methods WHERE id=?', [req.params.id]);
     res.json({ success: true, message: 'Method deleted' });
@@ -95,7 +96,7 @@ router.delete('/methods/:id', authMiddleware, async (req: Request, res: Response
 });
 
 // --- Instruments ---
-router.get('/instruments', authMiddleware, async (req: Request, res: Response) => {
+router.get('/instruments', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_instruments ORDER BY name ASC');
     res.json({ success: true, data });
@@ -104,7 +105,7 @@ router.get('/instruments', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.post('/instruments', authMiddleware, async (req: Request, res: Response) => {
+router.post('/instruments', authMiddleware, requirePermission('quality.qc-master', 'create'), async (req: Request, res: Response) => {
   try {
     const { name, calibration_date } = req.body;
     const result = await dbRun('INSERT INTO qc_instruments (name, calibration_date) VALUES (?, ?)', [name, calibration_date]);
@@ -114,7 +115,7 @@ router.post('/instruments', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
-router.put('/instruments/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/instruments/:id', authMiddleware, requirePermission('quality.qc-master', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, calibration_date } = req.body;
     await dbRun('UPDATE qc_instruments SET name=?, calibration_date=? WHERE id=?', [name, calibration_date, req.params.id]);
@@ -124,7 +125,7 @@ router.put('/instruments/:id', authMiddleware, async (req: Request, res: Respons
   }
 });
 
-router.delete('/instruments/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/instruments/:id', authMiddleware, requirePermission('quality.qc-master', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_instruments WHERE id=?', [req.params.id]);
     res.json({ success: true, message: 'Instrument deleted' });
@@ -134,7 +135,7 @@ router.delete('/instruments/:id', authMiddleware, async (req: Request, res: Resp
 });
 
 // --- Sampling Areas ---
-router.get('/areas', authMiddleware, async (req: Request, res: Response) => {
+router.get('/areas', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_sampling_areas ORDER BY name ASC');
     res.json({ success: true, data });
@@ -143,7 +144,7 @@ router.get('/areas', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/areas', authMiddleware, async (req: Request, res: Response) => {
+router.post('/areas', authMiddleware, requirePermission('quality.qc-master', 'create'), async (req: Request, res: Response) => {
   try {
     const { name } = req.body;
     const result = await dbRun('INSERT INTO qc_sampling_areas (name) VALUES (?)', [name]);
@@ -153,7 +154,7 @@ router.post('/areas', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/areas/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/areas/:id', authMiddleware, requirePermission('quality.qc-master', 'update'), async (req: Request, res: Response) => {
   try {
     const { name } = req.body;
     await dbRun('UPDATE qc_sampling_areas SET name=? WHERE id=?', [name, req.params.id]);
@@ -163,7 +164,7 @@ router.put('/areas/:id', authMiddleware, async (req: Request, res: Response) => 
   }
 });
 
-router.delete('/areas/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/areas/:id', authMiddleware, requirePermission('quality.qc-master', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_sampling_areas WHERE id=?', [req.params.id]);
     res.json({ success: true, message: 'Area deleted' });
@@ -176,7 +177,7 @@ router.delete('/areas/:id', authMiddleware, async (req: Request, res: Response) 
 // ============================================================
 // QC SPECIFICATIONS (Per Item)
 // ============================================================
-router.get('/specs/:product_id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/specs/:product_id', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
   try {
     const qcType = req.query.qc_type as string || null;
     let query = `
@@ -199,7 +200,7 @@ router.get('/specs/:product_id', authMiddleware, async (req: Request, res: Respo
   }
 });
 
-router.post('/specs', authMiddleware, async (req: Request, res: Response) => {
+router.post('/specs', authMiddleware, requirePermission('quality.qc-master', 'create'), async (req: Request, res: Response) => {
   try {
     const { product_id, qc_type, parameter_id, method_id, standard_value, min_value, max_value, uom } = req.body;
     const result = await dbRun(
@@ -213,7 +214,7 @@ router.post('/specs', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/specs/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/specs/:id', authMiddleware, requirePermission('quality.qc-master', 'update'), async (req: Request, res: Response) => {
   try {
     const { parameter_id, method_id, standard_value, min_value, max_value, qc_type, uom } = req.body;
     await dbRun(
@@ -226,7 +227,7 @@ router.put('/specs/:id', authMiddleware, async (req: Request, res: Response) => 
   }
 });
 
-router.delete('/specs/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/specs/:id', authMiddleware, requirePermission('quality.qc-master', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_specifications WHERE id=?', [req.params.id]);
     res.json({ success: true, message: 'Spec deleted' });
@@ -238,7 +239,7 @@ router.delete('/specs/:id', authMiddleware, async (req: Request, res: Response) 
 // ============================================================
 // ANALYSIS REQUESTS (FPA)
 // ============================================================
-router.get('/fpa', authMiddleware, async (req: Request, res: Response) => {
+router.get('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'view'), async (req: Request, res: Response) => {
   try {
     const data = await dbAll(`
       SELECT f.*, p.name as product_name, p.sku as product_sku, a.name as area_name, u.full_name as created_by_name
@@ -254,7 +255,7 @@ router.get('/fpa', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/fpa', authMiddleware, async (req: Request, res: Response) => {
+router.post('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'create'), async (req: Request, res: Response) => {
   try {
     const { type, reference_id, reference_number, product_id, sampling_area_id, batch_no, quantity, supplier_id, notes } = req.body;
     const fpa_number = generateFPANumber(type || 'INC');
@@ -284,7 +285,7 @@ router.post('/fpa', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/fpa/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/fpa/:id', authMiddleware, requirePermission('quality.qc-fpa', 'view'), async (req: Request, res: Response) => {
   try {
     const fpa = await dbGet(`
       SELECT f.*, p.name as product_name, a.name as area_name
@@ -313,7 +314,7 @@ router.get('/fpa/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/fpa/:id/results', authMiddleware, async (req: Request, res: Response) => {
+router.put('/fpa/:id/results', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const { results, status, result, notes } = req.body;
     const fpaId = req.params.id;
@@ -370,7 +371,7 @@ router.put('/fpa/:id/results', authMiddleware, async (req: Request, res: Respons
 });
 
 // --- User Area Sampling ---
-router.get('/user-areas', authMiddleware, async (req: Request, res: Response) => {
+router.get('/user-areas', authMiddleware, requirePermission('quality.qc-fpa', 'view'), async (req: Request, res: Response) => {
   try {
     const data = await dbAll(`
       SELECT ua.id, ua.user_id, ua.area_id, u.full_name as user_name, a.name as area_name
@@ -385,7 +386,7 @@ router.get('/user-areas', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.post('/user-areas', authMiddleware, async (req: Request, res: Response) => {
+router.post('/user-areas', authMiddleware, requirePermission('quality.qc-fpa', 'create'), async (req: Request, res: Response) => {
   try {
     const { user_id, area_ids } = req.body;
     // Delete existing assignments for this user
@@ -400,7 +401,7 @@ router.post('/user-areas', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
-router.delete('/user-areas/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/user-areas/:id', authMiddleware, requirePermission('quality.qc-fpa', 'delete'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM qc_user_areas WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'User area deleted' });
@@ -410,7 +411,7 @@ router.delete('/user-areas/:id', authMiddleware, async (req: Request, res: Respo
 });
 
 // --- FPA Approval Workflow ---
-router.put('/fpa/:id/submit', authMiddleware, async (req: Request, res: Response) => {
+router.put('/fpa/:id/submit', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun(
       'UPDATE qc_analysis_requests SET status = "Review", updated_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -422,7 +423,7 @@ router.put('/fpa/:id/submit', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.put('/fpa/:id/approve', authMiddleware, async (req: Request, res: Response) => {
+router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const { review_notes } = req.body;
@@ -441,7 +442,7 @@ router.put('/fpa/:id/approve', authMiddleware, async (req: Request, res: Respons
   }
 });
 
-router.put('/fpa/:id/reject', authMiddleware, async (req: Request, res: Response) => {
+router.put('/fpa/:id/reject', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const { review_notes } = req.body;
@@ -459,7 +460,7 @@ router.put('/fpa/:id/reject', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.put('/fpa/:id/resample', authMiddleware, async (req: Request, res: Response) => {
+router.put('/fpa/:id/resample', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const { review_notes } = req.body;

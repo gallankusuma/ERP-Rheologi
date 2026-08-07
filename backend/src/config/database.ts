@@ -227,6 +227,24 @@ const ensureProcurementPaymentSchema = async (connection: any) => {
 };
 
 // ==================== R&D MODULE SCHEMA ====================
+const ensureCrmSchema = async (connection: any) => {
+  await execSchemaEnsure(connection, `ALTER TABLE prospects ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'IDR'`);
+
+  // Carry Prospect qualification/contact context through to Lead (Review.md P1 #6)
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_title VARCHAR(150) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS industry VARCHAR(100) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS website VARCHAR(255) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS address TEXT NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(100) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature VARCHAR(20) NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS interest TEXT NULL`);
+  await execSchemaEnsure(connection, `ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up DATE NULL`);
+
+  // Carry Lead's company context through to Client (Review.md P1 #6)
+  await execSchemaEnsure(connection, `ALTER TABLE clients ADD COLUMN IF NOT EXISTS industry VARCHAR(100) NULL`);
+};
+
 const ensureRnDSchema = async (connection: any) => {
   const statements = [
     // 1. R&D Projects (core table)
@@ -570,6 +588,195 @@ const ensureApprovalPermissions = async (connection: any) => {
   console.log('✅ Approval 2-stage permissions ensured');
 };
 
+// ==================== FULL MENU PERMISSIONS (RBAC coverage for every sidebar menu) ====================
+// Mirrors the menu/submenu tree in frontend/src/components/Layout.vue so every
+// navigable page has an assignable permission in the Roles & Permissions UI.
+interface MenuPermModule {
+  resource: string;
+  module: string;
+  label: string;
+  actions?: string[]; // defaults to DEFAULT_MENU_ACTIONS
+}
+
+const DEFAULT_MENU_ACTIONS = ['view', 'create', 'update', 'delete'];
+
+const ACTION_LABELS: Record<string, string> = {
+  view: 'View',
+  create: 'Create',
+  update: 'Update',
+  delete: 'Delete',
+  export: 'Export',
+  issue_material: 'Issue Material',
+};
+
+const menuPermissionModules: MenuPermModule[] = [
+  // CRM
+  { resource: 'crm.dashboard', module: 'CRM - Dashboard', label: 'CRM Dashboard', actions: ['view'] },
+  { resource: 'crm.clients', module: 'CRM - Clients', label: 'Clients' },
+  { resource: 'crm.projects', module: 'CRM - Projects', label: 'Projects' },
+  { resource: 'crm.sample-requests', module: 'CRM - Sample Requests', label: 'Sample Requests' },
+  { resource: 'crm.events', module: 'CRM - Events', label: 'Events' },
+  { resource: 'crm.tasks', module: 'CRM - Tasks', label: 'Tasks' },
+  { resource: 'crm.notes', module: 'CRM - Notes', label: 'Notes' },
+  { resource: 'crm.messages', module: 'CRM - Messages', label: 'Messages', actions: ['view'] },
+  { resource: 'crm.sales', module: 'CRM - Sales', label: 'Sales' },
+
+  // Dashboard (read-only KPI views)
+  { resource: 'dashboard.overview', module: 'Dashboard - Overview', label: 'Overview', actions: ['view'] },
+  { resource: 'dashboard.production', module: 'Dashboard - Production KPI', label: 'Production KPI', actions: ['view'] },
+  { resource: 'dashboard.inventory', module: 'Dashboard - Inventory KPI', label: 'Inventory KPI', actions: ['view'] },
+  { resource: 'dashboard.sales', module: 'Dashboard - Sales KPI', label: 'Sales KPI', actions: ['view'] },
+  { resource: 'dashboard.approvals', module: 'Dashboard - Approval Summary', label: 'Approval Summary', actions: ['view'] },
+  { resource: 'dashboard.alerts', module: 'Dashboard - Alerts', label: 'Alerts', actions: ['view'] },
+
+  // Estimator
+  { resource: 'estimator.proposals', module: 'Estimator - Proposal', label: 'Proposal' },
+  { resource: 'estimator.ahsp', module: 'Estimator - AHSP', label: 'AHSP' },
+  { resource: 'estimator.masters', module: 'Estimator - Satuan Dasar Harga', label: 'Satuan Dasar Harga' },
+
+  // R&D (rnd.rnd-projects / rnd.rnd-formulations already have approve_1/2 from ensureApprovalPermissions)
+  { resource: 'rnd.rnd-projects', module: 'R&D - R&D Projects', label: 'R&D Projects' },
+  { resource: 'rnd.kanban', module: 'R&D - Kanban Board', label: 'Kanban Board', actions: ['view'] },
+  { resource: 'rnd.rnd-formulations', module: 'R&D - Formulations', label: 'Formulations' },
+  { resource: 'rnd.specifications', module: 'R&D - Specifications', label: 'Specifications' },
+
+  // PPIC
+  { resource: 'ppic.forecast', module: 'PPIC - Sales Forecast', label: 'Sales Forecast' },
+  { resource: 'ppic.mps', module: 'PPIC - MPS', label: 'MPS' },
+  { resource: 'ppic.mrp', module: 'PPIC - MRP', label: 'MRP' },
+  { resource: 'ppic.capacity', module: 'PPIC - Capacity Planning', label: 'Capacity Planning' },
+  { resource: 'ppic.reports', module: 'PPIC - Stock Reports', label: 'Stock Reports', actions: ['view'] },
+
+  // Procurement (purchase-requests / purchase-orders / grn already have approve_1/2)
+  { resource: 'procurement.dashboard', module: 'Procurement - Overview', label: 'Overview', actions: ['view'] },
+  { resource: 'procurement.purchase-requests', module: 'Procurement - Purchase Requests', label: 'Purchase Requests' },
+  { resource: 'procurement.purchase-orders', module: 'Procurement - Purchase Orders', label: 'Purchase Orders' },
+  { resource: 'procurement.grn', module: 'Procurement - Goods Receipt (GRN)', label: 'Goods Receipt' },
+  { resource: 'procurement.vendor-price-list', module: 'Procurement - Vendor Price List', label: 'Vendor Price List' },
+  { resource: 'procurement.material-price-comparison', module: 'Procurement - Material Price Comparison', label: 'Material Price Comparison', actions: ['view'] },
+  { resource: 'procurement.history', module: 'Procurement - History', label: 'History', actions: ['view'] },
+
+  // Inventory (stock-adjustment / stock-transfer already have approve_1/2)
+  { resource: 'inventory.dashboard', module: 'Inventory - Overview', label: 'Overview' },
+  { resource: 'inventory.stock-card', module: 'Inventory - Stock Card', label: 'Stock Card', actions: ['view', 'create'] },
+  { resource: 'inventory.stock-transfer', module: 'Inventory - Stock Transfer', label: 'Stock Transfer' },
+  { resource: 'inventory.stock-adjustment', module: 'Inventory - Stock Adjustment', label: 'Stock Adjustment' },
+  { resource: 'inventory.stock-opname', module: 'Inventory - Stock Opname', label: 'Stock Opname' },
+  { resource: 'inventory.batch-tracking', module: 'Inventory - Batch / Lot Tracking', label: 'Batch / Lot Tracking' },
+  { resource: 'inventory.expiry-monitoring', module: 'Inventory - Expiry Monitoring', label: 'Expiry Monitoring', actions: ['view'] },
+
+  // Production (workorders / fg-receipt already have approve_1/2)
+  { resource: 'production.planning', module: 'Production - Planning', label: 'Planning' },
+  { resource: 'production.mrp', module: 'Production - Material Requirement', label: 'Material Requirement', actions: ['view'] },
+  { resource: 'production.workorders', module: 'Production - Work Orders', label: 'Work Orders' },
+  { resource: 'production.workorders', module: 'Production - Work Orders', label: 'Issue Material', actions: ['issue_material'] },
+  { resource: 'production.execution', module: 'Production - Execution', label: 'Execution' },
+  { resource: 'production.yield-scrap', module: 'Production - Yield & Scrap', label: 'Yield & Scrap' },
+  { resource: 'production.fg-receipt', module: 'Production - FG Receipt', label: 'FG Receipt' },
+  { resource: 'production.history', module: 'Production - History', label: 'History', actions: ['view'] },
+
+  // Quality (batch-release / ncr already have approve_1/2)
+  { resource: 'quality.qc-master', module: 'Quality - QC Master Data', label: 'QC Master Data' },
+  { resource: 'quality.qc-fpa', module: 'Quality - QC FPA', label: 'QC FPA' },
+  { resource: 'quality.test-methods', module: 'Quality - Test Methods', label: 'Test Methods' },
+  { resource: 'quality.sampling', module: 'Quality - Sampling', label: 'Sampling' },
+  { resource: 'quality.results', module: 'Quality - Results', label: 'Results' },
+  { resource: 'quality.batch-release', module: 'Quality - Batch Release', label: 'Batch Release' },
+  { resource: 'quality.ncr', module: 'Quality - Non-Conformance', label: 'Non-Conformance' },
+  { resource: 'quality.rework', module: 'Quality - Rework', label: 'Rework' },
+  { resource: 'quality.reports', module: 'Quality - QC Reports', label: 'QC Reports', actions: ['view'] },
+
+  // Finance (fund-requests / ap / ar already have approve_1/2)
+  { resource: 'finance.general-ledger', module: 'Finance - General Ledger', label: 'General Ledger' },
+  { resource: 'finance.cogs', module: 'Finance - COGS Calculation', label: 'COGS Calculation', actions: ['view'] },
+  { resource: 'finance.ap', module: 'Finance - Accounts Payable', label: 'Accounts Payable' },
+  { resource: 'finance.ar', module: 'Finance - Accounts Receivable', label: 'Accounts Receivable' },
+  { resource: 'finance.cost-analysis', module: 'Finance - Cost Analysis', label: 'Cost Analysis', actions: ['view'] },
+  { resource: 'finance.margin-analysis', module: 'Finance - Margin Analysis', label: 'Margin Analysis', actions: ['view'] },
+  { resource: 'finance.financial-summary', module: 'Finance - Financial Summary', label: 'Financial Summary', actions: ['view'] },
+  { resource: 'finance.fund-requests', module: 'Finance - Fund Requests', label: 'Fund Requests' },
+
+  // Approval
+  { resource: 'approval.inbox', module: 'Approval - My Approval Inbox', label: 'My Approval Inbox', actions: ['view'] },
+  { resource: 'approval.history', module: 'Approval - Approval History', label: 'Approval History', actions: ['view'] },
+  { resource: 'approval.rules', module: 'Approval - Approval Rules', label: 'Approval Rules' },
+  { resource: 'approval.delegation', module: 'Approval - Delegation', label: 'Delegation' },
+  { resource: 'approval.escalation', module: 'Approval - Escalation Rules', label: 'Escalation Rules' },
+
+  // Reports
+  { resource: 'reports.production', module: 'Reports - Production Reports', label: 'Production Reports', actions: ['view', 'export'] },
+  { resource: 'reports.inventory', module: 'Reports - Inventory Reports', label: 'Inventory Reports', actions: ['view', 'export'] },
+  { resource: 'reports.procurement', module: 'Reports - Procurement Reports', label: 'Procurement Reports', actions: ['view', 'export'] },
+  { resource: 'reports.qc', module: 'Reports - QC Reports', label: 'QC Reports', actions: ['view', 'export'] },
+  { resource: 'reports.sales', module: 'Reports - Sales Reports', label: 'Sales Reports', actions: ['view', 'export'] },
+  { resource: 'reports.finance', module: 'Reports - Finance Reports', label: 'Finance Reports', actions: ['view', 'export'] },
+  { resource: 'reports.custom', module: 'Reports - Custom Reports', label: 'Custom Reports', actions: ['view', 'create', 'export'] },
+  { resource: 'reports.export', module: 'Reports - Export Data', label: 'Export Data', actions: ['view', 'export'] },
+
+  // Master Data (bom already has approve_1/2; warehouses/warehouse-locations shared with Inventory menu links)
+  { resource: 'master_data.units', module: 'Master Data - Units of Measure', label: 'Units of Measure' },
+  { resource: 'master_data.items', module: 'Master Data - Items', label: 'Items' },
+  { resource: 'master_data.item-types', module: 'Master Data - Item Types', label: 'Item Types' },
+  { resource: 'master_data.categories', module: 'Master Data - Item Categories', label: 'Item Categories' },
+  { resource: 'master_data.line-processes', module: 'Master Data - Line Processes', label: 'Line Processes' },
+  { resource: 'master_data.bom', module: 'Master Data - Bill of Materials', label: 'Bill of Materials' },
+  { resource: 'master_data.warehouses', module: 'Master Data - Warehouses', label: 'Warehouses' },
+  { resource: 'master_data.warehouse-locations', module: 'Master Data - Warehouse Locations', label: 'Warehouse Locations' },
+  { resource: 'master_data.suppliers', module: 'Master Data - Vendors', label: 'Vendors' },
+  { resource: 'master_data.customers', module: 'Master Data - Customers', label: 'Customers' },
+  { resource: 'master_data.departments', module: 'Master Data - Departments', label: 'Departments' },
+  { resource: 'master_data.client-categories', module: 'Master Data - Client Categories', label: 'Client Categories' },
+  { resource: 'master_data.forecast-brands', module: 'Master Data - Forecast Brands', label: 'Forecast Brands' },
+
+  // Admin (system.roles/system.permissions already cover the "Roles & Permissions" submenu;
+  // admin.users is shared with the Master Data "Employees" menu link, which points to the same /users page)
+  { resource: 'admin.users', module: 'Admin - Users', label: 'Users' },
+  { resource: 'admin.settings', module: 'Admin - System Settings', label: 'System Settings', actions: ['view', 'update'] },
+  { resource: 'admin.approval-config', module: 'Admin - Approval Config', label: 'Approval Config' },
+  { resource: 'admin.audit-log', module: 'Admin - Audit Log', label: 'Audit Log', actions: ['view', 'delete'] },
+  { resource: 'admin.notifications', module: 'Admin - Notification Settings', label: 'Notification Settings', actions: ['view', 'update'] },
+  { resource: 'admin.integration', module: 'Admin - Integration Settings', label: 'Integration Settings', actions: ['view', 'update'] },
+  { resource: 'admin.document-control', module: 'Admin - Document Control', label: 'Document Control' },
+  { resource: 'admin.backup', module: 'Admin - Backup & Restore', label: 'Backup & Restore', actions: ['view', 'create'] },
+];
+
+const ensureMenuPermissions = async (connection: any) => {
+  for (const mod of menuPermissionModules) {
+    const actions = mod.actions || DEFAULT_MENU_ACTIONS;
+    for (const action of actions) {
+      const actionLabel = ACTION_LABELS[action] || action;
+      const name = `${actionLabel} ${mod.label}`;
+      await execSchemaEnsure(connection,
+        `INSERT IGNORE INTO permissions (resource, action, module, name, description)
+         VALUES (${connection.escape(mod.resource)}, ${connection.escape(action)}, ${connection.escape(mod.module)}, ${connection.escape(name)}, ${connection.escape(name)})`
+      );
+    }
+  }
+
+  // Auto-assign every menu permission to the Admin role (code='ADM') so the Roles & Permissions
+  // UI shows them as granted for Admin (requirePermission already bypasses role_id=1 functionally,
+  // this just keeps the checkbox state consistent — same pattern as seedSystemPermissions).
+  try {
+    const [adminRows]: any = await connection.execute("SELECT id FROM roles WHERE code = 'ADM' LIMIT 1");
+    const adminRole = Array.isArray(adminRows) && adminRows[0];
+    if (adminRole) {
+      const resources = [...new Set(menuPermissionModules.map(m => m.resource))];
+      const placeholders = resources.map(() => '?').join(',');
+      const [permRows]: any = await connection.execute(
+        `SELECT id FROM permissions WHERE resource IN (${placeholders})`,
+        resources
+      );
+      for (const perm of permRows as any[]) {
+        await execSchemaEnsure(connection, `INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (${adminRole.id}, ${perm.id})`);
+      }
+    }
+  } catch (e: any) {
+    console.warn('Menu permissions admin auto-assign skipped:', e.message?.substring(0, 120));
+  }
+
+  console.log('✅ Full menu permissions ensured');
+};
+
 // Initialize database schema
 export async function initializeDatabase() {
   try {
@@ -608,7 +815,9 @@ export async function initializeDatabase() {
 
     await ensureProcurementPaymentSchema(connection);
     await ensureRnDSchema(connection);
+    await ensureCrmSchema(connection);
     await ensureApprovalPermissions(connection);
+    await ensureMenuPermissions(connection);
 
     connection.release();
 
