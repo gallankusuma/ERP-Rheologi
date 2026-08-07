@@ -8,7 +8,14 @@ const router = Router();
 // GET /crm/dashboard — Unified CRM dashboard stats
 router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'view'), async (req: Request, res: Response) => {
   try {
-    // ── Pipeline Counts ──
+    // helper: convert [{currency, total}] rows into { IDR: 123, USD: 456 }
+    const toCurrencyMap = (rows: any[]) => {
+      const map: Record<string, number> = {};
+      for (const r of rows) map[r.currency || 'IDR'] = Number(r.total) || 0;
+      return map;
+    };
+
+    // prospect counts (currency-independent)
     const prospectStats = await dbGet(`
       SELECT 
         COUNT(*) as total,
@@ -17,24 +24,43 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
         SUM(CASE WHEN temperature = 'hot' AND status NOT IN ('converted','disqualified') THEN 1 ELSE 0 END) as hot,
         SUM(CASE WHEN temperature = 'warm' AND status NOT IN ('converted','disqualified') THEN 1 ELSE 0 END) as warm,
         SUM(CASE WHEN temperature = 'cold' AND status NOT IN ('converted','disqualified') THEN 1 ELSE 0 END) as cold,
-        COALESCE(SUM(CASE WHEN status NOT IN ('converted','disqualified') THEN estimated_value ELSE 0 END), 0) as pipeline_value,
         SUM(CASE WHEN next_follow_up <= CURDATE() AND status NOT IN ('converted','disqualified') THEN 1 ELSE 0 END) as overdue_followups
       FROM prospects
       WHERE is_archived = 0
     `);
 
+    // prospect pipeline value grouped by currency
+    const prospectPipelineRows = await dbAll(`
+      SELECT currency, COALESCE(SUM(estimated_value), 0) as total
+      FROM prospects
+      WHERE status NOT IN ('converted','disqualified') AND is_archived = 0
+      GROUP BY currency
+    `) as any[];
+
+    // lead counts (currency-independent)
     const leadStats = await dbGet(`
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN stage NOT IN ('Won','Lost') THEN 1 ELSE 0 END) as active,
         SUM(CASE WHEN stage = 'Won' THEN 1 ELSE 0 END) as won,
-        SUM(CASE WHEN stage = 'Lost' THEN 1 ELSE 0 END) as lost,
-        COALESCE(SUM(CASE WHEN stage NOT IN ('Won','Lost') THEN value ELSE 0 END), 0) as pipeline_value,
-        COALESCE(SUM(CASE WHEN stage = 'Won' THEN value ELSE 0 END), 0) as won_value,
-        COALESCE(SUM(value), 0) as total_value
+        SUM(CASE WHEN stage = 'Lost' THEN 1 ELSE 0 END) as lost
       FROM leads
       WHERE is_archived = 0
     `);
+
+    // lead values grouped by currency
+    const leadPipelineRows = await dbAll(`
+      SELECT currency, COALESCE(SUM(CASE WHEN stage NOT IN ('Won','Lost') THEN value ELSE 0 END), 0) as total
+      FROM leads WHERE is_archived = 0 GROUP BY currency
+    `) as any[];
+    const leadWonRows = await dbAll(`
+      SELECT currency, COALESCE(SUM(value), 0) as total
+      FROM leads WHERE stage = 'Won' AND is_archived = 0 GROUP BY currency
+    `) as any[];
+    const leadTotalRows = await dbAll(`
+      SELECT currency, COALESCE(SUM(value), 0) as total
+      FROM leads WHERE is_archived = 0 GROUP BY currency
+    `) as any[];
 
     const clientStats = await dbGet(`
       SELECT 
@@ -45,14 +71,23 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
       FROM clients
     `);
 
-    // ── Lead Stage Breakdown (for funnel chart) ──
-    const leadsByStage = await dbAll(`
-      SELECT stage, COUNT(*) as count, COALESCE(SUM(value), 0) as total_value
-      FROM leads WHERE is_archived = 0 GROUP BY stage
+    // lead stage breakdown with currency-grouped values
+    const leadsByStageRaw = await dbAll(`
+      SELECT stage, currency, COUNT(*) as count, COALESCE(SUM(value), 0) as total_value
+      FROM leads WHERE is_archived = 0 GROUP BY stage, currency
       ORDER BY FIELD(stage, 'New', 'Qualified', 'Discussion', 'Proposal', 'Negotiation', 'Won', 'Lost')
-    `);
+    `) as any[];
 
-    // ── Prospect Temperature Breakdown ──
+    // collapse into per-stage objects with currency maps
+    const stageMap: Record<string, { stage: string; count: number; total_value_by_currency: Record<string, number> }> = {};
+    for (const r of leadsByStageRaw) {
+      if (!stageMap[r.stage]) stageMap[r.stage] = { stage: r.stage, count: 0, total_value_by_currency: {} };
+      stageMap[r.stage].count += Number(r.count);
+      stageMap[r.stage].total_value_by_currency[r.currency || 'IDR'] = Number(r.total_value) || 0;
+    }
+    const leadsByStage = Object.values(stageMap);
+
+    // prospect temperature breakdown
     const prospectsByTemp = await dbAll(`
       SELECT temperature, COUNT(*) as count
       FROM prospects
@@ -60,59 +95,64 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
       GROUP BY temperature
     `);
 
-    // ── Recent Activities (latest leads + prospects) ──
+    // recent activities
     const recentLeads = await dbAll(`
-      SELECT id, company, contact_name, stage, value, updated_at, 'lead' as type
+      SELECT id, company, contact_name, stage, value, currency, updated_at, 'lead' as type
       FROM leads WHERE is_archived = 0 ORDER BY updated_at DESC LIMIT 5
     `);
-
     const recentProspects = await dbAll(`
-      SELECT id, company_name as company, contact_name, status as stage, estimated_value as value, updated_at, 'prospect' as type
+      SELECT id, company_name as company, contact_name, status as stage, estimated_value as value, currency, updated_at, 'prospect' as type
       FROM prospects WHERE is_archived = 0 ORDER BY updated_at DESC LIMIT 5
     `);
-
-    // Merge and sort by date
     const recentActivity = [...recentLeads, ...recentProspects]
       .sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
       .slice(0, 8);
 
-    // ── Overdue Follow-ups ──
+    // overdue follow-ups
     const overdueFollowups = await dbAll(`
-      SELECT id, code, company_name, contact_name, next_follow_up, temperature, estimated_value
+      SELECT id, code, company_name, contact_name, next_follow_up, temperature, estimated_value, currency
       FROM prospects
       WHERE next_follow_up <= CURDATE() AND status NOT IN ('converted', 'disqualified') AND is_archived = 0
       ORDER BY next_follow_up ASC
       LIMIT 10
     `);
 
-    // ── Conversion Rates ──
+    // conversion rates
     const totalProspects = prospectStats?.total || 0;
     const convertedProspects = prospectStats?.converted || 0;
     const totalLeads = leadStats?.total || 0;
     const wonLeads = leadStats?.won || 0;
-
     const conversionRates = {
       prospectToLead: totalProspects > 0 ? Math.round((convertedProspects / totalProspects) * 100) : 0,
       leadToWon: totalLeads > 0 ? Math.round((wonLeads / totalLeads) * 100) : 0,
       overall: totalProspects > 0 ? Math.round((wonLeads / totalProspects) * 100) : 0,
     };
 
-    // ── Monthly Trend (last 6 months) ──
-    // NOTE: `won_estimated_value` is the Lead's own estimated value, not confirmed Sales Order
-    // or invoiced revenue (Review.md P1 #10/#4) — do not label this as actual "revenue" in the UI.
-    const monthlyTrend = await dbAll(`
+    // monthly trend with currency-grouped won values
+    const monthlyTrendRaw = await dbAll(`
       SELECT
         DATE_FORMAT(created_at, '%Y-%m') as month,
+        currency,
         COUNT(*) as leads_created,
         SUM(CASE WHEN stage = 'Won' THEN 1 ELSE 0 END) as leads_won,
         COALESCE(SUM(CASE WHEN stage = 'Won' THEN value ELSE 0 END), 0) as won_estimated_value
       FROM leads
       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) AND is_archived = 0
-      GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+      GROUP BY DATE_FORMAT(created_at, '%Y-%m'), currency
       ORDER BY month ASC
-    `);
+    `) as any[];
 
-    // ── Pipeline Integration Stats (CRM → SO → Project → PPIC) ──
+    const trendMap: Record<string, any> = {};
+    for (const r of monthlyTrendRaw) {
+      if (!trendMap[r.month]) trendMap[r.month] = { month: r.month, leads_created: 0, leads_won: 0, won_value_by_currency: {} };
+      trendMap[r.month].leads_created += Number(r.leads_created);
+      trendMap[r.month].leads_won += Number(r.leads_won);
+      const cur = r.currency || 'IDR';
+      trendMap[r.month].won_value_by_currency[cur] = (trendMap[r.month].won_value_by_currency[cur] || 0) + Number(r.won_estimated_value);
+    }
+    const monthlyTrend = Object.values(trendMap);
+
+    // pipeline integration stats
     const pipelineStats = await dbGet(`
       SELECT
         (SELECT COUNT(*) FROM leads WHERE stage = 'Won') as leads_converted,
@@ -125,7 +165,7 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
         (SELECT COUNT(*) FROM sales_orders WHERE status IN ('confirmed', 'processing', 'open') AND client_id IS NOT NULL) as active_orders
     `);
 
-    // ── Recent CRM-linked Sales Orders ──
+    // recent CRM-linked sales orders
     const recentCrmOrders = await dbAll(`
       SELECT so.id, so.so_number, so.status, so.total_amount, so.created_at,
              COALESCE(cl.name, c.name) as customer_name,
@@ -144,8 +184,16 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
     res.json({
       success: true,
       data: {
-        prospects: prospectStats || {},
-        leads: leadStats || {},
+        prospects: {
+          ...(prospectStats || {}),
+          pipeline_value_by_currency: toCurrencyMap(prospectPipelineRows),
+        },
+        leads: {
+          ...(leadStats || {}),
+          pipeline_value_by_currency: toCurrencyMap(leadPipelineRows),
+          won_value_by_currency: toCurrencyMap(leadWonRows),
+          total_value_by_currency: toCurrencyMap(leadTotalRows),
+        },
         clients: clientStats || {},
         leadsByStage,
         prospectsByTemp,

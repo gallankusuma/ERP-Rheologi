@@ -260,7 +260,14 @@ const filteredBrands = computed(() => {
 const getMonthData = (brand: any, month: number): any => {
   if (!brand._monthMap) brand._monthMap = {};
   if (!brand._monthMap[month]) {
-    const md = brand.months?.find((m: any) => m.month === month);
+    // months can be an object keyed by month number or an array
+    const months = brand.months || {};
+    let md: any = null;
+    if (Array.isArray(months)) {
+      md = months.find((m: any) => m.month === month);
+    } else {
+      md = months[month] || months[String(month)];
+    }
     brand._monthMap[month] = { forecast_qty: md?.forecast_qty || 0, product_qty: md?.product_qty || 0 };
   }
   return brand._monthMap[month];

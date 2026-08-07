@@ -127,6 +127,26 @@ router.put('/:id/status', authMiddleware, requirePermission('crm.sample-requests
     const current = await dbGet('SELECT * FROM sample_requests WHERE id = ?', [req.params.id]) as any;
     if (!current) return res.status(404).json({ error: 'Sample request not found' });
 
+    // state machine: valid transitions
+    const transitions: Record<string, string[]> = {
+      'Requested': ['In Progress', 'Cancelled'],
+      'In Progress': ['Ready for Delivery', 'Cancelled'],
+      'Ready for Delivery': ['Delivered', 'Cancelled'],
+      'Delivered': ['Feedback Received'],
+      'Feedback Received': [],
+      'Cancelled': [],
+    };
+
+    if (status && status !== current.status) {
+      const allowed = transitions[current.status] || [];
+      if (!allowed.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid status transition: ${current.status} → ${status}`,
+          allowed_transitions: allowed,
+        });
+      }
+    }
+
     await dbRun(
       'UPDATE sample_requests SET status = ?, delivery_tracking = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [status || current.status, delivery_tracking ?? current.delivery_tracking, req.params.id]

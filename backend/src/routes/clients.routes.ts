@@ -18,12 +18,12 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
       SELECT c.*, 
              cg.name as group_name, cg.color as group_color,
              COUNT(DISTINCT cp.id) as projects_count,
-             COUNT(DISTINCT ci.id) as invoices_count,
+             COUNT(DISTINCT so.id) as orders_count,
              (SELECT name FROM contacts WHERE client_id = c.id AND is_primary = 1 LIMIT 1) as primary_contact_name
       FROM clients c
       LEFT JOIN client_groups cg ON c.client_group_id = cg.id
       LEFT JOIN client_projects cp ON c.id = cp.client_id
-      LEFT JOIN client_invoices ci ON c.id = ci.client_id
+      LEFT JOIN sales_orders so ON c.id = so.client_id
       WHERE c.is_active = 1
     `;
 
@@ -107,45 +107,36 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
 // GET /api/clients/dashboard - Dashboard overview metrics
 router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
-    // Total clients
+    // total clients
     const totalClients = await dbGet('SELECT COUNT(*) as count FROM clients WHERE is_active = 1', []);
 
-    // Total contacts
+    // total contacts
     const totalContacts = await dbGet('SELECT COUNT(*) as count FROM contacts WHERE is_active = 1', []);
 
-    // Contacts logged in today
+    // contacts logged in today
     const today = new Date().toISOString().split('T')[0];
     const contactsToday = await dbGet('SELECT COUNT(*) as count FROM contacts WHERE DATE(last_login) = ?', [today]);
 
-    // Contacts logged in last 7 days
+    // contacts logged in last 7 days
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const contactsWeek = await dbGet('SELECT COUNT(*) as count FROM contacts WHERE last_login >= ?', [sevenDaysAgo.toISOString().split('T')[0]]);
 
-    // Invoice status counts
-    const unpaidInvoices = await dbGet('SELECT COUNT(DISTINCT client_id) as count FROM client_invoices WHERE status = "sent" AND paid_amount = 0', []);
-    const partialInvoices = await dbGet('SELECT COUNT(DISTINCT client_id) as count FROM client_invoices WHERE status = "partial"', []);
-    const overdueInvoices = await dbGet('SELECT COUNT(DISTINCT client_id) as count FROM client_invoices WHERE status = "overdue"', []);
+    // orders from canonical sales_orders table
+    const draftOrders = await dbGet('SELECT COUNT(*) as count FROM sales_orders WHERE client_id IS NOT NULL AND status = "draft"', []);
+    const confirmedOrders = await dbGet('SELECT COUNT(*) as count FROM sales_orders WHERE client_id IS NOT NULL AND status IN ("confirmed", "processing", "open")', []);
+    const completedOrders = await dbGet('SELECT COUNT(*) as count FROM sales_orders WHERE client_id IS NOT NULL AND status IN ("completed", "delivered")', []);
+    const cancelledOrders = await dbGet('SELECT COUNT(*) as count FROM sales_orders WHERE client_id IS NOT NULL AND status = "cancelled"', []);
+    const recentOrders = await dbGet('SELECT COUNT(*) as count FROM sales_orders WHERE client_id IS NOT NULL AND DATE(created_at) >= ?', [sevenDaysAgo.toISOString().split('T')[0]]);
 
-    // Project status counts
+    // project status counts
     const openProjects = await dbGet('SELECT COUNT(*) as count FROM client_projects WHERE status = "open"', []);
     const completedProjects = await dbGet('SELECT COUNT(*) as count FROM client_projects WHERE status = "completed"', []);
     const holdProjects = await dbGet('SELECT COUNT(*) as count FROM client_projects WHERE status = "hold"', []);
     const canceledProjects = await dbGet('SELECT COUNT(*) as count FROM client_projects WHERE status = "canceled"', []);
 
-    // Estimate status counts
-    const openEstimates = await dbGet('SELECT COUNT(*) as count FROM client_estimates WHERE status = "sent"', []);
-    const acceptedEstimates = await dbGet('SELECT COUNT(*) as count FROM client_estimates WHERE status = "accepted"', []);
-    const newEstimates = await dbGet('SELECT COUNT(*) as count FROM client_estimates WHERE status = "draft"', []);
-
-    // Proposal status counts
-    const openProposals = await dbGet('SELECT COUNT(*) as count FROM client_proposals WHERE status = "sent"', []);
-    const acceptedProposals = await dbGet('SELECT COUNT(*) as count FROM client_proposals WHERE status = "accepted"', []);
-    const rejectedProposals = await dbGet('SELECT COUNT(*) as count FROM client_proposals WHERE status = "rejected"', []);
-
-    // Ticket and order counts
+    // ticket counts
     const openTickets = await dbGet('SELECT COUNT(*) as count FROM client_tickets WHERE status = "open"', []);
-    const newOrders = await dbGet('SELECT COUNT(*) as count FROM client_orders WHERE status = "confirmed" AND DATE(order_date) >= ?', [sevenDaysAgo.toISOString().split('T')[0]]);
 
     res.json({
       data: {
@@ -155,13 +146,13 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
           contactsLoggedToday: contactsToday.count,
           contactsLoggedWeek: contactsWeek.count
         },
-        invoices: {
-          unpaid: unpaidInvoices.count,
-          unpaidPercentage: Math.round((unpaidInvoices.count / totalClients.count) * 100) || 0,
-          partial: partialInvoices.count,
-          partialPercentage: Math.round((partialInvoices.count / totalClients.count) * 100) || 0,
-          overdue: overdueInvoices.count,
-          overduePercentage: Math.round((overdueInvoices.count / totalClients.count) * 100) || 0
+        orders: {
+          draft: draftOrders.count,
+          active: confirmedOrders.count,
+          completed: completedOrders.count,
+          cancelled: cancelledOrders.count,
+          new: recentOrders.count,
+          percentage: Math.round((recentOrders.count / Math.max(totalClients.count, 1)) * 100) || 0
         },
         projects: {
           open: openProjects.count,
@@ -169,24 +160,9 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
           hold: holdProjects.count,
           canceled: canceledProjects.count
         },
-        estimates: {
-          open: openEstimates.count,
-          accepted: acceptedEstimates.count,
-          newRequests: newEstimates.count,
-          inProgress: 1 // We'll calculate this differently if needed
-        },
-        proposals: {
-          open: openProposals.count,
-          accepted: acceptedProposals.count,
-          rejected: rejectedProposals.count
-        },
         tickets: {
           open: openTickets.count,
-          percentage: Math.round((openTickets.count / totalClients.count) * 100) || 0
-        },
-        orders: {
-          new: newOrders.count,
-          percentage: Math.round((newOrders.count / totalClients.count) * 100) || 0
+          percentage: Math.round((openTickets.count / Math.max(totalClients.count, 1)) * 100) || 0
         }
       }
     });
