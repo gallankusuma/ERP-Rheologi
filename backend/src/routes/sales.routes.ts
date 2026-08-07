@@ -13,7 +13,7 @@ const generateCode = (prefix: string) => {
 };
 
 // Customers CRUD
-router.get('/customers', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/customers', authMiddleware, async (req: Request, res: Response) => {
   try {
     const customers = await dbAll('SELECT * FROM customers ORDER BY name ASC', []);
     res.json({ data: customers });
@@ -23,7 +23,7 @@ router.get('/customers', authMiddleware, requirePermission('crm.sales', 'view'),
   }
 });
 
-router.get('/customers/:id', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/customers/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const customer = await dbGet('SELECT * FROM customers WHERE id = ?', [req.params.id]);
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
@@ -77,7 +77,7 @@ router.delete('/customers/:id', authMiddleware, requirePermission('crm.sales', '
 });
 
 // GET /crm-clients - List CRM clients for SO dropdown
-router.get('/crm-clients', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/crm-clients', authMiddleware, async (req: Request, res: Response) => {
   try {
     const clients = await dbAll(
       `SELECT id, code, name, organization, phone, address FROM clients WHERE is_active = 1 ORDER BY name ASC`
@@ -90,7 +90,7 @@ router.get('/crm-clients', authMiddleware, requirePermission('crm.sales', 'view'
 });
 
 // Sales Orders
-router.get('/sales-orders', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/sales-orders', authMiddleware, async (req: Request, res: Response) => {
   try {
     const orders = await dbAll(
       `SELECT so.*,
@@ -112,7 +112,7 @@ router.get('/sales-orders', authMiddleware, requirePermission('crm.sales', 'view
   }
 });
 
-router.get('/sales-orders/:id', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/sales-orders/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const order = await dbGet(
       `SELECT so.*,
@@ -223,7 +223,7 @@ router.put('/sales-orders/:id', authMiddleware, requirePermission('crm.sales', '
 });
 
 // Deliveries
-router.get('/deliveries', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/deliveries', authMiddleware, async (req: Request, res: Response) => {
   try {
     const deliveries = await dbAll(
       `SELECT d.*, so.so_number
@@ -238,7 +238,7 @@ router.get('/deliveries', authMiddleware, requirePermission('crm.sales', 'view')
   }
 });
 
-router.get('/deliveries/:id', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/deliveries/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const delivery = await dbGet(
       `SELECT d.*, so.so_number
@@ -275,7 +275,7 @@ router.post('/deliveries', authMiddleware, requirePermission('crm.sales', 'creat
 });
 
 // Invoices
-router.get('/invoices', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/invoices', authMiddleware, async (req: Request, res: Response) => {
   try {
     const invoices = await dbAll(
       `SELECT i.*, so.so_number
@@ -290,7 +290,7 @@ router.get('/invoices', authMiddleware, requirePermission('crm.sales', 'view'), 
   }
 });
 
-router.get('/invoices/:id', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/invoices/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const invoice = await dbGet(
       `SELECT i.*, so.so_number
@@ -342,7 +342,7 @@ router.put('/invoices/:id', authMiddleware, requirePermission('crm.sales', 'upda
 
 // ===== SO APPROVAL =====
 
-router.get('/approval', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/approval', authMiddleware, async (req: Request, res: Response) => {
   try {
     const rows = await dbAll(
       `SELECT so.*, c.name as customer_name,
@@ -387,7 +387,7 @@ router.put('/approval/:id/reject', authMiddleware, requirePermission('crm.sales'
 
 // ===== PRICE LIST =====
 
-router.get('/price-list', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/price-list', authMiddleware, async (req: Request, res: Response) => {
   try {
     const rows = await dbAll(
       `SELECT p.id, p.sku, p.name, p.description,
@@ -417,7 +417,7 @@ router.put('/price-list/:id', authMiddleware, requirePermission('crm.sales', 'up
 
 // ===== SALES HISTORY =====
 
-router.get('/history', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/history', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { status, from, to, search } = req.query;
     let where = 'WHERE 1=1';
@@ -446,7 +446,7 @@ router.get('/history', authMiddleware, requirePermission('crm.sales', 'view'), a
   }
 });
 
-router.get('/history/stats', authMiddleware, requirePermission('crm.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/history/stats', authMiddleware, async (req: Request, res: Response) => {
   try {
     const stats = await dbGet(
       `SELECT

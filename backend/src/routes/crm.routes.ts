@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /crm/dashboard — Unified CRM dashboard stats
-router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'view'), async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
   try {
     // ── Pipeline Counts ──
     const prospectStats = await dbGet(`
@@ -164,7 +164,7 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
 });
 
 // GET /crm/tasks — Unified CRM task monitoring across all modules
-router.get('/tasks', authMiddleware, requirePermission('crm.tasks', 'view'), async (req: Request, res: Response) => {
+router.get('/tasks', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { status, source, priority, search } = req.query;
 

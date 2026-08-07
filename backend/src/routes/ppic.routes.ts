@@ -22,7 +22,7 @@ const ppicLog = async (req: Request, action: string, entityType: string, entityI
 // ==========================================
 // ITEM MASTER (FG, RM, PM)
 // ==========================================
-router.get('/items', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/items', authMiddleware, async (req: Request, res: Response) => {
     try {
         const { type } = req.query;
         let query = `
@@ -47,7 +47,7 @@ router.get('/items', authMiddleware, requirePermission('ppic.mps', 'view'), asyn
 // ==========================================
 // BILL OF MATERIALS (BOM)
 // ==========================================
-router.get('/boms', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/boms', authMiddleware, async (req: Request, res: Response) => {
     try {
         const boms = await dbAll(`
             SELECT b.*, p.name as product_name, p.sku as product_sku
@@ -58,7 +58,7 @@ router.get('/boms', authMiddleware, requirePermission('ppic.mps', 'view'), async
     } catch (error) { res.status(500).json({ error: 'Failed to fetch BOMs' }); }
 });
 
-router.get('/boms/:id', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/boms/:id', authMiddleware, async (req: Request, res: Response) => {
     try {
         const bomId = req.params.id;
         const header = await dbGet(`
@@ -106,7 +106,7 @@ function getWeekDateRange(year: number, week: number): { start: string; end: str
 }
 
 // GET /mps - List MPS headers
-router.get('/mps', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/mps', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { year, month, status } = req.query;
     let query = `
@@ -131,7 +131,7 @@ router.get('/mps', authMiddleware, requirePermission('ppic.mps', 'view'), async 
 });
 
 // GET /mps/:id - Get MPS with details + weekly grid
-router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/mps/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const header = await dbGet(`
@@ -706,7 +706,7 @@ router.delete('/mps/:id/details/:detailId', authMiddleware, requirePermission('p
 });
 
 // GET /pending-orders
-router.get('/pending-orders', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/pending-orders', authMiddleware, async (req: Request, res: Response) => {
   try {
     const soItems = await dbAll(`
       SELECT si.id as so_item_id, si.so_id, si.product_id, si.quantity,
@@ -727,7 +727,7 @@ router.get('/pending-orders', authMiddleware, requirePermission('ppic.mps', 'vie
 // ==========================================
 
 // GET /mps/:id/details/:detailId/mrp - Explode BOM → MRP breakdown
-router.get('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
+router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
     
@@ -869,7 +869,7 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('
 // ==========================================
 
 // GET /mrp - Standalone MRP: aggregate gross requirements per unique raw material across all confirmed MPS
-router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async (req: Request, res: Response) => {
+router.get('/mrp', authMiddleware, async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const currentYear = now.getFullYear();
@@ -1170,7 +1170,7 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
 // ============================================================
 
 // GET /forecast-brands - List all brands
-router.get('/forecast-brands', authMiddleware, requirePermission('master_data.forecast-brands', 'view'), async (_req: Request, res: Response) => {
+router.get('/forecast-brands', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const brands = await dbAll(`
       SELECT fb.*, p.name as product_name, p.sku as product_sku
@@ -1225,7 +1225,7 @@ router.delete('/forecast-brands/:id', authMiddleware, requirePermission('master_
 });
 
 // GET /forecasts - List forecast headers
-router.get('/forecasts', authMiddleware, requirePermission('ppic.forecast', 'view'), async (req: Request, res: Response) => {
+router.get('/forecasts', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { year, month } = req.query;
     let sql = 'SELECT * FROM forecast_headers';
@@ -1266,7 +1266,7 @@ router.post('/forecasts', authMiddleware, requirePermission('ppic.forecast', 'cr
 });
 
 // GET /forecasts/:id - Get forecast with grid data
-router.get('/forecasts/:id', authMiddleware, requirePermission('ppic.forecast', 'view'), async (req: Request, res: Response) => {
+router.get('/forecasts/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const header = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]);
     if (!header) return res.status(404).json({ error: 'Forecast not found' });

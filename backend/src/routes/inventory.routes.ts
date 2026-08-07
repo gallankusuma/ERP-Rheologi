@@ -22,7 +22,7 @@ const generateCode = (prefix: string) => {
 // ========================================
 
 // GET /api/inventory/stock-transfers - List all stock transfers
-router.get('/stock-transfers', authMiddleware, requirePermission('inventory.stock-transfer', 'view'), async (req: Request, res: Response) => {
+router.get('/stock-transfers', authMiddleware, async (req: Request, res: Response) => {
   try {
     const transfers = await dbAll(`
       SELECT 
@@ -324,7 +324,7 @@ async function executeStockTransfer(transfer: any) {
 // ========================================
 
 // GET /api/inventory/stock-adjustments - List all stock adjustments
-router.get('/stock-adjustments', authMiddleware, requirePermission('inventory.stock-adjustment', 'view'), async (req: Request, res: Response) => {
+router.get('/stock-adjustments', authMiddleware, async (req: Request, res: Response) => {
   try {
     const adjustments = await dbAll(`
       SELECT 
@@ -524,7 +524,7 @@ router.post('/stock-adjustments/:id/reject', authMiddleware, async (req: Request
 // ========================================
 
 // GET /api/inventory - List all inventory
-router.get('/', authMiddleware, requirePermission('inventory.dashboard', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const warehouseId = req.query.warehouse_id as string;
     const showAll = req.query.all === '1';
@@ -571,7 +571,7 @@ router.get('/', authMiddleware, requirePermission('inventory.dashboard', 'view')
 });
 
 // GET /api/inventory/:id - Get single inventory item
-router.get('/:id', authMiddleware, requirePermission('inventory.dashboard', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const item = await dbGet(`
       SELECT i.*, p.name as product_name, p.sku 
@@ -667,7 +667,7 @@ router.post('/:id/transaction', authMiddleware, requirePermission('inventory.sto
 });
 
 // GET /api/inventory/transactions/:productId - List transactions by product
-router.get('/transactions/:productId', authMiddleware, requirePermission('inventory.stock-card', 'view'), async (req: Request, res: Response) => {
+router.get('/transactions/:productId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const productId = Number(req.params.productId);
     if (!productId) {

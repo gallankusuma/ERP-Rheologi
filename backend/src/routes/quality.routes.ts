@@ -13,7 +13,7 @@ const generateCode = (prefix: string) => {
 };
 
 // QC Tests (Master Data)
-router.get('/tests', authMiddleware, requirePermission('quality.test-methods', 'view'), async (req: Request, res: Response) => {
+router.get('/tests', authMiddleware, async (req: Request, res: Response) => {
   try {
     const tests = await dbAll(`
       SELECT * FROM qc_tests 
@@ -50,7 +50,7 @@ router.post('/tests', authMiddleware, requirePermission('quality.test-methods', 
 });
 
 // QC Test Definitions (per product)
-router.get('/test-definitions', authMiddleware, requirePermission('quality.test-methods', 'view'), async (req: Request, res: Response) => {
+router.get('/test-definitions', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { product_id } = req.query;
 
@@ -106,7 +106,7 @@ router.post('/test-definitions', authMiddleware, requirePermission('quality.test
 });
 
 // QC Results
-router.get('/results', authMiddleware, requirePermission('quality.results', 'view'), async (req: Request, res: Response) => {
+router.get('/results', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { batch_id, status } = req.query;
 
@@ -249,7 +249,7 @@ router.put('/results/:id/reject', authMiddleware, requirePermission('quality.res
 });
 
 // Batches
-router.get('/batches', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/batches', authMiddleware, async (req: Request, res: Response) => {
   try {
     const batches = await dbAll(
       `SELECT b.*, p.sku, p.name as product_name
@@ -264,7 +264,7 @@ router.get('/batches', authMiddleware, requirePermission('quality.qc-master', 'v
   }
 });
 
-router.get('/batches/:id', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/batches/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const batch = await dbGet(
       `SELECT b.*, p.sku, p.name as product_name
@@ -315,7 +315,7 @@ router.put('/batches/:id', authMiddleware, requirePermission('quality.qc-master'
 });
 
 // QC Tests (master)
-router.get('/qc-tests', authMiddleware, requirePermission('quality.results', 'view'), async (req: Request, res: Response) => {
+router.get('/qc-tests', authMiddleware, async (req: Request, res: Response) => {
   try {
     const tests = await dbAll('SELECT * FROM qc_tests ORDER BY name ASC', []);
     res.json({ data: tests });
@@ -368,7 +368,7 @@ router.delete('/qc-tests/:id', authMiddleware, requirePermission('quality.result
 });
 
 // QC Results
-router.get('/qc-results', authMiddleware, requirePermission('quality.results', 'view'), async (req: Request, res: Response) => {
+router.get('/qc-results', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { batch_id } = req.query;
     let query =
@@ -426,7 +426,7 @@ router.put('/qc-results/:id', authMiddleware, requirePermission('quality.results
 // ============================================================
 // QC Sampling Plans
 // ============================================================
-router.get('/sampling', authMiddleware, requirePermission('quality.sampling', 'view'), async (_req: Request, res: Response) => {
+router.get('/sampling', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const plans = await dbAll(
       `SELECT sp.*, p.name AS product_name, p.sku,
@@ -484,7 +484,7 @@ router.delete('/sampling/:id', authMiddleware, requirePermission('quality.sampli
 // ============================================================
 // Batch Release
 // ============================================================
-router.get('/batch-release', authMiddleware, requirePermission('quality.batch-release', 'view'), async (_req: Request, res: Response) => {
+router.get('/batch-release', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const batches = await dbAll(
       `SELECT b.id, b.batch_number, b.quantity, b.manufacture_date, b.expiry_date, b.status,
@@ -546,7 +546,7 @@ router.post('/batch-release/:batchId/hold', authMiddleware, async (req: Request,
 // ============================================================
 // Non-Conformance Reports (NCR)
 // ============================================================
-router.get('/ncr', authMiddleware, requirePermission('quality.ncr', 'view'), async (_req: Request, res: Response) => {
+router.get('/ncr', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const ncrs = await dbAll(
       `SELECT n.*, p.name AS product_name, b.batch_number,
@@ -566,7 +566,7 @@ router.get('/ncr', authMiddleware, requirePermission('quality.ncr', 'view'), asy
   }
 });
 
-router.get('/ncr/:id', authMiddleware, requirePermission('quality.ncr', 'view'), async (req: Request, res: Response) => {
+router.get('/ncr/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const ncr = await dbGet(
       `SELECT n.*, p.name AS product_name, b.batch_number,
@@ -642,7 +642,7 @@ router.post('/ncr/:id/actions', authMiddleware, async (req: Request, res: Respon
 // ============================================================
 // Rework Orders
 // ============================================================
-router.get('/rework', authMiddleware, requirePermission('quality.rework', 'view'), async (_req: Request, res: Response) => {
+router.get('/rework', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const reworks = await dbAll(
       `SELECT r.*, n.ncr_number, p.name AS product_name, b.batch_number,
@@ -692,7 +692,7 @@ router.put('/rework/:id/status', authMiddleware, requirePermission('quality.rewo
 // ============================================================
 // QC Reports — aggregated stats
 // ============================================================
-router.get('/reports/summary', authMiddleware, requirePermission('quality.reports', 'view'), async (_req: Request, res: Response) => {
+router.get('/reports/summary', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const stats = await dbGet(
       `SELECT

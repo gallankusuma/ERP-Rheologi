@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/batches - Get all batches with product info
-router.get('/', authMiddleware, requirePermission('inventory.batch-tracking', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { status, qc_status, product_id } = req.query;
     
@@ -48,7 +48,7 @@ router.get('/', authMiddleware, requirePermission('inventory.batch-tracking', 'v
 });
 
 // GET /api/batches/:id - Get batch details with QC results
-router.get('/:id', authMiddleware, requirePermission('inventory.batch-tracking', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const batch = await dbGet(`
       SELECT b.*, p.name as product_name, p.sku,
@@ -184,7 +184,7 @@ router.post('/:id/release', authMiddleware, requirePermission('inventory.batch-t
 });
 
 // GET /api/batches/expiring/soon - Get batches expiring soon (FEFO alert)
-router.get('/expiring/soon', authMiddleware, requirePermission('inventory.expiry-monitoring', 'view'), async (req: Request, res: Response) => {
+router.get('/expiring/soon', authMiddleware, async (req: Request, res: Response) => {
   try {
     const daysAhead = parseInt(req.query.days as string) || 30;
     

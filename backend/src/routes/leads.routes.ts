@@ -258,7 +258,7 @@ router.delete('/stages/:id', authMiddleware, async (req: Request, res: Response)
 // lead CRUD endpoints
 
 // GET /leads — List all leads (with label info)
-router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { stage, search, show_archived } = req.query;
     let query = `SELECT l.*, u.full_name as assigned_name, c.name as client_name, c.organization as client_org
@@ -345,7 +345,7 @@ router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (r
 });
 
 // GET /leads/stats/summary — Pipeline stats (must be before /:id)
-router.get('/stats/summary', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
+router.get('/stats/summary', authMiddleware, async (req: Request, res: Response) => {
   try {
     const stages = await dbAll(
       'SELECT stage, COUNT(*) as count, COALESCE(SUM(value),0) as total_value FROM leads WHERE is_archived = 0 GROUP BY stage'
@@ -389,7 +389,7 @@ router.delete('/labels/:labelId', authMiddleware, async (req: Request, res: Resp
 });
 
 // GET /leads/:id — Get single lead with full detail
-router.get('/:id', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const lead = await dbGet(
       `SELECT l.*, u.full_name as assigned_name, c.name as client_name, c.organization as client_org

@@ -100,7 +100,7 @@ router.get('/profile/me', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.get('/:id', authMiddleware, requirePermission('admin.users', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const user = await dbGet(`${USER_SELECT} WHERE u.id = ?`, [req.params.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });

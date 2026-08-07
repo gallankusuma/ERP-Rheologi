@@ -9,7 +9,7 @@ import fs from 'fs';
 const router = Router();
 
 // Get all projects with client and manager info
-router.get('/', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const projects = await dbAll(`
       SELECT 
@@ -51,7 +51,7 @@ router.get('/', authMiddleware, requirePermission('crm.projects', 'view'), async
 
 // GET products that have active BOM (for PPIC integration)
 // IMPORTANT: Must be before /:id route to avoid being caught as dynamic param
-router.get('/products-with-bom', authMiddleware, requirePermission('crm.projects', 'view'), async (_req: Request, res: Response) => {
+router.get('/products-with-bom', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const products = await dbAll(`
       SELECT p.id, p.sku, p.name, p.description, p.selling_price, p.selling_price as price, p.standard_cost,
@@ -70,7 +70,7 @@ router.get('/products-with-bom', authMiddleware, requirePermission('crm.projects
 });
 
 // Get single project details
-router.get('/:id', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const project = await dbGet(`
       SELECT 
@@ -255,7 +255,7 @@ router.delete('/:id', authMiddleware, requirePermission('crm.projects', 'delete'
 // --- Task Routes ---
 
 // Get all tasks for a project
-router.get('/:id/tasks', authMiddleware, requirePermission('crm.tasks', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/tasks', authMiddleware, async (req: Request, res: Response) => {
   try {
     const tasks = await dbAll(`
       SELECT 
@@ -366,7 +366,7 @@ router.delete('/tasks/:taskId', authMiddleware, requirePermission('crm.tasks', '
 // --- Milestone Routes ---
 
 // Get all milestones for a project
-router.get('/:id/milestones', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/milestones', authMiddleware, async (req: Request, res: Response) => {
   try {
     const milestones = await dbAll(`
       SELECT m.*, 
@@ -459,7 +459,7 @@ const upload = multer({
 });
 
 // Get all files for a project
-router.get('/:id/files', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/files', authMiddleware, async (req: Request, res: Response) => {
   try {
     const files = await dbAll(`
       SELECT f.*, u.full_name as uploader_name
@@ -557,7 +557,7 @@ const generateExpenseNumber = () => {
 };
 
 // Get project cost summary (budget vs actual from PR, PO, expenses)
-router.get('/:id/cost-summary', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/cost-summary', authMiddleware, async (req: Request, res: Response) => {
   try {
     const projectId = req.params.id;
 
@@ -654,7 +654,7 @@ router.get('/:id/cost-summary', authMiddleware, requirePermission('crm.projects'
 });
 
 // List project expenses
-router.get('/:id/expenses', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/expenses', authMiddleware, async (req: Request, res: Response) => {
   try {
     const expenses = await dbAll(`
       SELECT e.*, v.name as vendor_name, u.full_name as created_by_name,
@@ -732,7 +732,7 @@ router.delete('/:id/expenses/:expenseId', authMiddleware, requirePermission('crm
 });
 
 // List PRs linked to a project
-router.get('/:id/purchase-requests', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/purchase-requests', authMiddleware, async (req: Request, res: Response) => {
   try {
     const prs = await dbAll(`
       SELECT pr.*, u.full_name as requester_name
@@ -749,7 +749,7 @@ router.get('/:id/purchase-requests', authMiddleware, requirePermission('crm.proj
 });
 
 // List POs linked to a project  
-router.get('/:id/purchase-orders', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/purchase-orders', authMiddleware, async (req: Request, res: Response) => {
   try {
     const pos = await dbAll(`
       SELECT po.*, v.name as vendor_name, pr.pr_number,
@@ -768,7 +768,7 @@ router.get('/:id/purchase-orders', authMiddleware, requirePermission('crm.projec
 });
 
 // List Fund Requests linked to a project
-router.get('/:id/fund-requests', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/fund-requests', authMiddleware, async (req: Request, res: Response) => {
   try {
     const fundRequests = await dbAll(`
       SELECT fr.*, u.full_name as requester_name,
@@ -788,7 +788,7 @@ router.get('/:id/fund-requests', authMiddleware, requirePermission('crm.projects
 // ===== PROJECT FOLDERS =====
 
 // List folders for a project
-router.get('/:id/folders', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/folders', authMiddleware, async (req: Request, res: Response) => {
   try {
     const folders = await dbAll(`
       SELECT pf.*, 
@@ -850,7 +850,7 @@ router.delete('/folders/:folderId', authMiddleware, requirePermission('crm.proje
 // ===== PROJECT NOTES =====
 
 // Get all notes for a project
-router.get('/:id/notes', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/notes', authMiddleware, async (req: Request, res: Response) => {
   try {
     const notes = await dbAll(`
       SELECT n.*, u.full_name as author_name
@@ -911,7 +911,7 @@ router.delete('/notes/:noteId', authMiddleware, requirePermission('crm.projects'
 // ===== PROJECT COMMENTS =====
 
 // Get all comments for a project
-router.get('/:id/comments', authMiddleware, requirePermission('crm.projects', 'view'), async (req: Request, res: Response) => {
+router.get('/:id/comments', authMiddleware, async (req: Request, res: Response) => {
   try {
     const comments = await dbAll(`
       SELECT c.*, u.full_name as user_name

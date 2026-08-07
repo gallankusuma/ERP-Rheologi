@@ -8,7 +8,7 @@ const router = Router();
 // ===== SPECIFIC ROUTES FIRST (before /:id) =====
 
 // Warehouses list
-router.get('/', authMiddleware, requirePermission('master_data.warehouses', 'view'), async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const warehouses = await dbAll('SELECT * FROM warehouses ORDER BY name ASC', []);
     res.json({ data: warehouses });
@@ -37,7 +37,7 @@ router.post('/', authMiddleware, requirePermission('master_data.warehouses', 'cr
 });
 
 // GET /api/warehouses/locations - Fetch all locations across warehouses
-router.get('/locations', authMiddleware, requirePermission('master_data.warehouse-locations', 'view'), async (req: Request, res: Response) => {
+router.get('/locations', authMiddleware, async (req: Request, res: Response) => {
   try {
     const locations = await dbAll(`
       SELECT wl.*, w.name as warehouse_name, w.code as warehouse_code
@@ -53,7 +53,7 @@ router.get('/locations', authMiddleware, requirePermission('master_data.warehous
 });
 
 // Stock movements should be defined before catch-all "/:id" routes
-router.get('/stock-movements', authMiddleware, requirePermission('master_data.warehouses', 'view'), async (req: Request, res: Response) => {
+router.get('/stock-movements', authMiddleware, async (req: Request, res: Response) => {
   try {
     const movements = await dbAll(
       `SELECT sm.*, p.sku, p.name as product_name, w.name as warehouse_name, wl.code as location_code
@@ -121,7 +121,7 @@ router.post('/stock-movements', authMiddleware, requirePermission('master_data.w
 // ===== PARAMETERIZED ROUTES (/:id) =====
 
 // Get single warehouse
-router.get('/:id', authMiddleware, requirePermission('master_data.warehouses', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const warehouse = await dbGet('SELECT * FROM warehouses WHERE id = ?', [req.params.id]);
     if (!warehouse) return res.status(404).json({ error: 'Warehouse not found' });
@@ -159,7 +159,7 @@ router.delete('/:id', authMiddleware, requirePermission('master_data.warehouses'
 });
 
 // Locations
-router.get('/:warehouseId/locations', authMiddleware, requirePermission('master_data.warehouse-locations', 'view'), async (req: Request, res: Response) => {
+router.get('/:warehouseId/locations', authMiddleware, async (req: Request, res: Response) => {
   try {
     const locations = await dbAll(
       'SELECT * FROM warehouse_locations WHERE warehouse_id = ? ORDER BY code ASC',
@@ -200,7 +200,7 @@ router.post('/:warehouseId/locations', authMiddleware, requirePermission('master
 });
 
 // GET /api/warehouses/:warehouseId/locations/:id
-router.get('/:warehouseId/locations/:id', authMiddleware, requirePermission('master_data.warehouse-locations', 'view'), async (req: Request, res: Response) => {
+router.get('/:warehouseId/locations/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const location = await dbGet(`
       SELECT wl.* 
@@ -274,7 +274,7 @@ router.delete('/:warehouseId/locations/:id', authMiddleware, requirePermission('
  * - method: 'FIFO' or 'FEFO' (default: FEFO for safety)
  * - warehouse_id: Optional, specific warehouse
  */
-router.get('/allocate-stock', authMiddleware, requirePermission('master_data.warehouses', 'view'), async (req: Request, res: Response) => {
+router.get('/allocate-stock', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { product_id, quantity, method = 'FEFO', warehouse_id } = req.query;
     
@@ -372,7 +372,7 @@ router.get('/allocate-stock', authMiddleware, requirePermission('master_data.war
  * GET /api/warehouses/:warehouseId/stock-health
  * Get inventory health dashboard for a warehouse
  */
-router.get('/:warehouseId/stock-health', authMiddleware, requirePermission('master_data.warehouses', 'view'), async (req: Request, res: Response) => {
+router.get('/:warehouseId/stock-health', authMiddleware, async (req: Request, res: Response) => {
   try {
 
     // Get low stock items

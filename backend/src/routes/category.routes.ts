@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/categories - Get all categories
-router.get('/', authMiddleware, requirePermission('master_data.categories', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const categories = await dbAll('SELECT * FROM categories ORDER BY name ASC', []);
     res.json({ data: categories });
@@ -17,7 +17,7 @@ router.get('/', authMiddleware, requirePermission('master_data.categories', 'vie
 });
 
 // GET /api/categories/:id - Get specific category
-router.get('/:id', authMiddleware, requirePermission('master_data.categories', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const category = await dbGet('SELECT * FROM categories WHERE id = ?', [req.params.id]);
     

@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/products
-router.get('/', authMiddleware, requirePermission('master_data.items', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const products = await dbAll(`
       SELECT 
@@ -32,7 +32,7 @@ router.get('/', authMiddleware, requirePermission('master_data.items', 'view'), 
 });
 
 // GET /api/products/:id
-router.get('/:id', authMiddleware, requirePermission('master_data.items', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const product = await dbGet('SELECT * FROM products WHERE id = ?', [req.params.id]);
     

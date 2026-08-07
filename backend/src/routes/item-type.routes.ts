@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/item-types - Get all item types
-router.get('/', authMiddleware, requirePermission('master_data.item-types', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const types = await dbAll('SELECT * FROM product_types ORDER BY name ASC', []);
     res.json({ data: types });
@@ -17,7 +17,7 @@ router.get('/', authMiddleware, requirePermission('master_data.item-types', 'vie
 });
 
 // GET /api/item-types/:id - Get specific item type
-router.get('/:id', authMiddleware, requirePermission('master_data.item-types', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const type = await dbGet('SELECT * FROM product_types WHERE id = ?', [req.params.id]);
     

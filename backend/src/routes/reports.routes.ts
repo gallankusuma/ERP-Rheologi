@@ -7,7 +7,7 @@ const router = Router();
 
 // ─── PRODUCTION REPORTS ─────────────────────────────────
 
-router.get('/production', authMiddleware, requirePermission('reports.production', 'view'), async (req: Request, res: Response) => {
+router.get('/production', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { from_date, to_date } = req.query;
     let dateFilter = '';
@@ -55,7 +55,7 @@ router.get('/production', authMiddleware, requirePermission('reports.production'
 
 // ─── INVENTORY REPORTS ──────────────────────────────────
 
-router.get('/inventory', authMiddleware, requirePermission('reports.inventory', 'view'), async (req: Request, res: Response) => {
+router.get('/inventory', authMiddleware, async (req: Request, res: Response) => {
   try {
     const summary = await dbGet(`
       SELECT
@@ -98,7 +98,7 @@ router.get('/inventory', authMiddleware, requirePermission('reports.inventory', 
 
 // ─── PROCUREMENT REPORTS ────────────────────────────────
 
-router.get('/procurement', authMiddleware, requirePermission('reports.procurement', 'view'), async (req: Request, res: Response) => {
+router.get('/procurement', authMiddleware, async (req: Request, res: Response) => {
   try {
     const summary = await dbGet(`
       SELECT
@@ -142,7 +142,7 @@ router.get('/procurement', authMiddleware, requirePermission('reports.procuremen
 
 // ─── QC REPORTS ─────────────────────────────────────────
 
-router.get('/qc', authMiddleware, requirePermission('reports.qc', 'view'), async (req: Request, res: Response) => {
+router.get('/qc', authMiddleware, async (req: Request, res: Response) => {
   try {
     const summary = await dbGet(`
       SELECT
@@ -191,7 +191,7 @@ router.get('/qc', authMiddleware, requirePermission('reports.qc', 'view'), async
 
 // ─── SALES REPORTS ──────────────────────────────────────
 
-router.get('/sales', authMiddleware, requirePermission('reports.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/sales', authMiddleware, async (req: Request, res: Response) => {
   try {
     const summary = await dbGet(`
       SELECT
@@ -236,7 +236,7 @@ router.get('/sales', authMiddleware, requirePermission('reports.sales', 'view'),
 
 // ─── FINANCE REPORTS ────────────────────────────────────
 
-router.get('/finance', authMiddleware, requirePermission('reports.finance', 'view'), async (req: Request, res: Response) => {
+router.get('/finance', authMiddleware, async (req: Request, res: Response) => {
   try {
     const cogsSum = await dbGet(`
       SELECT SUM(material_cost) AS material, SUM(labor_cost) AS labor,

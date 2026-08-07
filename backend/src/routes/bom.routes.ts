@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/bom - Get all BOM headers
-router.get('/', authMiddleware, requirePermission('master_data.bom', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const boms = await dbAll(`
       SELECT bh.id, bh.product_name, bh.product_id, bh.version, bh.status, bh.notes, 
@@ -30,7 +30,7 @@ router.get('/', authMiddleware, requirePermission('master_data.bom', 'view'), as
 });
 
 // GET /api/bom/:id - Get specific BOM header with details
-router.get('/:id', authMiddleware, requirePermission('master_data.bom', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const bomHeader = await dbGet(`
       SELECT bh.id, bh.product_name, bh.product_id, bh.version, bh.status, bh.notes, 

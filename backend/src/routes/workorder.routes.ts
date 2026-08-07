@@ -40,7 +40,7 @@ function validateTransition(currentStatus: string, newStatus: string): { valid: 
 }
 
 // GET /api/workorders
-router.get('/', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const workOrders = await dbAll(
       `SELECT w.*, p.name as product_name, p.sku,
@@ -60,7 +60,7 @@ router.get('/', authMiddleware, requirePermission('production.workorders', 'view
 });
 
 // GET /api/workorders/:id
-router.get('/:id', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const workOrder = await dbGet(
       `SELECT w.*, p.name as product_name, p.sku,

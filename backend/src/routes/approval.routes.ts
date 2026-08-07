@@ -236,7 +236,7 @@ router.put('/inbox/:id/reject', authMiddleware, async (req: Request, res: Respon
 // ─── HISTORY ────────────────────────────────────────────
 
 // GET /history — all past approval actions for current user or all
-router.get('/history', authMiddleware, requirePermission('approval.history', 'view'), async (req: Request, res: Response) => {
+router.get('/history', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { module, entity_type, status, from_date, to_date } = req.query;
 
@@ -273,7 +273,7 @@ router.get('/history', authMiddleware, requirePermission('approval.history', 'vi
 });
 
 // GET /history/stats — aggregate stats
-router.get('/history/stats', authMiddleware, requirePermission('approval.history', 'view'), async (req: Request, res: Response) => {
+router.get('/history/stats', authMiddleware, async (req: Request, res: Response) => {
   try {
     const stats = await dbGet(`
       SELECT
@@ -294,7 +294,7 @@ router.get('/history/stats', authMiddleware, requirePermission('approval.history
 // ─── RULES ──────────────────────────────────────────────
 
 // GET /rules — list all approval rules with their steps
-router.get('/rules', authMiddleware, requirePermission('approval.rules', 'view'), async (req: Request, res: Response) => {
+router.get('/rules', authMiddleware, async (req: Request, res: Response) => {
   try {
     const rules = await dbAll(`
       SELECT ar.*, r.name AS approver_role_name
@@ -396,7 +396,7 @@ router.delete('/rules/:id', authMiddleware, requirePermission('approval.rules', 
 // ─── DELEGATION ─────────────────────────────────────────
 
 // GET /delegations
-router.get('/delegations', authMiddleware, requirePermission('approval.delegation', 'view'), async (req: Request, res: Response) => {
+router.get('/delegations', authMiddleware, async (req: Request, res: Response) => {
   try {
     const delegations = await dbAll(`
       SELECT d.*, 
@@ -458,7 +458,7 @@ router.delete('/delegations/:id', authMiddleware, requirePermission('approval.de
 // ─── ESCALATION ─────────────────────────────────────────
 
 // GET /escalations
-router.get('/escalations', authMiddleware, requirePermission('approval.escalation', 'view'), async (req: Request, res: Response) => {
+router.get('/escalations', authMiddleware, async (req: Request, res: Response) => {
   try {
     const escalations = await dbAll(`
       SELECT e.*, u.full_name AS escalate_to_name

@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // Get all units
-router.get('/', authMiddleware, requirePermission('master_data.units', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const units = await dbAll('SELECT * FROM uom ORDER BY name ASC', []);
     res.json({ data: units });
@@ -17,7 +17,7 @@ router.get('/', authMiddleware, requirePermission('master_data.units', 'view'), 
 });
 
 // Get unit by ID
-router.get('/:id', authMiddleware, requirePermission('master_data.units', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const unit = await dbGet('SELECT * FROM uom WHERE id = ?', [id]);

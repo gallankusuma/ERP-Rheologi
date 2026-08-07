@@ -24,7 +24,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
 
 // GET /api/docs - List documents
-router.get('/', authMiddleware, requirePermission('admin.document-control', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const docs = await dbAll('SELECT d.*, u.full_name as uploader_name FROM document_control d LEFT JOIN users u ON d.uploaded_by = u.id ORDER BY d.expiry_date ASC');
     res.json({ data: docs });
@@ -112,7 +112,7 @@ router.delete('/:id', authMiddleware, requirePermission('admin.document-control'
 });
 
 // GET /api/docs/check-expiry - Check expiries and generate notifications
-router.get('/check-expiry', authMiddleware, requirePermission('admin.document-control', 'view'), async (req: Request, res: Response) => {
+router.get('/check-expiry', authMiddleware, async (req: Request, res: Response) => {
   try {
     // Find documents that are expiring within reminder_days and have not been 'Renewed' or 'Expired'
     const docs = await dbAll("SELECT * FROM document_control WHERE expiry_date IS NOT NULL AND status NOT IN ('Renewed')");

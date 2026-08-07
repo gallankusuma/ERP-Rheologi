@@ -10,7 +10,7 @@ const router = Router();
 // ============================================
 
 // Get all disciplines
-router.get('/disciplines', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (_req: Request, res: Response) => {
+router.get('/disciplines', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const disciplines = await dbAll(
       `SELECT id, code, name, order_no, is_active 
@@ -26,7 +26,7 @@ router.get('/disciplines', authMiddleware, requirePermission('estimator.ahsp', '
 });
 
 // Get sub-disciplines by discipline
-router.get('/disciplines/:disciplineId/sub-disciplines', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
+router.get('/disciplines/:disciplineId/sub-disciplines', authMiddleware, async (req: Request, res: Response) => {
   try {
     const subDisciplines = await dbAll(
       `SELECT id, discipline_id, code, name, order_no, is_active
@@ -82,7 +82,7 @@ router.post('/disciplines/:disciplineId/sub-disciplines', authMiddleware, requir
 });
 
 // Get all labor
-router.get('/masters/labor', authMiddleware, requirePermission('estimator.masters', 'view'), async (_req: Request, res: Response) => {
+router.get('/masters/labor', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const labor = await dbAll(
       `SELECT id, code, name, satuan, harga, is_active
@@ -173,7 +173,7 @@ router.delete('/masters/labor/:id', authMiddleware, requirePermission('estimator
 });
 
 // Get all materials
-router.get('/masters/materials', authMiddleware, requirePermission('estimator.masters', 'view'), async (_req: Request, res: Response) => {
+router.get('/masters/materials', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT m.id, m.code, m.jenis, m.name, m.satuan, m.harga, m.vendor_id, v.name as vendor_name, m.is_active
@@ -265,7 +265,7 @@ router.delete('/masters/materials/:id', authMiddleware, requirePermission('estim
 });
 
 // Get all equipment
-router.get('/masters/equipment', authMiddleware, requirePermission('estimator.masters', 'view'), async (_req: Request, res: Response) => {
+router.get('/masters/equipment', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const equipment = await dbAll(
       `SELECT e.id, e.code, e.name, e.satuan, e.harga, e.vendor_id, v.name as vendor_name, e.is_active
@@ -361,7 +361,7 @@ router.delete('/masters/equipment/:id', authMiddleware, requirePermission('estim
 // ============================================
 
 // Get next AHSP code
-router.get('/ahsp/next-code', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
+router.get('/ahsp/next-code', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { sub_discipline_id, discipline_id } = req.query;
     
@@ -422,7 +422,7 @@ router.delete('/ahsp/:id', authMiddleware, requirePermission('estimator.ahsp', '
 });
 
 // Get AHSP list (with optional filtering by sub-discipline)
-router.get('/ahsp', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
+router.get('/ahsp', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { sub_discipline_id, search } = req.query;
     
@@ -467,7 +467,7 @@ router.get('/ahsp', authMiddleware, requirePermission('estimator.ahsp', 'view'),
 });
 
 // Get AHSP detail with items breakdown
-router.get('/ahsp/:id', authMiddleware, requirePermission('estimator.ahsp', 'view'), async (req: Request, res: Response) => {
+router.get('/ahsp/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const ahsp = await dbGet(
       `SELECT h.*, sdm.sub_discipline_id
@@ -722,7 +722,7 @@ router.post('/ahsp/:id/calculate', authMiddleware, requirePermission('estimator.
 // ============================================
 
 // Get all proposals
-router.get('/proposals', authMiddleware, requirePermission('estimator.proposals', 'view'), async (_req: Request, res: Response) => {
+router.get('/proposals', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const proposals = await dbAll(
       `SELECT p.*, u.username as created_by_name
@@ -738,7 +738,7 @@ router.get('/proposals', authMiddleware, requirePermission('estimator.proposals'
 });
 
 // Get proposal detail
-router.get('/proposals/:id', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
+router.get('/proposals/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const proposal = await dbGet(
       `SELECT p.*, u.username as created_by_name
@@ -760,7 +760,7 @@ router.get('/proposals/:id', authMiddleware, requirePermission('estimator.propos
 });
 
 // Get proposal items (grouped by discipline & sub-discipline)
-router.get('/proposals/:id/items', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
+router.get('/proposals/:id/items', authMiddleware, async (req: Request, res: Response) => {
   try {
     const items = await dbAll(
       `SELECT 
@@ -1059,7 +1059,7 @@ router.delete('/proposals/:proposalId/items/:itemId', authMiddleware, requirePer
 });
 
 // Get proposal summary/calculations
-router.get('/proposals/:id/summary', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
+router.get('/proposals/:id/summary', authMiddleware, async (req: Request, res: Response) => {
   try {
     const proposalId = req.params.id;
     
@@ -1140,7 +1140,7 @@ async function recalculateProposal(proposalId: string | number) {
 // ============================================
 
 // Get RAB Report Data (grouped by discipline and sub-discipline with calculations)
-router.get('/proposals/:id/rab', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
+router.get('/proposals/:id/rab', authMiddleware, async (req: Request, res: Response) => {
   try {
     const proposalId = req.params.id;
     
@@ -1461,7 +1461,7 @@ router.put('/proposals/:id/status', authMiddleware, requirePermission('estimator
 // ============================================
 // PROPOSAL RESUME (Resource Summary)
 // ============================================
-router.get('/proposals/:id/resume', authMiddleware, requirePermission('estimator.proposals', 'view'), async (req: Request, res: Response) => {
+router.get('/proposals/:id/resume', authMiddleware, async (req: Request, res: Response) => {
   try {
     const proposalId = req.params.id;
 

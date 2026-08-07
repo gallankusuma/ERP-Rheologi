@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/departments - Get all departments
-router.get('/', authMiddleware, requirePermission('master_data.departments', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const departments = await dbAll(
       `
@@ -27,7 +27,7 @@ router.get('/', authMiddleware, requirePermission('master_data.departments', 'vi
 });
 
 // GET /api/departments/:id - Get specific department with users
-router.get('/:id', authMiddleware, requirePermission('master_data.departments', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const department = await dbGet(
       `

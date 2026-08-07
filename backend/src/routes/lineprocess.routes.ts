@@ -6,7 +6,7 @@ import { requirePermission } from '../middleware/permission';
 const router = Router();
 
 // GET /api/line-processes - Get all line processes with products
-router.get('/', authMiddleware, requirePermission('master_data.line-processes', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const lines = await dbAll(
       `SELECT lp.*, u.name as unit_name, u.code as unit_code
@@ -37,7 +37,7 @@ router.get('/', authMiddleware, requirePermission('master_data.line-processes', 
 });
 
 // GET /api/line-processes/:id - Get specific line process
-router.get('/:id', authMiddleware, requirePermission('master_data.line-processes', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const line = await dbGet(
       `SELECT lp.*, u.name as unit_name, u.code as unit_code

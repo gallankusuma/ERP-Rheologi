@@ -10,7 +10,7 @@ const router = express.Router();
 // ============================================
 
 // GET /api/clients - List all clients with filters
-router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { search, group_id, label_id, has_due, has_open_projects, my_clients, page = 1, limit = 10 } = req.query;
 
@@ -105,7 +105,7 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
 });
 
 // GET /api/clients/dashboard - Dashboard overview metrics
-router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
   try {
     // Total clients
     const totalClients = await dbGet('SELECT COUNT(*) as count FROM clients WHERE is_active = 1', []);
@@ -197,7 +197,7 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
 });
 
 // GET /api/clients/:id - Get single client with full details
-router.get('/:id', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const client = await dbGet(
       `SELECT c.*, cg.name as group_name, cg.color as group_color
@@ -426,7 +426,7 @@ router.delete('/:id/labels/:labelId', authMiddleware, requirePermission('crm.cli
 // ============================================
 
 // GET /api/clients/contacts/all - List all contacts
-router.get('/contacts/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
+router.get('/contacts/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
 
@@ -564,7 +564,7 @@ router.delete('/contacts/:contactId', authMiddleware, requirePermission('crm.cli
 // ============================================
 
 // GET /api/clients/labels - List all labels
-router.get('/labels/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
+router.get('/labels/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const labels = await dbAll('SELECT * FROM client_labels ORDER BY name ASC', []);
     res.json({ data: labels });
@@ -575,7 +575,7 @@ router.get('/labels/all', authMiddleware, requirePermission('crm.clients', 'view
 });
 
 // GET /api/clients/groups - List all groups
-router.get('/groups/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
+router.get('/groups/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const groups = await dbAll('SELECT * FROM client_groups ORDER BY name ASC', []);
     res.json({ data: groups });
@@ -586,7 +586,7 @@ router.get('/groups/all', authMiddleware, requirePermission('crm.clients', 'view
 });
 
 // GET /api/clients/event-types - List all event types
-router.get('/event-types/all', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
+router.get('/event-types/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const eventTypes = await dbAll('SELECT * FROM event_types ORDER BY name ASC', []);
     res.json({ data: eventTypes });
@@ -601,7 +601,7 @@ router.get('/event-types/all', authMiddleware, requirePermission('crm.events', '
 // ============================================
 
 // GET /api/clients/events/all - List all client events with visibility filtering
-router.get('/events/all', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
+router.get('/events/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { page = 1, limit = 100 } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -662,7 +662,7 @@ router.get('/events/all', authMiddleware, requirePermission('crm.events', 'view'
 });
 
 // GET /api/clients/:client_id/events - List events for a specific client
-router.get('/:client_id/events', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
+router.get('/:client_id/events', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { client_id } = req.params;
     const { page = 1, limit = 50 } = req.query;

@@ -18,7 +18,7 @@ const generateFPANumber = (type: string) => {
 // ============================================================
 
 // --- Parameters ---
-router.get('/parameters', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/parameters', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_parameters ORDER BY name ASC');
     res.json({ success: true, data });
@@ -57,7 +57,7 @@ router.delete('/parameters/:id', authMiddleware, requirePermission('quality.qc-m
 });
 
 // --- Methods ---
-router.get('/methods', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/methods', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_methods ORDER BY name ASC');
     res.json({ success: true, data });
@@ -96,7 +96,7 @@ router.delete('/methods/:id', authMiddleware, requirePermission('quality.qc-mast
 });
 
 // --- Instruments ---
-router.get('/instruments', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/instruments', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_instruments ORDER BY name ASC');
     res.json({ success: true, data });
@@ -135,7 +135,7 @@ router.delete('/instruments/:id', authMiddleware, requirePermission('quality.qc-
 });
 
 // --- Sampling Areas ---
-router.get('/areas', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/areas', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll('SELECT * FROM qc_sampling_areas ORDER BY name ASC');
     res.json({ success: true, data });
@@ -177,7 +177,7 @@ router.delete('/areas/:id', authMiddleware, requirePermission('quality.qc-master
 // ============================================================
 // QC SPECIFICATIONS (Per Item)
 // ============================================================
-router.get('/specs/:product_id', authMiddleware, requirePermission('quality.qc-master', 'view'), async (req: Request, res: Response) => {
+router.get('/specs/:product_id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const qcType = req.query.qc_type as string || null;
     let query = `
@@ -239,7 +239,7 @@ router.delete('/specs/:id', authMiddleware, requirePermission('quality.qc-master
 // ============================================================
 // ANALYSIS REQUESTS (FPA)
 // ============================================================
-router.get('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'view'), async (req: Request, res: Response) => {
+router.get('/fpa', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll(`
       SELECT f.*, p.name as product_name, p.sku as product_sku, a.name as area_name, u.full_name as created_by_name
@@ -285,7 +285,7 @@ router.post('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'create'
   }
 });
 
-router.get('/fpa/:id', authMiddleware, requirePermission('quality.qc-fpa', 'view'), async (req: Request, res: Response) => {
+router.get('/fpa/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     const fpa = await dbGet(`
       SELECT f.*, p.name as product_name, a.name as area_name
@@ -371,7 +371,7 @@ router.put('/fpa/:id/results', authMiddleware, requirePermission('quality.qc-fpa
 });
 
 // --- User Area Sampling ---
-router.get('/user-areas', authMiddleware, requirePermission('quality.qc-fpa', 'view'), async (req: Request, res: Response) => {
+router.get('/user-areas', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll(`
       SELECT ua.id, ua.user_id, ua.area_id, u.full_name as user_name, a.name as area_name

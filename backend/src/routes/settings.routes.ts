@@ -7,7 +7,7 @@ const router = express.Router();
 
 // ===== SYSTEM SETTINGS ENDPOINTS =====
 
-router.get('/all', authMiddleware, requirePermission('admin.settings', 'view'), async (req: Request, res: Response) => {
+router.get('/all', authMiddleware, async (req: Request, res: Response) => {
   try {
     const settings = await dbAll(
       'SELECT * FROM system_settings ORDER BY category, setting_key ASC'
@@ -19,7 +19,7 @@ router.get('/all', authMiddleware, requirePermission('admin.settings', 'view'), 
   }
 });
 
-router.get('/category/:category', authMiddleware, requirePermission('admin.settings', 'view'), async (req: Request, res: Response) => {
+router.get('/category/:category', authMiddleware, async (req: Request, res: Response) => {
   try {
     const settings = await dbAll(
       'SELECT * FROM system_settings WHERE category = ? ORDER BY setting_key ASC',
@@ -32,7 +32,7 @@ router.get('/category/:category', authMiddleware, requirePermission('admin.setti
   }
 });
 
-router.get('/:key', authMiddleware, requirePermission('admin.settings', 'view'), async (req: Request, res: Response) => {
+router.get('/:key', authMiddleware, async (req: Request, res: Response) => {
   try {
     const setting = await dbGet(
       'SELECT * FROM system_settings WHERE setting_key = ?',
@@ -117,7 +117,7 @@ router.put('/:key', authMiddleware, requirePermission('admin.settings', 'update'
 
 // ===== KPI DASHBOARD ENDPOINTS =====
 
-router.get('/dashboard/overview', authMiddleware, requirePermission('dashboard.overview', 'view'), async (req: Request, res: Response) => {
+router.get('/dashboard/overview', authMiddleware, async (req: Request, res: Response) => {
   try {
     // Production KPI
     const production = await dbGet(
@@ -175,7 +175,7 @@ router.get('/dashboard/overview', authMiddleware, requirePermission('dashboard.o
   }
 });
 
-router.get('/dashboard/production', authMiddleware, requirePermission('dashboard.production', 'view'), async (req: Request, res: Response) => {
+router.get('/dashboard/production', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll(
       `SELECT 
@@ -195,7 +195,7 @@ router.get('/dashboard/production', authMiddleware, requirePermission('dashboard
   }
 });
 
-router.get('/dashboard/inventory', authMiddleware, requirePermission('dashboard.inventory', 'view'), async (req: Request, res: Response) => {
+router.get('/dashboard/inventory', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll(
       `SELECT 
@@ -215,7 +215,7 @@ router.get('/dashboard/inventory', authMiddleware, requirePermission('dashboard.
   }
 });
 
-router.get('/dashboard/sales', authMiddleware, requirePermission('dashboard.sales', 'view'), async (req: Request, res: Response) => {
+router.get('/dashboard/sales', authMiddleware, async (req: Request, res: Response) => {
   try {
     const data = await dbAll(
       `SELECT 
