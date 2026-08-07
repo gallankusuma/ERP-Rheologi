@@ -106,7 +106,7 @@ function getWeekDateRange(year: number, week: number): { start: string; end: str
 }
 
 // GET /mps - List MPS headers
-router.get('/mps', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mps', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
   try {
     const { year, month, status } = req.query;
     let query = `
@@ -131,7 +131,7 @@ router.get('/mps', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /mps/:id - Get MPS with details + weekly grid
-router.get('/mps/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const header = await dbGet(`
@@ -869,7 +869,7 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('
 // ==========================================
 
 // GET /mrp - Standalone MRP: aggregate gross requirements per unique raw material across all confirmed MPS
-router.get('/mrp', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const currentYear = now.getFullYear();
@@ -1225,7 +1225,7 @@ router.delete('/forecast-brands/:id', authMiddleware, requirePermission('master_
 });
 
 // GET /forecasts - List forecast headers
-router.get('/forecasts', authMiddleware, async (req: Request, res: Response) => {
+router.get('/forecasts', authMiddleware, requirePermission('ppic.forecast', 'view'), async (req: Request, res: Response) => {
   try {
     const { year, month } = req.query;
     let sql = 'SELECT * FROM forecast_headers';
@@ -1266,7 +1266,7 @@ router.post('/forecasts', authMiddleware, requirePermission('ppic.forecast', 'cr
 });
 
 // GET /forecasts/:id - Get forecast with grid data
-router.get('/forecasts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/forecasts/:id', authMiddleware, requirePermission('ppic.forecast', 'view'), async (req: Request, res: Response) => {
   try {
     const header = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]);
     if (!header) return res.status(404).json({ error: 'Forecast not found' });

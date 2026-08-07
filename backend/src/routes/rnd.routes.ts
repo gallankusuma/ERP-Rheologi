@@ -20,7 +20,7 @@ const authMiddleware = (req: Request, res: Response, next: Function) => {
 // ==================== R&D PROJECTS ====================
 
 // GET all projects
-router.get('/projects', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT p.*, u.full_name as leader_name, d.name as department_name
@@ -34,7 +34,7 @@ router.get('/projects', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET single project
-router.get('/projects/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects/:id', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT p.*, u.full_name as leader_name, d.name as department_name
@@ -146,7 +146,7 @@ router.delete('/projects/:id', authMiddleware, requirePermission('rnd.rnd-projec
 // ==================== FORMULATIONS ====================
 
 // GET all formulations
-router.get('/formulations', authMiddleware, async (req: Request, res: Response) => {
+router.get('/formulations', authMiddleware, requirePermission('rnd.rnd-formulations', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT f.*, p.name as project_name, u.full_name as approved_by_name
@@ -160,7 +160,7 @@ router.get('/formulations', authMiddleware, async (req: Request, res: Response) 
 });
 
 // GET single formulation with ingredients
-router.get('/formulations/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/formulations/:id', authMiddleware, requirePermission('rnd.rnd-formulations', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT f.*, p.name as project_name FROM rnd_formulations f
@@ -236,7 +236,7 @@ router.delete('/formulations/:id', authMiddleware, requirePermission('rnd.rnd-fo
 // ==================== LAB TESTS ====================
 
 // GET all lab tests
-router.get('/lab-tests', authMiddleware, async (req: Request, res: Response) => {
+router.get('/lab-tests', authMiddleware, requirePermission('rnd.rnd-lab-testing', 'view'), async (req: Request, res: Response) => {
   try {
     let where = '';
     const params: any[] = [];
@@ -256,7 +256,7 @@ router.get('/lab-tests', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // GET single lab test
-router.get('/lab-tests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/lab-tests/:id', authMiddleware, requirePermission('rnd.rnd-lab-testing', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT t.*, f.name as formulation_name, f.formula_code,
@@ -308,7 +308,7 @@ router.delete('/lab-tests/:id', authMiddleware, async (req: Request, res: Respon
 // ==================== STABILITY STUDIES ====================
 
 // GET all stability studies
-router.get('/stability', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stability', authMiddleware, requirePermission('rnd.rnd-stability', 'view'), async (req: Request, res: Response) => {
   try {
     let where = '';
     const params: any[] = [];
@@ -327,7 +327,7 @@ router.get('/stability', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // GET single stability study with checkpoints
-router.get('/stability/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stability/:id', authMiddleware, requirePermission('rnd.rnd-stability', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT s.*, f.name as formulation_name, f.formula_code
@@ -402,7 +402,7 @@ router.delete('/stability/:id', authMiddleware, async (req: Request, res: Respon
 // ==================== PROJECT TASKS (per-project Kanban) ====================
 
 // GET tasks for a project
-router.get('/projects/:projectId/tasks', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects/:projectId/tasks', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT t.*, u.full_name as assigned_name FROM rnd_project_tasks t
@@ -455,7 +455,7 @@ router.delete('/tasks/:id', authMiddleware, requirePermission('rnd.rnd-projects'
 });
 
 // ==================== DASHBOARD / STATS ====================
-router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [projects] = await pool.query<RowDataPacket[]>('SELECT status, COUNT(*) as count FROM rnd_projects GROUP BY status');
     const [formulations] = await pool.query<RowDataPacket[]>('SELECT status, COUNT(*) as count FROM rnd_formulations GROUP BY status');
@@ -468,7 +468,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
 // ==================== MILESTONES ====================
 
 // GET milestones for a project
-router.get('/projects/:projectId/milestones', authMiddleware, async (req: Request, res: Response) => {
+router.get('/projects/:projectId/milestones', authMiddleware, requirePermission('rnd.rnd-projects', 'view'), async (req: Request, res: Response) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT m.*, u.full_name as assigned_name FROM rnd_milestones m
@@ -648,7 +648,7 @@ router.delete('/folders/:id', authMiddleware, async (req: Request, res: Response
 // ==================== R&D SPECIFICATIONS ====================
 
 // LIST specifications with search/filter/pagination
-router.get('/specifications', authMiddleware, async (req: Request, res: Response) => {
+router.get('/specifications', authMiddleware, requirePermission('rnd.specifications', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, process_type, sample_type, source, active, page = '1', limit = '50' } = req.query;
     const conditions: string[] = [];
@@ -695,7 +695,7 @@ router.get('/specifications', authMiddleware, async (req: Request, res: Response
 });
 
 // GET specification detail with samples, parameters, items
-router.get('/specifications/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/specifications/:id', authMiddleware, requirePermission('rnd.specifications', 'view'), async (req: Request, res: Response) => {
   try {
     const [[spec]]: any = await pool.query<RowDataPacket[]>(
       'SELECT * FROM rnd_specifications WHERE id = ?', [req.params.id]

@@ -119,7 +119,7 @@ router.put('/tasks/:id/status', authMiddleware, requirePermission('production.pl
 // ============================================================
 // Production Planning — schedule & capacity
 // ============================================================
-router.get('/planning', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/planning', authMiddleware, requirePermission('production.production-planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const workOrders = await dbAll(
       `SELECT w.id, w.wo_number, w.quantity, w.status, w.scheduled_start, w.scheduled_end,
@@ -138,7 +138,7 @@ router.get('/planning', authMiddleware, async (_req: Request, res: Response) => 
   }
 });
 
-router.get('/planning/summary', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/planning/summary', authMiddleware, requirePermission('production.production-planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const summary = await dbAll(
       `SELECT status, COUNT(*) as count, SUM(quantity) as total_qty
@@ -158,7 +158,7 @@ router.get('/planning/summary', authMiddleware, async (_req: Request, res: Respo
 });
 
 // GET /planning/weekly — MPS-style weekly grid data
-router.get('/planning/weekly', authMiddleware, async (req: Request, res: Response) => {
+router.get('/planning/weekly', authMiddleware, requirePermission('production.production-planning', 'view'), async (req: Request, res: Response) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const month = Number(req.query.month) || (new Date().getMonth() + 1);
@@ -336,7 +336,7 @@ router.get('/planning/weekly', authMiddleware, async (req: Request, res: Respons
 // ============================================================
 // MRP — Material Requirement Planning
 // ============================================================
-router.get('/mrp', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/mrp', authMiddleware, requirePermission('production.mrp', 'view'), async (_req: Request, res: Response) => {
   try {
     // Get all pending/planned WOs and explode BOM to find material requirements
     const requirements = await dbAll(
@@ -364,7 +364,7 @@ router.get('/mrp', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/mrp/shortage', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/mrp/shortage', authMiddleware, requirePermission('production.mrp', 'view'), async (_req: Request, res: Response) => {
   try {
     const shortages = await dbAll(
       `SELECT rm.id AS product_id, rm.name AS material_name, rm.sku AS material_sku,
@@ -390,7 +390,7 @@ router.get('/mrp/shortage', authMiddleware, async (_req: Request, res: Response)
 // ============================================================
 // Issue Material — pick materials from warehouse for WO
 // ============================================================
-router.get('/issue-material', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/issue-material', authMiddleware, requirePermission('production.issue-material', 'view'), async (_req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT wm.id, wm.wo_id, w.wo_number,
@@ -415,7 +415,7 @@ router.get('/issue-material', authMiddleware, async (_req: Request, res: Respons
   }
 });
 
-router.get('/issue-material/wo/:woId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/issue-material/wo/:woId', authMiddleware, requirePermission('production.issue-material', 'view'), async (req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT wm.id, wm.product_id, p.name AS material_name, p.sku AS material_sku,
@@ -536,7 +536,7 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
 // ============================================================
 // Production Execution — real-time WO tracking & process logging
 // ============================================================
-router.get('/execution', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/execution', authMiddleware, requirePermission('production.production-execution', 'view'), async (_req: Request, res: Response) => {
   try {
     const active = await dbAll(
       `SELECT w.id, w.wo_number, w.quantity, w.status,
@@ -629,7 +629,7 @@ router.post('/execution/:woId/complete', authMiddleware, requirePermission('prod
 });
 
 // Process logs for a WO
-router.get('/execution/:woId/logs', authMiddleware, async (req: Request, res: Response) => {
+router.get('/execution/:woId/logs', authMiddleware, requirePermission('production.production-execution', 'view'), async (req: Request, res: Response) => {
   try {
     const logs = await dbAll(
       `SELECT wpl.*, COALESCE(u.full_name, u.username) AS recorded_by_name
@@ -887,7 +887,7 @@ router.post('/execution/:woId/trigger-qc/:checkpointId', authMiddleware, require
 // ============================================================
 // Yield & Scrap — record output and losses
 // ============================================================
-router.get('/yield', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/yield', authMiddleware, requirePermission('production.yield-scrap', 'view'), async (_req: Request, res: Response) => {
   try {
     const results = await dbAll(
       `SELECT wr.id, wr.wo_id, w.wo_number,
@@ -909,7 +909,7 @@ router.get('/yield', authMiddleware, async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/yield/wo/:woId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/yield/wo/:woId', authMiddleware, requirePermission('production.yield-scrap', 'view'), async (req: Request, res: Response) => {
   try {
     const result = await dbGet(
       `SELECT wr.*, w.wo_number, w.quantity AS planned_quantity, p.name AS product_name
@@ -967,7 +967,7 @@ router.put('/yield/:id', authMiddleware, requirePermission('production.yield-scr
 // ============================================================
 // FG Receipt — receive finished goods into warehouse
 // ============================================================
-router.get('/fg-receipt', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-receipt', 'view'), async (_req: Request, res: Response) => {
   try {
     const receipts = await dbAll(
       `SELECT w.id AS wo_id, w.wo_number, w.quantity AS planned_qty, w.status,
@@ -1094,7 +1094,7 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
 // ============================================================
 // Production History — all WOs with full detail
 // ============================================================
-router.get('/history', authMiddleware, async (req: Request, res: Response) => {
+router.get('/history', authMiddleware, requirePermission('production.production-history', 'view'), async (req: Request, res: Response) => {
   try {
     const { status, from_date, to_date, search } = req.query;
     let sql = `SELECT w.id, w.wo_number, w.quantity, w.status,
@@ -1136,7 +1136,7 @@ router.get('/history', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/history/stats', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/history/stats', authMiddleware, requirePermission('production.production-history', 'view'), async (_req: Request, res: Response) => {
   try {
     const stats = await dbGet(
       `SELECT
@@ -1156,7 +1156,7 @@ router.get('/history/stats', authMiddleware, async (_req: Request, res: Response
 });
 
 // GET /mrp/dashboard - MRP dashboard with shortage summary
-router.get('/mrp/dashboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp', 'view'), async (req: Request, res: Response) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
 

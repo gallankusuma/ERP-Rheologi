@@ -1,39 +1,72 @@
-Untuk implementasi Roles & Permissions, mohon gunakan prinsip berikut sebagai final design:
+Team, hasil review terakhir untuk revisi Roles & Permissions di commit `be834df` sudah jauh lebih baik dan secara arsitektur sudah sesuai arah yang kita mau.
 
-`user_level` atau `role.level` TIDAK menentukan hak akses aplikasi.
+Yang sudah dianggap benar:
 
-Seluruh hak akses user harus berasal dari:
+- Access control tidak lagi bergantung pada `user_level`.
+- Source of truth akses sekarang: User → Role → Role Permissions → Permission.
+- Frontend menu/route guard sudah membaca permission user.
+- Backend mutation sudah menggunakan permission resource/action.
+- `edit` sudah distandardisasi menjadi `update`.
+- Permission refresh melalui `/auth/me` sudah membantu sinkronisasi setelah perubahan role/permission.
+- Perubahan RBAC terakhir tidak terlihat merusak core business flow CRM.
 
-User → Role → Role Permissions → Permission (resource + action)
+Untuk tahap ini, jangan lakukan refactor besar lagi pada Roles & Permissions. Fokus hanya pada hardening yang terarah.
 
-Dengan demikian:
+Satu catatan yang masih perlu dibereskan:
 
-1. Hapus penggunaan `userLevel` / `user_level` sebagai bypass pada authorization middleware.
+Saat ini sebagian besar GET endpoint hanya menggunakan `authMiddleware`, sementara permission `view` lebih banyak ditegakkan di frontend.
 
-2. Hapus penggunaan `user_level` sebagai bypass pada frontend `hasPermission` dan router/menu guard.
+Kita perlu membedakan dua tipe GET:
 
-3. Role biasa maupun Administrator memperoleh akses berdasarkan permission yang diberikan melalui Roles & Permissions.
+1. Business Data Endpoint
+   Contoh:
 
-4. `user_level` boleh tetap disimpan sebagai metadata/hierarki organisasi apabila diperlukan, tetapi tidak boleh digunakan untuk menentukan boleh/tidaknya membuka menu atau menjalankan API.
+- GET prospects
+- GET prospect detail
+- GET leads
+- GET client detail
+- GET CRM dashboard
+- GET sales orders
 
-5. Standardisasi action permission:
-   - view
-   - create
-   - update
-   - delete
-   - approve
-   - approve_1
-   - approve_2
-   - convert
-   - manage
-   - export
+Endpoint seperti ini seharusnya tetap enforce permission `resource.view` di backend.
 
-6. Jangan menggunakan `edit` dan `update` sebagai dua action berbeda. Gunakan `update` sebagai canonical action.
+2. Reference / Lookup Endpoint
+   Contoh:
 
-7. Menu visibility, frontend route guard, dan backend mutation authorization harus membaca resource/action yang sama dari Roles & Permissions.
+- dropdown user
+- product lookup
+- unit lookup
+- client lookup
+- category lookup
+- reference data lintas modul
 
-8. Audit seluruh penggunaan `userLevel` pada backend/frontend. Bila dipakai untuk authorization atau menu access, pindahkan ke permission yang sesuai.
+Endpoint lookup seperti ini boleh tetap `authMiddleware` saja jika memang dibutuhkan oleh modul lain.
 
-Target akhir:
+Mohon jangan mengembalikan `requirePermission(view)` ke seluruh GET endpoint secara massal, karena pendekatan tersebut sebelumnya menyebabkan banyak reference data terkena 403 dan mengganggu workflow aplikasi.
 
-`Role Permissions` menjadi satu-satunya source of truth untuk akses user terhadap menu dan action aplikasi.
+Target implementasi:
+`Business GET → require view permission`
+`Reference GET → authenticated user`
+
+Selain itu, mohon jangan mengubah lagi core RBAC kecuali ada bug nyata.
+
+Untuk CRM, setelah perubahan security ini kita lanjutkan hanya dengan final functional smoke test:
+
+Prospect
+→ Lead
+→ Proposal
+→ Negotiation
+→ Client
+→ Sales Order dengan item
+→ Client 360
+→ CRM Dashboard
+
+Tambahkan satu scenario Sample Request apabila memang termasuk flow CRM.
+
+Jika flow tersebut berjalan normal tanpa regression, CRM bisa kita nyatakan Firm / Freeze dan lanjut ke final Manual Book v1.0.
+
+Jadi prioritas sekarang:
+
+1. Targeted backend view-permission hardening.
+2. CRM final smoke test.
+3. Jangan expand scope/refactor lagi di Roles & Permissions tanpa kebutuhan yang jelas.

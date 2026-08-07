@@ -419,7 +419,7 @@ router.delete('/vendors/:id', authMiddleware, requirePermission('master_data.sup
 });
 
 // Purchase Requests
-router.get('/purchase-requests', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const prs = await dbAll(
       `SELECT pr.*, u.full_name as requester_name,
@@ -440,7 +440,7 @@ router.get('/purchase-requests', authMiddleware, async (req: Request, res: Respo
   }
 });
 
-router.get('/purchase-requests/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-requests/:id', authMiddleware, requirePermission('procurement.purchase-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const pr = await dbGet(
       `SELECT pr.*, u.full_name as requester_name,
@@ -1080,7 +1080,7 @@ router.get('/purchase-requests/:prId/bid-summary', authMiddleware, async (req: R
 });
 
 // Purchase Orders with items
-router.get('/purchase-orders', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-orders', authMiddleware, requirePermission('procurement.purchase-orders', 'view'), async (req: Request, res: Response) => {
   try {
     const orders = await dbAll(
       `SELECT po.*, pr.pr_number, v.name as vendor_name,
@@ -1107,7 +1107,7 @@ router.get('/purchase-orders', authMiddleware, async (req: Request, res: Respons
   }
 });
 
-router.get('/purchase-orders/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/purchase-orders/:id', authMiddleware, requirePermission('procurement.purchase-orders', 'view'), async (req: Request, res: Response) => {
   try {
     const order = await dbGet(
       `SELECT po.*, v.name as vendor_name, pr.pr_number,
@@ -1590,7 +1590,7 @@ router.delete('/purchase-orders/:id', authMiddleware, requirePermission('procure
 });
 
 // Goods Receipts
-router.get('/goods-receipts', authMiddleware, async (req: Request, res: Response) => {
+router.get('/goods-receipts', authMiddleware, requirePermission('procurement.grn', 'view'), async (req: Request, res: Response) => {
   try {
     const receipts = await dbAll(
       `SELECT gr.*, po.po_number, w.name as warehouse_name
@@ -1607,7 +1607,7 @@ router.get('/goods-receipts', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.get('/goods-receipts/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/goods-receipts/:id', authMiddleware, requirePermission('procurement.grn', 'view'), async (req: Request, res: Response) => {
   try {
     const receipt = await dbGet(
       `SELECT gr.*, po.po_number, w.name as warehouse_name, u.full_name as received_by_name
@@ -2098,7 +2098,7 @@ router.get('/products/:product_id/last-po-price', authMiddleware, async (req: Re
 });
 
 // Vendor Price List
-router.get('/vendor-prices', authMiddleware, async (req: Request, res: Response) => {
+router.get('/vendor-prices', authMiddleware, requirePermission('procurement.vendor-price-list', 'view'), async (req: Request, res: Response) => {
   try {
     const { vendor_id, product_id } = req.query;
     let query = `
@@ -2216,7 +2216,7 @@ router.delete('/vendor-prices/:id', authMiddleware, requirePermission('procureme
 });
 
 // Procurement History (aggregated view of PR → PO → GRN)
-router.get('/procurement-history', authMiddleware, async (req: Request, res: Response) => {
+router.get('/procurement-history', authMiddleware, requirePermission('procurement.history', 'view'), async (req: Request, res: Response) => {
   try {
     const { start_date, end_date, vendor_id, product_id, status } = req.query;
     
@@ -2402,7 +2402,7 @@ router.get('/vendor-price-details/:vendor_id/:product_id', authMiddleware, async
 // ==================== MATERIAL VENDOR PRICES (Price Comparison) ====================
 
 // GET /material-prices - list with filters, grouped by material
-router.get('/material-prices', authMiddleware, async (req: Request, res: Response) => {
+router.get('/material-prices', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { material_id, source, search, page = '1', limit = '50' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -2457,7 +2457,7 @@ router.get('/material-prices', authMiddleware, async (req: Request, res: Respons
 });
 
 // GET /material-prices/comparison - materials with their vendor count + cheapest price
-router.get('/material-prices/comparison', authMiddleware, async (req: Request, res: Response) => {
+router.get('/material-prices/comparison', authMiddleware, requirePermission('procurement.material-price-comparison', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, filter = 'all', page = '1', limit = '50' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);

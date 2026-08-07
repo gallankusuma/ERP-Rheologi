@@ -22,7 +22,7 @@ const generateCode = (prefix: string) => {
 // ========================================
 
 // GET /api/inventory/stock-transfers - List all stock transfers
-router.get('/stock-transfers', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stock-transfers', authMiddleware, requirePermission('inventory.stock-transfer', 'view'), async (req: Request, res: Response) => {
   try {
     const transfers = await dbAll(`
       SELECT 
@@ -295,7 +295,7 @@ async function executeStockTransfer(transfer: any) {
 // ========================================
 
 // GET /api/inventory/stock-adjustments - List all stock adjustments
-router.get('/stock-adjustments', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stock-adjustments', authMiddleware, requirePermission('inventory.stock-adjustment', 'view'), async (req: Request, res: Response) => {
   try {
     const adjustments = await dbAll(`
       SELECT 
@@ -472,7 +472,7 @@ router.post('/stock-adjustments/:id/reject', authMiddleware, async (req: Request
 });
 
 // stock opname routes
-router.get('/opname', authMiddleware, async (req: Request, res: Response) => {
+router.get('/opname', authMiddleware, requirePermission('inventory.stock-opname', 'view'), async (req: Request, res: Response) => {
   try {
     const sessions = await dbAll(`
       SELECT so.*, w.name as warehouse_name, u.full_name as created_by_name,
@@ -589,7 +589,7 @@ router.post('/opname/:id/post', authMiddleware, requirePermission('inventory.sto
 });
 
 // batch tracking routes
-router.get('/batch-tracking', authMiddleware, async (req: Request, res: Response) => {
+router.get('/batch-tracking', authMiddleware, requirePermission('inventory.batch-tracking', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, product_id, status } = req.query;
     let sql = `
@@ -634,7 +634,7 @@ router.get('/batch-tracking/:batchNumber/movements', authMiddleware, async (req:
 });
 
 // expiry monitoring route
-router.get('/expiry', authMiddleware, async (req: Request, res: Response) => {
+router.get('/expiry', authMiddleware, requirePermission('inventory.expiry-monitoring', 'view'), async (req: Request, res: Response) => {
   try {
     const days = parseInt(req.query.days as string) || 90;
     const batches = await dbAll(`
@@ -657,7 +657,7 @@ router.get('/expiry', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/inventory - List all inventory
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('inventory.dashboard', 'view'), async (req: Request, res: Response) => {
   try {
     const warehouseId = req.query.warehouse_id as string;
     const showAll = req.query.all === '1';

@@ -59,7 +59,7 @@ const generateRequestNumber = async (conn: any): Promise<string> => {
 // ==================== CRUD ====================
 
 // GET / - list all sample requests
-router.get('/', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.sample-requests', 'view'), async (_req: Request, res: Response) => {
   try {
     const rows = await dbAll(`
       SELECT sr.*, c.name as client_name, u.full_name as sales_user_name
@@ -76,7 +76,7 @@ router.get('/', authMiddleware, async (_req: Request, res: Response) => {
 });
 
 // GET /:id - single sample request
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('crm.sample-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const row = await dbGet(`
       SELECT sr.*, c.name as client_name, u.full_name as sales_user_name
@@ -158,7 +158,7 @@ router.put('/:id/feedback', authMiddleware, requirePermission('crm.sample-reques
 
 // ==================== Comments (Sales <-> R&D discussion thread) ====================
 
-router.get('/:id/comments', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id/comments', authMiddleware, requirePermission('crm.sample-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const rows = await dbAll(`
       SELECT c.*, u.full_name as user_name
@@ -202,7 +202,7 @@ router.delete('/comments/:commentId', authMiddleware, requirePermission('crm.sam
 
 // ==================== Files (Foto / Tanda Terima / COA) ====================
 
-router.get('/:id/files', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id/files', authMiddleware, requirePermission('crm.sample-requests', 'view'), async (req: Request, res: Response) => {
   try {
     const rows = await dbAll(`
       SELECT f.*, u.full_name as uploader_name

@@ -90,7 +90,7 @@ router.get('/crm-clients', authMiddleware, async (req: Request, res: Response) =
 });
 
 // Sales Orders
-router.get('/sales-orders', authMiddleware, async (req: Request, res: Response) => {
+router.get('/sales-orders', authMiddleware, requirePermission('sales.sales-orders-list', 'view'), async (req: Request, res: Response) => {
   try {
     const orders = await dbAll(
       `SELECT so.*,
@@ -112,7 +112,7 @@ router.get('/sales-orders', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
-router.get('/sales-orders/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/sales-orders/:id', authMiddleware, requirePermission('sales.sales-orders-list', 'view'), async (req: Request, res: Response) => {
   try {
     const order = await dbGet(
       `SELECT so.*,
@@ -223,7 +223,7 @@ router.put('/sales-orders/:id', authMiddleware, requirePermission('crm.sales', '
 });
 
 // Deliveries
-router.get('/deliveries', authMiddleware, async (req: Request, res: Response) => {
+router.get('/deliveries', authMiddleware, requirePermission('sales.sales-orders-list', 'view'), async (req: Request, res: Response) => {
   try {
     const deliveries = await dbAll(
       `SELECT d.*, so.so_number
@@ -238,7 +238,7 @@ router.get('/deliveries', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.get('/deliveries/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/deliveries/:id', authMiddleware, requirePermission('sales.sales-orders-list', 'view'), async (req: Request, res: Response) => {
   try {
     const delivery = await dbGet(
       `SELECT d.*, so.so_number
@@ -275,7 +275,7 @@ router.post('/deliveries', authMiddleware, requirePermission('crm.sales', 'creat
 });
 
 // Invoices
-router.get('/invoices', authMiddleware, async (req: Request, res: Response) => {
+router.get('/invoices', authMiddleware, requirePermission('sales.sales-invoices', 'view'), async (req: Request, res: Response) => {
   try {
     const invoices = await dbAll(
       `SELECT i.*, so.so_number
@@ -290,7 +290,7 @@ router.get('/invoices', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/invoices/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/invoices/:id', authMiddleware, requirePermission('sales.sales-invoices', 'view'), async (req: Request, res: Response) => {
   try {
     const invoice = await dbGet(
       `SELECT i.*, so.so_number
@@ -597,7 +597,7 @@ router.post('/orders', authMiddleware, requirePermission('crm.sales', 'create'),
 });
 
 // GET /payments - List all payments
-router.get('/payments', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/payments', authMiddleware, requirePermission('sales.sales-payments', 'view'), async (_req: Request, res: Response) => {
   try {
     const payments = await dbAll(`
       SELECT sp.*, c.name as customer_name,
@@ -638,7 +638,7 @@ router.post('/payments', authMiddleware, requirePermission('crm.sales', 'create'
 });
 
 // GET /payments/summary - Payment summary stats
-router.get('/payments/summary', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/payments/summary', authMiddleware, requirePermission('sales.sales-payments', 'view'), async (_req: Request, res: Response) => {
   try {
     const totalReceived = await dbGet('SELECT COALESCE(SUM(amount), 0) as total FROM sales_payments WHERE status = ?', ['confirmed']) as any;
     const pendingInvoices = await dbGet("SELECT COUNT(*) as count, COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as total FROM sales_invoices WHERE status IN ('sent', 'partial')") as any;

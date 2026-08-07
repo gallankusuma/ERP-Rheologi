@@ -161,7 +161,7 @@ const generateProspectCodeTx = async (conn: any): Promise<string> => {
 
 
 // GET / - list prospects with filtering, pagination, and ownership
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const {
       search,
@@ -266,7 +266,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 
 
 // GET /stats - dashboard statistics for prospects
-router.get('/stats', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/stats', authMiddleware, requirePermission('crm.prospects', 'view'), async (_req: Request, res: Response) => {
   try {
     // temperature breakdown (only active prospects)
     const temperatureStats = await dbAll(`
@@ -309,7 +309,7 @@ router.get('/stats', authMiddleware, async (_req: Request, res: Response) => {
 
 
 // GET /activities/:prospectId - activity log for a specific prospect
-router.get('/activities/:prospectId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/activities/:prospectId', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const prospectId = req.params.prospectId;
 
@@ -331,7 +331,7 @@ router.get('/activities/:prospectId', authMiddleware, async (req: Request, res: 
 
 
 // GET /:id - get single prospect detail
-router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:id', authMiddleware, requirePermission('crm.prospects', 'view'), async (req: Request, res: Response) => {
   try {
     const prospect = await dbGet(`
       SELECT p.*,
