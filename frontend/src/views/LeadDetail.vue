@@ -47,7 +47,7 @@
           </div>
           <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
             <div class="text-sm text-gray-600 mb-2">Lead Value</div>
-            <div class="text-2xl font-bold text-blue-600">${{ formatNumber(lead.value) }}</div>
+            <div class="text-2xl font-bold text-blue-600">{{ formatNumber(lead.value) }}</div>
           </div>
           <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
             <div class="text-sm text-gray-600 mb-2">Win Probability</div>
@@ -56,7 +56,7 @@
           <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
             <div class="text-sm text-gray-600 mb-2">Expected Value</div>
             <div class="text-2xl font-bold text-green-600">
-              ${{ formatNumber(Math.round(lead.value * (lead.probability / 100))) }}
+              {{ formatNumber(Math.round(lead.value * (lead.probability / 100))) }}
             </div>
           </div>
         </div>
@@ -86,7 +86,7 @@
                 </div>
                 <div>
                   <dt class="text-sm text-gray-600 mb-1">Lead Value</dt>
-                  <dd class="text-base font-semibold text-blue-600">${{ formatNumber(lead.value) }}</dd>
+                  <dd class="text-base font-semibold text-blue-600">{{ formatNumber(lead.value) }}</dd>
                 </div>
               </dl>
             </div>
@@ -148,7 +148,7 @@
                   ></div>
                 </div>
               </div>
-              <p class="text-xs text-gray-600">Expected revenue: ${{ formatNumber(Math.round(lead.value * (lead.probability / 100))) }}</p>
+              <p class="text-xs text-gray-600">Expected revenue: {{ formatNumber(Math.round(lead.value * (lead.probability / 100))) }}</p>
             </div>
 
             <!-- Actions -->
@@ -343,7 +343,8 @@ const leadId = parseInt(route.params.id as string);
 const lead = ref<Lead>(mockLeads[leadId] || mockLeads[1]);
 const editForm = reactive<Lead>({ ...lead.value });
 
-const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
+// Lead value has no currency field of its own (unlike Prospects) — always IDR (Review.md P1 #10)
+const formatNumber = (num: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num || 0);
 const formatDate = (date: string) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 const goBack = () => router.push('/leads');

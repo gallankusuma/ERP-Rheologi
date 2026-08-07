@@ -185,8 +185,8 @@
               <p class="text-sm text-slate-500">
                 Total Pipeline: <strong class="text-slate-800">{{ formatCurrency(data.leads?.pipeline_value) }}</strong>
               </p>
-              <p class="text-sm text-slate-500">
-                Won Revenue: <strong class="text-emerald-600">{{ formatCurrency(data.leads?.won_value) }}</strong>
+              <p class="text-sm text-slate-500" title="Sum of Lead's own estimated value for Won deals — not confirmed Sales Order or invoiced revenue">
+                Won Estimated Value: <strong class="text-emerald-600">{{ formatCurrency(data.leads?.won_value) }}</strong>
               </p>
             </div>
           </div>

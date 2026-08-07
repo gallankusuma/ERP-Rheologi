@@ -58,6 +58,10 @@
             <option value="value-low">Lowest Value</option>
             <option value="updated">Recently Updated</option>
           </select>
+          <label class="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white cursor-pointer select-none">
+            <input type="checkbox" v-model="showArchived" @change="fetchLeads" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+            Show Archived
+          </label>
         </div>
 
         <!-- List Table -->
@@ -79,12 +83,14 @@
                 v-for="lead in filteredLeads"
                 :key="lead.id"
                 class="hover:bg-blue-50 transition-colors cursor-pointer"
-                @click="openEditModal(lead)"
+                :class="{ 'opacity-60': lead.is_archived }"
+                @click="!lead.is_archived && openEditModal(lead)"
               >
                 <td class="px-6 py-4">
                   <div class="flex items-center gap-2">
                     <span v-if="lead.color" class="w-3 h-3 rounded-full flex-shrink-0" :style="{ background: lead.color }"></span>
                     <p class="font-medium text-gray-900">{{ lead.company }}</p>
+                    <span v-if="lead.is_archived" class="text-[10px] px-2 py-0.5 rounded bg-gray-200 text-gray-600 font-semibold">Archived</span>
                   </div>
                 </td>
                 <td class="px-6 py-4">
@@ -102,7 +108,7 @@
                   </span>
                 </td>
                 <td class="px-6 py-4">
-                  <p class="font-medium text-gray-900">${{ formatNumber(lead.value) }}</p>
+                  <p class="font-medium text-gray-900">{{ formatNumber(lead.value) }}</p>
                 </td>
                 <td class="px-6 py-4">
                   <div class="flex items-center gap-2">
@@ -119,13 +125,20 @@
                 <td class="px-6 py-4">
                   <div class="flex gap-2">
                     <button
-                      @click.stop="openEditModal(lead)"
-                      class="text-blue-600 hover:text-blue-800 font-medium text-sm"
-                    >Edit</button>
-                    <button
-                      @click.stop="deleteLead(lead.id)"
-                      class="text-red-500 hover:text-red-700 font-medium text-sm"
-                    >Delete</button>
+                      v-if="lead.is_archived"
+                      @click.stop="restoreLead(lead)"
+                      class="text-green-600 hover:text-green-800 font-medium text-sm"
+                    >♻️ Restore</button>
+                    <template v-else>
+                      <button
+                        @click.stop="openEditModal(lead)"
+                        class="text-blue-600 hover:text-blue-800 font-medium text-sm"
+                      >Edit</button>
+                      <button
+                        @click.stop="deleteLead(lead.id)"
+                        class="text-red-500 hover:text-red-700 font-medium text-sm"
+                      >Archive</button>
+                    </template>
                   </div>
                 </td>
               </tr>
@@ -160,7 +173,7 @@
               </span>
             </div>
             <p class="text-xs text-gray-500 mt-1">
-              Total: ${{ formatNumber(getTotalValueByStage(stage)) }}
+              Total: {{ formatNumber(getTotalValueByStage(stage)) }}
             </p>
           </div>
 
@@ -197,7 +210,7 @@
 
               <!-- Value & Probability -->
               <div class="flex justify-between items-center mb-2.5 pb-2 border-b border-gray-100">
-                <p class="text-sm font-bold text-gray-900">${{ formatNumber(lead.value) }}</p>
+                <p class="text-sm font-bold text-gray-900">{{ formatNumber(lead.value) }}</p>
                 <span class="text-xs font-semibold px-2 py-0.5 rounded" :class="getProbabilityBadge(lead.probability)">
                   {{ lead.probability }}%
                 </span>
@@ -237,7 +250,7 @@
 
               <!-- Convert to Client Button -->
               <button
-                v-if="lead.stage === 'Won' && !lead.client_id"
+                v-if="['Discussion', 'Negotiation'].includes(lead.stage) && !lead.client_id"
                 @click.stop="convertToClient(lead)"
                 class="mt-2 w-full text-[10px] py-1.5 rounded-md bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold hover:from-green-600 hover:to-emerald-700 transition-all"
               >🔄 Convert to Client</button>
@@ -468,11 +481,13 @@ interface Lead {
   checklist_progress?: { total: number; checked: number };
   comment_count?: number;
   attachment_count?: number;
+  is_archived?: boolean;
 }
 
 const viewMode = ref<'list' | 'kanban'>('kanban');
 const filterStage = ref('');
 const searchQuery = ref('');
+const showArchived = ref(false);
 const sortBy = ref('created');
 const showModal = ref(false);
 const loading = ref(false);
@@ -564,7 +579,9 @@ const onDrop = async (newStage: string) => {
 const fetchLeads = async () => {
   loading.value = true;
   try {
-    const res = await api.get('/leads');
+    const params: any = {};
+    if (showArchived.value) params.show_archived = '1';
+    const res = await api.get('/leads', { params });
     leads.value = res.data?.data || [];
   } catch (err) {
     console.error('Failed to fetch leads:', err);
@@ -632,12 +649,21 @@ const saveLead = async () => {
 };
 
 const deleteLead = async (id: number) => {
-  if (!confirm('Delete this lead?')) return;
+  if (!confirm('Archive this lead? You can restore it later via "Show Archived".')) return;
   try {
     await api.delete(`/leads/${id}`);
     leads.value = leads.value.filter(l => l.id !== id);
   } catch (err) {
-    console.error('Delete error:', err);
+    console.error('Archive error:', err);
+  }
+};
+
+const restoreLead = async (lead: Lead) => {
+  try {
+    await api.patch(`/leads/${lead.id}/restore`);
+    await fetchLeads();
+  } catch (err) {
+    console.error('Restore error:', err);
   }
 };
 
@@ -675,7 +701,8 @@ const filteredLeads = computed(() => {
 });
 
 const getLeadsByStage = (stage: string) => {
-  return leads.value.filter(lead => lead.stage === stage);
+  // Kanban always reflects the active pipeline — archived leads never show as cards here
+  return leads.value.filter(lead => lead.stage === stage && !lead.is_archived);
 };
 
 const getTotalValueByStage = (stage: string) => {
@@ -697,8 +724,10 @@ const getProbabilityBadge = (probability: number) => {
   return 'bg-red-100 text-red-800';
 };
 
+// matches the Rp formatting used across Prospects/Sales Order — Lead value has no currency
+// field of its own (unlike Prospects), so it's always treated as IDR (Review.md P1 #10)
 const formatNumber = (num: number) => {
-  return new Intl.NumberFormat('en-US').format(num || 0);
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num || 0);
 };
 
 const formatDate = (date: string) => {

@@ -360,7 +360,7 @@ router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), a
     const {
       company_name, contact_name, contact_title, email, phone,
       industry, website, address, city, country,
-      source, temperature, interest, estimated_value,
+      source, temperature, interest, estimated_value, currency,
       next_follow_up, assigned_to, notes
     } = req.body;
 
@@ -382,9 +382,9 @@ router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), a
         INSERT INTO prospects (
           code, company_name, contact_name, contact_title, email, phone,
           industry, website, address, city, country,
-          source, temperature, status, interest, estimated_value,
+          source, temperature, status, interest, estimated_value, currency,
           next_follow_up, assigned_to, notes, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?)
       `, [
         code,
         company_name,
@@ -401,6 +401,7 @@ router.post('/', authMiddleware, requirePermission('crm.prospects', 'create'), a
         temperature || 'cold',
         interest || null,
         estimated_value || 0,
+        currency || 'IDR',
         next_follow_up || null,
         assigned_to || null,
         notes || null,
@@ -448,7 +449,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
     const {
       company_name, contact_name, contact_title, email, phone,
       industry, website, address, city, country,
-      source, temperature, status, interest, estimated_value,
+      source, temperature, status, interest, estimated_value, currency,
       next_follow_up, assigned_to, notes
     } = req.body;
 
@@ -504,6 +505,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
         status = ?,
         interest = ?,
         estimated_value = ?,
+        currency = ?,
         next_follow_up = ?,
         assigned_to = ?,
         notes = ?
@@ -524,6 +526,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
       status ?? current.status ?? 'new',
       interest ?? current.interest,
       estimated_value ?? current.estimated_value ?? 0,
+      currency ?? current.currency ?? 'IDR',
       next_follow_up || current.next_follow_up || null,
       assigned_to ?? current.assigned_to,
       notes ?? current.notes,
@@ -650,11 +653,14 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
       }
 
       // create the lead record
+      // carries every Prospect qualification/contact field forward so nothing is lost on conversion (Review.md P1 #6)
       const [leadResult] = await conn.execute(`
         INSERT INTO leads (
           company, contact_name, email, phone, stage,
-          value, probability, source, notes, assigned_to, created_by
-        ) VALUES (?, ?, ?, ?, 'New', ?, 20, ?, ?, ?, ?)
+          value, probability, source, notes, assigned_to, created_by,
+          contact_title, industry, website, address, city, country,
+          temperature, interest, next_follow_up
+        ) VALUES (?, ?, ?, ?, 'New', ?, 20, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         prospect.company_name,
         prospect.contact_name || null,
@@ -664,7 +670,16 @@ router.post('/:id/convert-to-lead', authMiddleware, requirePermission('crm.prosp
         prospect.source || null,
         prospect.notes || null,
         prospect.assigned_to || userId,
-        userId
+        userId,
+        prospect.contact_title || null,
+        prospect.industry || null,
+        prospect.website || null,
+        prospect.address || null,
+        prospect.city || null,
+        prospect.country || null,
+        prospect.temperature || null,
+        prospect.interest || null,
+        prospect.next_follow_up || null
       ]);
 
       const newLeadId = (leadResult as any).insertId;

@@ -292,7 +292,7 @@ router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (r
 router.get('/stats/summary', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
   try {
     const stages = await dbAll(
-      'SELECT stage, COUNT(*) as count, COALESCE(SUM(value),0) as total_value FROM leads GROUP BY stage'
+      'SELECT stage, COUNT(*) as count, COALESCE(SUM(value),0) as total_value FROM leads WHERE is_archived = 0 GROUP BY stage'
     );
     res.json({ success: true, data: stages });
   } catch (error) {
@@ -799,9 +799,10 @@ router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'conv
           const num = parseInt(lastClient[0].code.replace('CLI-', ''), 10);
           clientCode = `CLI-${String(num + 1).padStart(4, '0')}`;
         }
+        // carries the Lead's company context forward so it isn't lost on conversion (Review.md P1 #6)
         const [clientResult] = await conn.execute(
-          `INSERT INTO clients (code, name, organization, phone, is_active) VALUES (?, ?, ?, ?, 1)`,
-          [clientCode, lead.company, lead.company, lead.phone || null]
+          `INSERT INTO clients (code, name, organization, phone, address, city, website, industry, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [clientCode, lead.company, lead.company, lead.phone || null, lead.address || null, lead.city || null, lead.website || null, lead.industry || null]
         );
         clientId = (clientResult as any).insertId;
       }
@@ -813,8 +814,8 @@ router.post('/:id/convert', authMiddleware, requirePermission('crm.leads', 'conv
         );
         if (existingContact.length === 0) {
           await conn.execute(
-            `INSERT INTO contacts (client_id, name, email, phone, is_primary) VALUES (?, ?, ?, ?, 1)`,
-            [clientId, lead.contact_name || lead.company, lead.email || null, lead.phone || null]
+            `INSERT INTO contacts (client_id, name, email, phone, job_title, is_primary) VALUES (?, ?, ?, ?, ?, 1)`,
+            [clientId, lead.contact_name || lead.company, lead.email || null, lead.phone || null, lead.contact_title || null]
           );
         }
       }

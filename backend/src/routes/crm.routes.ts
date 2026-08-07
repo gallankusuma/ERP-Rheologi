@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
 // GET /crm/dashboard — Unified CRM dashboard stats
-router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'view'), async (req: Request, res: Response) => {
   try {
     // ── Pipeline Counts ──
     const prospectStats = await dbGet(`
@@ -19,10 +20,11 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
         COALESCE(SUM(CASE WHEN status NOT IN ('converted','disqualified') THEN estimated_value ELSE 0 END), 0) as pipeline_value,
         SUM(CASE WHEN next_follow_up <= CURDATE() AND status NOT IN ('converted','disqualified') THEN 1 ELSE 0 END) as overdue_followups
       FROM prospects
+      WHERE is_archived = 0
     `);
 
     const leadStats = await dbGet(`
-      SELECT 
+      SELECT
         COUNT(*) as total,
         SUM(CASE WHEN stage NOT IN ('Won','Lost') THEN 1 ELSE 0 END) as active,
         SUM(CASE WHEN stage = 'Won' THEN 1 ELSE 0 END) as won,
@@ -31,6 +33,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
         COALESCE(SUM(CASE WHEN stage = 'Won' THEN value ELSE 0 END), 0) as won_value,
         COALESCE(SUM(value), 0) as total_value
       FROM leads
+      WHERE is_archived = 0
     `);
 
     const clientStats = await dbGet(`
@@ -45,7 +48,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
     // ── Lead Stage Breakdown (for funnel chart) ──
     const leadsByStage = await dbAll(`
       SELECT stage, COUNT(*) as count, COALESCE(SUM(value), 0) as total_value
-      FROM leads GROUP BY stage
+      FROM leads WHERE is_archived = 0 GROUP BY stage
       ORDER BY FIELD(stage, 'New', 'Qualified', 'Discussion', 'Negotiation', 'Won', 'Lost')
     `);
 
@@ -53,19 +56,19 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
     const prospectsByTemp = await dbAll(`
       SELECT temperature, COUNT(*) as count
       FROM prospects
-      WHERE status NOT IN ('converted', 'disqualified')
+      WHERE status NOT IN ('converted', 'disqualified') AND is_archived = 0
       GROUP BY temperature
     `);
 
     // ── Recent Activities (latest leads + prospects) ──
     const recentLeads = await dbAll(`
       SELECT id, company, contact_name, stage, value, updated_at, 'lead' as type
-      FROM leads ORDER BY updated_at DESC LIMIT 5
+      FROM leads WHERE is_archived = 0 ORDER BY updated_at DESC LIMIT 5
     `);
 
     const recentProspects = await dbAll(`
       SELECT id, company_name as company, contact_name, status as stage, estimated_value as value, updated_at, 'prospect' as type
-      FROM prospects ORDER BY updated_at DESC LIMIT 5
+      FROM prospects WHERE is_archived = 0 ORDER BY updated_at DESC LIMIT 5
     `);
 
     // Merge and sort by date
@@ -77,7 +80,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
     const overdueFollowups = await dbAll(`
       SELECT id, code, company_name, contact_name, next_follow_up, temperature, estimated_value
       FROM prospects
-      WHERE next_follow_up <= CURDATE() AND status NOT IN ('converted', 'disqualified')
+      WHERE next_follow_up <= CURDATE() AND status NOT IN ('converted', 'disqualified') AND is_archived = 0
       ORDER BY next_follow_up ASC
       LIMIT 10
     `);
@@ -95,14 +98,16 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
     };
 
     // ── Monthly Trend (last 6 months) ──
+    // NOTE: `won_estimated_value` is the Lead's own estimated value, not confirmed Sales Order
+    // or invoiced revenue (Review.md P1 #10/#4) — do not label this as actual "revenue" in the UI.
     const monthlyTrend = await dbAll(`
-      SELECT 
+      SELECT
         DATE_FORMAT(created_at, '%Y-%m') as month,
         COUNT(*) as leads_created,
         SUM(CASE WHEN stage = 'Won' THEN 1 ELSE 0 END) as leads_won,
-        COALESCE(SUM(CASE WHEN stage = 'Won' THEN value ELSE 0 END), 0) as revenue
+        COALESCE(SUM(CASE WHEN stage = 'Won' THEN value ELSE 0 END), 0) as won_estimated_value
       FROM leads
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) AND is_archived = 0
       GROUP BY DATE_FORMAT(created_at, '%Y-%m')
       ORDER BY month ASC
     `);
@@ -159,7 +164,7 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // GET /crm/tasks — Unified CRM task monitoring across all modules
-router.get('/tasks', authMiddleware, async (req: Request, res: Response) => {
+router.get('/tasks', authMiddleware, requirePermission('crm.tasks', 'view'), async (req: Request, res: Response) => {
   try {
     const { status, source, priority, search } = req.query;
 
@@ -227,9 +232,10 @@ router.get('/tasks', authMiddleware, async (req: Request, res: Response) => {
         p.created_at, p.updated_at,
         'prospect' as source, p.id as ref_id,
         p.company_name as ref_name, p.code as ref_code,
-        NULL as client_name, NULL as client_id, NULL as assigned_name
+        NULL as client_name, NULL as client_id, u.full_name as assigned_name
       FROM prospects p
-      WHERE p.next_follow_up IS NOT NULL AND p.status NOT IN ('converted', 'disqualified') ${prWhere}
+      LEFT JOIN users u ON p.assigned_to = u.id
+      WHERE p.next_follow_up IS NOT NULL AND p.status NOT IN ('converted', 'disqualified') AND p.is_archived = 0 ${prWhere}
     `, prParams) : [];
 
     // 3. Lead actions
@@ -258,9 +264,10 @@ router.get('/tasks', authMiddleware, async (req: Request, res: Response) => {
         l.created_at, l.updated_at,
         'lead' as source, l.id as ref_id,
         l.company as ref_name, CONCAT('LEAD-', l.id) as ref_code,
-        NULL as client_name, NULL as client_id, l.contact_name as assigned_name
+        NULL as client_name, NULL as client_id, u.full_name as assigned_name
       FROM leads l
-      WHERE l.stage NOT IN ('Won', 'Lost') ${ldWhere}
+      LEFT JOIN users u ON l.assigned_to = u.id
+      WHERE l.stage NOT IN ('Won', 'Lost') AND l.is_archived = 0 ${ldWhere}
     `, ldParams) : [];
 
     // Combine & sort by due_date

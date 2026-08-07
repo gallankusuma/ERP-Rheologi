@@ -46,6 +46,10 @@
           <option value="">All Sources</option>
           <option v-for="src in sourceOptions" :key="src" :value="src">{{ src }}</option>
         </select>
+        <label class="flex items-center gap-2 px-4 py-2.5 border border-gray-300 rounded-lg text-base bg-white cursor-pointer select-none">
+          <input type="checkbox" v-model="showArchived" @change="fetchProspects" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+          Show Archived
+        </label>
       </div>
 
       <!-- Table -->
@@ -91,7 +95,7 @@
                 <td class="px-4 py-3">
                   <span class="px-2.5 py-1 rounded-full text-sm font-semibold" :class="statusColor(p.status)">{{ p.status }}</span>
                 </td>
-                <td class="px-4 py-3 font-medium text-gray-900 text-right">{{ formatCurrency(p.estimated_value) }}</td>
+                <td class="px-4 py-3 font-medium text-gray-900 text-right">{{ formatCurrency(p.estimated_value, p.currency) }}</td>
                 <td class="px-4 py-3">
                   <span v-if="p.next_follow_up" class="text-sm" :class="isOverdue(p.next_follow_up) ? 'text-red-600 font-bold' : 'text-gray-600'">
                     {{ formatDate(p.next_follow_up) }}
@@ -104,9 +108,12 @@
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex gap-1">
-                    <button @click="openModal(p)" class="text-blue-600 hover:text-blue-800 text-sm font-medium" title="Edit">✏️</button>
-                    <button v-if="p.status === 'qualified'" @click="convertProspect(p)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Convert to Lead">🔄</button>
-                    <button @click="deleteProspect(p)" class="text-red-400 hover:text-red-600 text-sm font-medium" title="Delete">🗑</button>
+                    <button v-if="p.is_archived" @click="restoreProspect(p)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Restore">♻️ Restore</button>
+                    <template v-else>
+                      <button @click="openModal(p)" class="text-blue-600 hover:text-blue-800 text-sm font-medium" title="Edit">✏️</button>
+                      <button v-if="p.status === 'qualified'" @click="convertProspect(p)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Convert to Lead">🔄</button>
+                      <button @click="deleteProspect(p)" class="text-red-400 hover:text-red-600 text-sm font-medium" title="Archive">🗑</button>
+                    </template>
                   </div>
                 </td>
               </tr>
@@ -198,8 +205,14 @@
               </select>
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Estimated Value (Rp)</label>
-              <input v-model.number="form.estimated_value" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              <label class="block text-sm font-medium text-gray-700 mb-1">Estimated Value</label>
+              <div class="flex gap-2">
+                <select v-model="form.currency" class="px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 w-24">
+                  <option value="IDR">Rp</option>
+                  <option value="USD">$</option>
+                </select>
+                <input v-model.number="form.estimated_value" type="number" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Next Follow Up</label>
@@ -240,8 +253,8 @@ interface Prospect {
   contact_title: string; email: string; phone: string; industry: string;
   website: string; city: string; country: string; source: string;
   temperature: string; status: string; interest: string;
-  estimated_value: number; next_follow_up: string; notes: string;
-  assigned_to_name: string; created_at: string;
+  estimated_value: number; currency: string; next_follow_up: string; notes: string;
+  assigned_to_name: string; created_at: string; is_archived: boolean;
 }
 
 const prospects = ref<Prospect[]>([]);
@@ -253,6 +266,7 @@ const search = ref('');
 const filterTemp = ref('');
 const filterStatus = ref('');
 const filterSource = ref('');
+const showArchived = ref(false);
 const currentPage = ref(1);
 const pagination = reactive({ total: 0, page: 1, limit: 25, totalPages: 1 });
 const toast = ref<{ type: string; message: string } | null>(null);
@@ -271,7 +285,7 @@ const defaultForm = () => ({
   company_name: '', contact_name: '', contact_title: '', email: '', phone: '',
   industry: '', website: '', city: '', country: 'Indonesia',
   source: 'other', temperature: 'cold', status: 'new',
-  interest: '', estimated_value: 0, next_follow_up: '', notes: ''
+  interest: '', estimated_value: 0, currency: 'IDR', next_follow_up: '', notes: ''
 });
 const form = reactive(defaultForm());
 
@@ -293,7 +307,9 @@ const statusColor = (s: string) => ({
   converted: 'bg-green-100 text-green-800',
 }[s] || 'bg-gray-100 text-gray-800');
 
-const formatCurrency = (v: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v || 0);
+const formatCurrency = (v: number, currency = 'IDR') => currency === 'USD'
+  ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(v || 0)
+  : new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v || 0);
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 const isOverdue = (d: string) => d && new Date(d) < new Date(new Date().toDateString());
 
@@ -313,6 +329,7 @@ const fetchProspects = async () => {
     if (filterTemp.value) params.temperature = filterTemp.value;
     if (filterStatus.value) params.status = filterStatus.value;
     if (filterSource.value) params.source = filterSource.value;
+    if (showArchived.value) params.show_archived = '1';
     const { data } = await api.get('/prospects', { params });
     prospects.value = data.data || [];
     Object.assign(pagination, data.pagination || {});
@@ -346,6 +363,7 @@ const openModal = (prospect?: Prospect) => {
       country: prospect.country || 'Indonesia', source: prospect.source || 'other',
       temperature: prospect.temperature || 'cold', status: prospect.status || 'new',
       interest: prospect.interest || '', estimated_value: prospect.estimated_value || 0,
+      currency: prospect.currency || 'IDR',
       next_follow_up: prospect.next_follow_up ? prospect.next_follow_up.split('T')[0] : '',
       notes: prospect.notes || '',
     });
@@ -377,14 +395,25 @@ const saveProspect = async () => {
 };
 
 const deleteProspect = async (p: Prospect) => {
-  if (!confirm(`Delete prospect "${p.company_name}"?`)) return;
+  if (!confirm(`Archive prospect "${p.company_name}"? You can restore it later via "Show Archived".`)) return;
   try {
     await api.delete(`/prospects/${p.id}`);
-    showToast('success', 'Prospect deleted');
+    showToast('success', 'Prospect archived');
     fetchProspects();
     fetchStats();
   } catch (e: any) {
-    showToast('error', e.response?.data?.error || 'Failed to delete');
+    showToast('error', e.response?.data?.error || 'Failed to archive');
+  }
+};
+
+const restoreProspect = async (p: Prospect) => {
+  try {
+    await api.patch(`/prospects/${p.id}/restore`);
+    showToast('success', 'Prospect restored');
+    fetchProspects();
+    fetchStats();
+  } catch (e: any) {
+    showToast('error', e.response?.data?.error || 'Failed to restore');
   }
 };
 
