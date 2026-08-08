@@ -367,15 +367,15 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
 
     const allItems = [...dedupedSoItems, ...projItems];
 
-    // Filter out products that already exist in this MPS
-    const existingProducts = await dbAll(
-      'SELECT DISTINCT product_id FROM mps_details WHERE mps_header_id = ?', [id]
+    // load existing product details for merge (not for filtering)
+    const existingDetails = await dbAll(
+      'SELECT id, product_id FROM mps_details WHERE mps_header_id = ?', [id]
     ) as any[];
-    const existingProductIds = new Set(existingProducts.map((p: any) => p.product_id));
-    const newItems = allItems.filter((item: any) => !existingProductIds.has(item.product_id));
+    const existingDetailMap = new Map<number, number>(); // product_id → detail_id
+    for (const ed of existingDetails) existingDetailMap.set(ed.product_id, ed.id);
 
-    if (newItems.length === 0) {
-      return res.json({ message: 'No new orders found. All products already in MPS.', pulled: 0 });
+    if (allItems.length === 0) {
+      return res.json({ message: 'No orders found to pull.', pulled: 0 });
     }
 
     // derive grid start from MPS period, not current date
@@ -394,7 +394,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
       weekQtyMap: Map<string, number>;
     }>();
 
-    for (const item of newItems) {
+    for (const item of allItems) {
       const pid = item.product_id;
       const qty = Number(item.quantity || 0);
 
@@ -430,19 +430,38 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
     }
 
     let pulled = 0;
+    let merged = 0;
     for (const [, group] of productMap) {
       const soNumsStr = group.so_numbers.join(', ') || null;
+      let detailId: number;
+      const isExisting = existingDetailMap.has(group.product_id);
 
-      // Insert 1 MPS detail per product
-      const detailResult = await dbRun(`
-        INSERT INTO mps_details (mps_header_id, product_id, bom_id, so_numbers,
-          demand_qty, current_stock, batch_no, batch_qty, lead_time_weeks, status)
-        VALUES (?, ?, ?, ?, ?, 0, NULL, 0, 1, 'Pending')
-      `, [id, group.product_id, group.bom_id, soNumsStr, group.total_qty]);
+      if (isExisting) {
+        // merge into existing detail
+        detailId = existingDetailMap.get(group.product_id)!;
+        // append so_numbers
+        if (soNumsStr) {
+          await dbRun(
+            `UPDATE mps_details SET so_numbers = CASE
+              WHEN so_numbers IS NULL OR so_numbers = '' THEN ?
+              ELSE CONCAT(so_numbers, ', ', ?)
+            END WHERE id = ?`,
+            [soNumsStr, soNumsStr, detailId]
+          );
+        }
+        merged++;
+      } else {
+        // create new detail
+        const detailResult = await dbRun(`
+          INSERT INTO mps_details (mps_header_id, product_id, bom_id, so_numbers,
+            demand_qty, current_stock, batch_no, batch_qty, lead_time_weeks, status)
+          VALUES (?, ?, ?, ?, ?, 0, NULL, 0, 1, 'Pending')
+        `, [id, group.product_id, group.bom_id, soNumsStr, group.total_qty]);
+        detailId = detailResult.insertId;
+        pulled++;
+      }
 
-      const detailId = detailResult.insertId;
-
-      // insert demand source lineage records
+      // insert demand source lineage records (duplicate key protection)
       for (const src of group.sourceItems) {
         try {
           await dbRun(
@@ -461,7 +480,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
         }
       }
 
-      // Create 12 weeks of grid data with distributed SO qty
+      // distribute SO qty to weeks
       const firstWeekKey = `${currentWeek}:${currentYear}`;
       for (const [wKey, wQty] of group.weekQtyMap) {
         const [wStr, yStr] = wKey.split(':');
@@ -472,25 +491,50 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
         }
       }
 
-      for (let i = 0; i < 12; i++) {
-        let wk = currentWeek + i;
-        let yr = currentYear;
-        if (wk > 52) { wk -= 52; yr++; }
+      if (isExisting) {
+        // merge: update existing week data so_qty (add to existing)
+        for (const [wKey, wQty] of group.weekQtyMap) {
+          if (wQty <= 0) continue;
+          const [wStr, yStr] = wKey.split(':');
+          const w = Number(wStr), y = Number(yStr);
+          const existingWeek = await dbGet(
+            'SELECT id, so_qty FROM mps_week_data WHERE mps_detail_id = ? AND week_number = ? AND year = ?',
+            [detailId, w, y]
+          ) as any;
+          if (existingWeek) {
+            await dbRun(
+              'UPDATE mps_week_data SET so_qty = so_qty + ? WHERE id = ?',
+              [wQty, existingWeek.id]
+            );
+          } else {
+            await dbRun(
+              'INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty) VALUES (?, ?, ?, 0, ?, 0, 0, 0)',
+              [detailId, w, y, wQty]
+            );
+          }
+        }
+      } else {
+        // new: create 12-week grid
+        for (let i = 0; i < 12; i++) {
+          let wk = currentWeek + i;
+          let yr = currentYear;
+          if (wk > 52) { wk -= 52; yr++; }
 
-        const weekKey = `${wk}:${yr}`;
-        const weekQty = group.weekQtyMap.get(weekKey) || 0;
-        await dbRun(`
-          INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty)
-          VALUES (?, ?, ?, 0, ?, 0, 0, 0)
-        `, [detailId, wk, yr, weekQty]);
+          const weekKey = `${wk}:${yr}`;
+          const weekQty = group.weekQtyMap.get(weekKey) || 0;
+          await dbRun(`
+            INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty)
+            VALUES (?, ?, ?, 0, ?, 0, 0, 0)
+          `, [detailId, wk, yr, weekQty]);
+        }
       }
-      pulled++;
     }
 
-    await ppicLog(req, 'PULL_ORDERS', 'MPS', id, null, { pulled, from_so: dedupedSoItems.length, from_projects: projItems.length });
+    await ppicLog(req, 'PULL_ORDERS', 'MPS', id, null, { pulled, merged, from_so: dedupedSoItems.length, from_projects: projItems.length });
     res.json({
-      message: `${pulled} products pulled into MPS (from ${allItems.length} order lines)`,
+      message: `${pulled} new products added, ${merged} existing products updated (from ${allItems.length} order lines)`,
       pulled,
+      merged,
       from_so: dedupedSoItems.length,
       from_projects: projItems.length
     });
@@ -1245,11 +1289,19 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
       neededByDate = nb.toISOString().slice(0, 10);
     }
 
-    const prNotes = [
-      `[Auto-generated from MRP for MPS ${header?.mps_number || id}, Detail #${detailId}]`,
-      `Materials: ${validMaterials.length} items`,
-      `Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`
-    ].join('\n');
+    // build JSON notes matching procurement parseNotes() contract
+    const noteText = `[Auto-generated from MRP for MPS ${header?.mps_number || id}, Detail #${detailId}] | Materials: ${validMaterials.length} items | Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`;
+    const notesItems = validMaterials
+      .filter((m: any) => Number(m.net_req_qty) > 0)
+      .map((m: any) => ({
+        productId: m.material_id,
+        productName: m.material_name || '',
+        name: m.material_name || '',
+        qty: Number(m.net_req_qty),
+        uom: m.uom_name || '-',
+        specification: `MRP Net Req`,
+      }));
+    const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
 
     const result = await dbTransaction(async (conn: any) => {
       const [prInsert] = await conn.execute(
@@ -1571,12 +1623,24 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
     const neededBy = new Date();
     neededBy.setDate(neededBy.getDate() + maxLeadTime * 7);
 
-    const prNotes = [
+    // build JSON notes matching procurement parseNotes() contract
+    const noteText = [
       notes || '',
       `[Auto-generated from MRP Year ${year || now.getFullYear()}]`,
       `Materials: ${validMaterials.length} items`,
       `Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`
-    ].filter(Boolean).join('\n');
+    ].filter(Boolean).join(' | ');
+    const notesItems = validMaterials
+      .filter((m: any) => Number(m.total_net_requirement) > 0)
+      .map((m: any) => ({
+        productId: m.material_id,
+        productName: m.material_name || '',
+        name: m.material_name || '',
+        qty: Number(m.total_net_requirement),
+        uom: m.uom_name || '-',
+        specification: `MRP Net Req | Lead Time: ${m.lead_time || 2} weeks`,
+      }));
+    const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
 
     // transactional: PR header + all items, rollback if any item fails
     const result = await dbTransaction(async (conn: any) => {
@@ -1896,17 +1960,12 @@ router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppi
 
     if (forecastData.length === 0) return res.status(400).json({ error: 'No forecast data to push' });
 
-    // Find active MPS (Draft preferred, then any) for the same period
-    let mps = await dbGet(
+    // Find Draft MPS for the exact same period — no fallback to other periods
+    const mps = await dbGet(
       `SELECT * FROM mps_headers WHERE period_year = ? AND period_month = ? AND status = 'Draft' ORDER BY id DESC LIMIT 1`,
       [forecast.period_year, forecast.period_month]
     ) as any;
-    if (!mps) {
-      mps = await dbGet(
-        `SELECT * FROM mps_headers WHERE status = 'Draft' ORDER BY id DESC LIMIT 1`
-      ) as any;
-    }
-    if (!mps) return res.status(400).json({ error: 'No Draft MPS found. Create an MPS first.' });
+    if (!mps) return res.status(400).json({ error: `No Draft MPS found for period ${forecast.period_year}-${String(forecast.period_month).padStart(2, '0')}. Create an MPS for this period first.` });
 
     // Get unique product_ids from forecast
     const productIds = [...new Set(forecastData.map((f: any) => f.product_id))];
@@ -2154,19 +2213,22 @@ function getISOWeek(date: Date): number {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
-// POST /forecast-monthly/push-to-mps - Push monthly forecast to MPS
+// POST /forecast-monthly/push-to-mps - Push monthly forecast to MPS (per-month)
 router.post('/forecast-monthly/push-to-mps', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
-    const { year } = req.body;
-    if (!year) return res.status(400).json({ error: 'year is required' });
+    const { year, month } = req.body;
+    if (!year || !month) return res.status(400).json({ error: 'year and month are required' });
 
-    // find active Draft MPS
-    const mps = await dbGet("SELECT * FROM mps_headers WHERE status = 'Draft' ORDER BY id DESC LIMIT 1") as any;
-    if (!mps) return res.status(400).json({ error: 'No active Draft MPS found' });
+    // find Draft MPS for exact period
+    const mps = await dbGet(
+      `SELECT * FROM mps_headers WHERE period_year = ? AND period_month = ? AND status = 'Draft' ORDER BY id DESC LIMIT 1`,
+      [year, month]
+    ) as any;
+    if (!mps) return res.status(400).json({ error: `No Draft MPS found for period ${year}-${String(month).padStart(2, '0')}. Create an MPS for this period first.` });
 
     const monthlyData = await dbAll(
-      'SELECT fmd.*, fb.product_id, fb.conversion_rate FROM forecast_monthly_data fmd JOIN forecast_brands fb ON fmd.brand_id = fb.id WHERE fmd.year = ? AND fmd.forecast_qty > 0 AND fb.product_id IS NOT NULL',
-      [year]
+      'SELECT fmd.*, fb.product_id, fb.conversion_rate FROM forecast_monthly_data fmd JOIN forecast_brands fb ON fmd.brand_id = fb.id WHERE fmd.year = ? AND fmd.month = ? AND fmd.forecast_qty > 0 AND fb.product_id IS NOT NULL',
+      [year, month]
     ) as any[];
 
     let matched = 0;

@@ -329,11 +329,16 @@ const distributeToWeeks = async () => {
 
 const pushMonthlyToMps = async () => {
   if (monthlyDirty.value) { alert('Save monthly data first!'); return; }
-  if (!confirm(`Push monthly forecast ${selectedYear.value} to MPS?\n\nThis will update the "Demand (Forecast)" row in the active Draft MPS.`)) return;
+  const monthStr = prompt(`Push forecast for which month? (1-12)\nYear: ${selectedYear.value}\n\nEnter month number:`);
+  if (!monthStr) return;
+  const month = Number(monthStr);
+  if (!month || month < 1 || month > 12) { alert('Invalid month. Enter 1-12.'); return; }
+  const periodLabel = `${selectedYear.value}-${String(month).padStart(2, '0')}`;
+  if (!confirm(`Push monthly forecast ${periodLabel} to MPS?\n\nThis will update the "Demand (Forecast)" row in the Draft MPS for ${periodLabel}.`)) return;
   try {
-    const res = await api.post('/ppic/forecast-monthly/push-to-mps', { year: selectedYear.value });
+    const res = await api.post('/ppic/forecast-monthly/push-to-mps', { year: selectedYear.value, month });
     const d = res.data;
-    alert(`✅ ${d.message}\n\nProducts matched: ${d.products_matched}\nNew products added: ${d.products_created}\nWeeks updated: ${d.weeks_updated}`);
+    alert(`${d.message}\n\nProducts matched: ${d.products_matched}\nNew products added: ${d.products_created}\nWeeks updated: ${d.weeks_updated}`);
   } catch (e: any) { alert(e.response?.data?.error || 'Failed to push to MPS'); }
 };
 

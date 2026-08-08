@@ -455,6 +455,20 @@ router.get('/purchase-requests/:id', authMiddleware, requirePermission('procurem
       [req.params.id]
     );
     if (!pr) return res.status(404).json({ error: 'Purchase request not found' });
+
+    // load canonical items from purchase_request_items table
+    const canonicalItems = await dbAll(`
+      SELECT pri.id, pri.product_id, pri.quantity, pri.notes as item_notes,
+             p.name as product_name, p.sku,
+             u.name as uom_name
+      FROM purchase_request_items pri
+      LEFT JOIN products p ON pri.product_id = p.id
+      LEFT JOIN uom u ON p.unit_of_measure_id = u.id
+      WHERE pri.purchase_request_id = ?
+      ORDER BY pri.id
+    `, [req.params.id]) as any[];
+    (pr as any).canonical_items = canonicalItems;
+
     res.json({ data: pr });
   } catch (error) {
     console.error('Error fetching purchase request:', error);
@@ -705,12 +719,32 @@ router.post('/purchase-requests/:prId/bids', authMiddleware, requirePermission('
     );
     const bidId = bidResult.insertId;
 
-    // Parse PR notes to get items
+    // Parse PR notes to get items, fallback to purchase_request_items table
     let prItems: any[] = [];
     try {
       const notesData = JSON.parse(pr.notes || '{}');
       prItems = notesData.items || [];
     } catch (e) { /* ignore parse error */ }
+
+    // fallback: load from canonical purchase_request_items if notes had no items
+    if (prItems.length === 0) {
+      const tableItems = await dbAll(`
+        SELECT pri.product_id, pri.quantity, pri.notes as item_notes,
+               p.name as product_name, u.name as uom_name
+        FROM purchase_request_items pri
+        LEFT JOIN products p ON pri.product_id = p.id
+        LEFT JOIN uom u ON p.unit_of_measure_id = u.id
+        WHERE pri.purchase_request_id = ?
+        ORDER BY pri.id
+      `, [prId]) as any[];
+      prItems = tableItems.map((ti: any) => ({
+        productId: ti.product_id,
+        productName: ti.product_name || '',
+        name: ti.product_name || '',
+        qty: Number(ti.quantity || 0),
+        uom: ti.uom_name || '',
+      }));
+    }
 
     // If vendor_id provided, load vendor prices for matching products
     let vendorPriceMap: Record<number, any> = {};
@@ -940,6 +974,12 @@ router.get('/purchase-requests/:prId/bid-progress', authMiddleware, async (req: 
       const notesData = JSON.parse(pr.notes || '{}');
       totalItems = (notesData.items || []).length;
     } catch { totalItems = 0; }
+
+    // fallback: count from canonical purchase_request_items
+    if (totalItems === 0) {
+      const countRow = await dbGet('SELECT COUNT(*) as cnt FROM purchase_request_items WHERE purchase_request_id = ?', [prId]) as any;
+      totalItems = countRow?.cnt || 0;
+    }
     
     if (totalItems === 0) return res.json({ total_items: 0, items_with_bids: 0, percentage: 0, has_winner: false });
     
@@ -1189,12 +1229,21 @@ router.post('/purchase-orders', authMiddleware, requirePermission('procurement.p
       }
 
       // Validate that PR items are not already used in any PO (even draft)
-      let prItems: Array<{ productId?: number; product_id?: number; qty?: number; quantity?: number }>; 
+      let prItems: Array<{ productId?: number; product_id?: number; qty?: number; quantity?: number }>;
       try {
         const parsed = JSON.parse(pr.notes || '{}');
         prItems = (parsed.items || []) as any[];
       } catch {
         prItems = [] as any[];
+      }
+
+      // fallback: load from purchase_request_items if notes had no items
+      if (prItems.length === 0) {
+        const tableItems = await dbAll(
+          `SELECT product_id, quantity FROM purchase_request_items WHERE purchase_request_id = ?`,
+          [pr_id]
+        ) as any[];
+        prItems = tableItems.map((ti: any) => ({ product_id: ti.product_id, qty: Number(ti.quantity) }));
       }
       
       // Check remaining quantity for each PR item
