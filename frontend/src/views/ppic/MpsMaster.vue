@@ -1583,12 +1583,20 @@ const saveMrp = async () => {
   savingMrp.value = true;
   try {
     const entries: any[] = [];
+    const material_settings: any[] = [];
     for (const mat of mrpMaterials.value) {
+      // collect per-material settings
+      material_settings.push({
+        material_id: mat.material_id,
+        lead_time: Number(mat.lead_time) || 2,
+        first_stock: Number(mat.first_stock) || 0,
+        order_quantity: Number(mat.order_quantity) || 0,
+      });
       for (const w of (mat.weeks || [])) {
         entries.push({ material_id: mat.material_id, week_number: w.week_number, year: w.year, planned_order_receipt: Number(w.planned_order_receipt) || 0 });
       }
     }
-    await api.put(`/ppic/mps/${activeMps.value.id}/details/${mrpDetailId.value}/mrp`, { entries });
+    await api.put(`/ppic/mps/${activeMps.value.id}/details/${mrpDetailId.value}/mrp`, { entries, material_settings });
     mrpDirty.value = false;
     alert('✓ MRP saved!');
   } catch (err: any) { alert(err?.response?.data?.error || 'Failed to save'); }

@@ -697,6 +697,13 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
       .filter((w: any) => Number(w.production_qty) > 0)
       .map((w: any) => {
         const existingWO = existingWOs.find((wo: any) => wo.week_number === w.week_number);
+        // compute scheduled dates for this week
+        const jan4 = new Date(w.year, 0, 4);
+        const dayOfWeek = jan4.getDay() || 7;
+        const monday = new Date(jan4);
+        monday.setDate(jan4.getDate() - dayOfWeek + 1 + (w.week_number - 1) * 7);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
         return {
           week_number: w.week_number,
           year: w.year,
@@ -706,14 +713,26 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
           wo_number: existingWO?.wo_number || null,
           wo_status: existingWO?.status || null,
           wo_id: existingWO?.id || null,
+          scheduled_start: monday.toISOString().slice(0, 10),
+          scheduled_end: sunday.toISOString().slice(0, 10),
+          line_name: null,
         };
       });
+
+    // existing WOs for display
+    const existingWosList = existingWOs.map((wo: any) => ({
+      wo_number: wo.wo_number,
+      week_number: wo.week_number,
+      quantity: Number(wo.quantity),
+      status: wo.status,
+    }));
 
     res.json({ data: {
       product_id: detail.product_id,
       bom_id: detail.bom_id,
       mps_number: header.mps_number,
       preview_weeks: previewWeeks,
+      existing_wos: existingWosList,
       total_production: previewWeeks.reduce((s: number, w: any) => s + w.production_qty, 0),
       existing_wo_count: existingWOs.length,
     }});
@@ -785,7 +804,7 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePer
         VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
       `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, userId, `MPS ${header.mps_number} W${w.week_number}`]);
 
-      created.push({ week: w.week_number, wo_number: woNumber, qty });
+      created.push({ week_number: w.week_number, wo_number: woNumber, quantity: qty });
     }
 
     await ppicLog(req, 'GENERATE_WO', 'WORK_ORDER', detailId, null, { created: created.length, skipped: skipped.length });
@@ -887,7 +906,7 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
         VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
       `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
 
-      created.push({ wo_number: woNumber, week: w.week_number, qty });
+      created.push({ wo_number: woNumber, week_number: w.week_number, quantity: qty });
     }
 
     // update detail status
@@ -1084,12 +1103,13 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
   }
 });
 
-// PUT /mps/:id/details/:detailId/mrp - Save MRP planned order receipts
+// PUT /mps/:id/details/:detailId/mrp - Save MRP planned order receipts + material settings
 router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
     const { detailId } = req.params;
-    const { entries } = req.body; // [{ material_id, week_number, year, planned_order_receipt }]
+    const { entries, material_settings } = req.body;
 
+    // save planned_order_receipt per week
     for (const entry of (entries || [])) {
       const existing = await dbGet(
         'SELECT id FROM mrp_week_data WHERE mps_detail_id = ? AND material_id = ? AND year = ? AND week_number = ?',
@@ -1104,6 +1124,25 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('
         await dbRun(
           'INSERT INTO mrp_week_data (mps_detail_id, material_id, week_number, year, planned_order_receipt) VALUES (?, ?, ?, ?, ?)',
           [detailId, entry.material_id, entry.week_number, entry.year, entry.planned_order_receipt || 0]
+        );
+      }
+    }
+
+    // persist per-material settings (lead_time, first_stock, order_quantity)
+    for (const ms of (material_settings || [])) {
+      if (!ms.material_id) continue;
+      const existing = await dbGet(
+        'SELECT id FROM mrp_material_settings WHERE material_id = ?', [ms.material_id]
+      );
+      if (existing) {
+        await dbRun(
+          'UPDATE mrp_material_settings SET lead_time = ?, first_stock = ?, order_quantity = ? WHERE material_id = ?',
+          [ms.lead_time ?? 2, ms.first_stock ?? 0, ms.order_quantity ?? 0, ms.material_id]
+        );
+      } else {
+        await dbRun(
+          'INSERT INTO mrp_material_settings (material_id, lead_time, first_stock, order_quantity) VALUES (?, ?, ?, ?)',
+          [ms.material_id, ms.lead_time ?? 2, ms.first_stock ?? 0, ms.order_quantity ?? 0]
         );
       }
     }
@@ -1132,6 +1171,20 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
 
     const header = await dbGet('SELECT mps_number, period_year, period_month FROM mps_headers WHERE id = ?', [id]) as any;
     const userId = (req as any).user?.userId || null;
+
+    // duplicate safety: check if a PR was already generated from this MPS detail
+    const existingPr = await dbGet(
+      `SELECT pr.id, pr.pr_number FROM purchase_requests pr
+       WHERE pr.notes LIKE ? AND pr.status != 'CANCELLED'
+       ORDER BY pr.id DESC LIMIT 1`,
+      [`%Detail #${detailId}]%`]
+    ) as any;
+    if (existingPr) {
+      return res.status(409).json({
+        error: `PR sudah pernah dibuat untuk MPS detail ini: ${existingPr.pr_number}. Batalkan PR lama terlebih dahulu jika ingin membuat ulang.`,
+        existing_pr: existingPr.pr_number,
+      });
+    }
 
     const now = new Date();
     const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -1657,13 +1710,14 @@ router.get('/forecasts/:id', authMiddleware, requirePermission('ppic.forecast', 
     ) as any[];
 
     // Build week columns (12 weeks from period start)
-    const now = new Date();
-    const currentWeek = getWeekNumber(now);
-    const currentYear = now.getFullYear();
+    const h = header as any;
+    const periodStart = getFirstWeekOfMonth(h.period_year, h.period_month);
+    const startWeek = periodStart.week;
+    const startYear = periodStart.year;
     const weekColumns: { week: number; year: number; start: string; end: string }[] = [];
     for (let i = 0; i < 12; i++) {
-      let wk = currentWeek + i;
-      let yr = currentYear;
+      let wk = startWeek + i;
+      let yr = startYear;
       if (wk > 52) { wk -= 52; yr++; }
       const range = getWeekDateRange(yr, wk);
       weekColumns.push({ week: wk, year: yr, start: range.start, end: range.end });
@@ -1706,14 +1760,14 @@ router.post('/forecasts/:id/generate-grid', authMiddleware, requirePermission('p
     const existing = await dbGet('SELECT COUNT(*) as cnt FROM forecast_week_data WHERE forecast_header_id = ?', [req.params.id]) as any;
     if (existing.cnt > 0) return res.status(400).json({ error: 'Grid already generated. Delete existing data first or use save.' });
 
-    const now = new Date();
-    const currentWeek = getWeekNumber(now);
-    const currentYear = now.getFullYear();
+    const periodStart = getFirstWeekOfMonth(header.period_year, header.period_month);
+    const startWeek = periodStart.week;
+    const startYear = periodStart.year;
 
     for (const brand of brands) {
       for (let i = 0; i < 12; i++) {
-        let wk = currentWeek + i;
-        let yr = currentYear;
+        let wk = startWeek + i;
+        let yr = startYear;
         if (wk > 52) { wk -= 52; yr++; }
         await dbRun(
           'INSERT INTO forecast_week_data (forecast_header_id, brand_id, week_number, year, forecast_qty, product_qty) VALUES (?, ?, ?, ?, 0, 0)',
