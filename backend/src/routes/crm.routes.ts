@@ -62,14 +62,38 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.dashboard', 'vie
       FROM leads WHERE is_archived = 0 GROUP BY currency
     `) as any[];
 
-    const clientStats = await dbGet(`
+    const clientCounts = await dbGet(`
       SELECT 
         COUNT(*) as total,
-        SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-        COALESCE((SELECT SUM(total_amount) FROM sales_orders WHERE client_id IS NOT NULL AND status NOT IN ('cancelled','draft')), 0) as total_revenue,
-        COALESCE((SELECT SUM(total_amount) FROM sales_orders WHERE client_id IS NOT NULL AND status IN ('confirmed','processing','open')), 0) as total_outstanding
+        SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active
       FROM clients
     `);
+
+    // client revenue grouped by currency from canonical invoices → sales_orders
+    const clientRevenueRows = await dbAll(`
+      SELECT so.currency, COALESCE(SUM(inv.total_amount), 0) as total
+      FROM invoices inv
+      JOIN sales_orders so ON inv.so_id = so.id
+      WHERE so.client_id IS NOT NULL AND inv.status NOT IN ('cancelled','draft')
+      GROUP BY so.currency
+    `) as any[];
+
+    // client outstanding = invoiced - paid, grouped by currency
+    const clientOutstandingRows = await dbAll(`
+      SELECT so.currency,
+        COALESCE(SUM(inv.total_amount), 0) - COALESCE(SUM(paid.total_paid), 0) as total
+      FROM invoices inv
+      JOIN sales_orders so ON inv.so_id = so.id
+      LEFT JOIN (SELECT invoice_id, SUM(amount) as total_paid FROM sales_payments WHERE status != 'cancelled' GROUP BY invoice_id) paid ON paid.invoice_id = inv.id
+      WHERE so.client_id IS NOT NULL AND inv.status NOT IN ('cancelled','draft')
+      GROUP BY so.currency
+    `) as any[];
+
+    const clientStats = {
+      ...(clientCounts || {}),
+      total_revenue_by_currency: toCurrencyMap(clientRevenueRows),
+      total_outstanding_by_currency: toCurrencyMap(clientOutstandingRows),
+    };
 
     // lead stage breakdown with currency-grouped values
     const leadsByStageRaw = await dbAll(`

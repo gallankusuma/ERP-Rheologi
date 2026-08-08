@@ -100,7 +100,7 @@
               </div>
               <div class="mt-3 pt-3 border-t border-white/20">
                 <p class="text-white/70 text-xs">Total Revenue</p>
-                <p class="text-lg font-bold">{{ formatCurrency(data.clients?.total_revenue) }}</p>
+                <p class="text-lg font-bold">{{ formatCurrencyMap(data.clients?.total_revenue_by_currency) }}</p>
               </div>
             </div>
           </div>
@@ -217,7 +217,7 @@
                   </p>
                 </div>
                 <div class="text-right flex-shrink-0">
-                  <p class="text-sm font-bold text-slate-700">{{ formatCurrency(item.value) }}</p>
+                  <p class="text-sm font-bold text-slate-700">{{ formatCurrency(item.value, item.currency || 'IDR') }}</p>
                   <p class="text-[10px] text-slate-400">{{ timeAgo(item.updated_at) }}</p>
                 </div>
               </div>

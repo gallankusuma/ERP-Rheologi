@@ -41,7 +41,12 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
     }
 
     if (has_due === 'true') {
-      query += ` AND EXISTS (SELECT 1 FROM sales_orders WHERE client_id = c.id AND status NOT IN ('draft','cancelled','completed','delivered') AND total_amount > 0)`;
+      query += ` AND EXISTS (
+        SELECT 1 FROM invoices inv
+        JOIN sales_orders so ON inv.so_id = so.id
+        WHERE so.client_id = c.id AND inv.status NOT IN ('cancelled','draft','paid')
+          AND inv.total_amount > COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp WHERE sp.invoice_id = inv.id AND sp.status != 'cancelled'), 0)
+      )`;
     }
 
     if (has_open_projects === 'true') {
@@ -85,7 +90,12 @@ router.get('/', authMiddleware, requirePermission('crm.clients', 'view'), async 
     }
 
     if (has_due === 'true') {
-      countQuery += ` AND EXISTS (SELECT 1 FROM sales_orders WHERE client_id = c.id AND status NOT IN ('draft','cancelled','completed','delivered') AND total_amount > 0)`;
+      countQuery += ` AND EXISTS (
+        SELECT 1 FROM invoices inv
+        JOIN sales_orders so ON inv.so_id = so.id
+        WHERE so.client_id = c.id AND inv.status NOT IN ('cancelled','draft','paid')
+          AND inv.total_amount > COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp WHERE sp.invoice_id = inv.id AND sp.status != 'cancelled'), 0)
+      )`;
     }
 
     const countResult = await dbGet(countQuery, countParams);
@@ -138,6 +148,30 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
     // ticket counts
     const openTickets = await dbGet('SELECT COUNT(*) as count FROM client_tickets WHERE status = "open"', []);
 
+    // invoice stats from canonical invoices + sales_payments
+    const unpaidInvoices = await dbGet(`
+      SELECT COUNT(DISTINCT so.client_id) as count FROM invoices inv
+      JOIN sales_orders so ON inv.so_id = so.id
+      WHERE so.client_id IS NOT NULL AND inv.status NOT IN ('cancelled','draft')
+        AND COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp WHERE sp.invoice_id = inv.id AND sp.status != 'cancelled'), 0) = 0
+    `, []);
+    const partialInvoices = await dbGet(`
+      SELECT COUNT(DISTINCT so.client_id) as count FROM invoices inv
+      JOIN sales_orders so ON inv.so_id = so.id
+      WHERE so.client_id IS NOT NULL AND inv.status NOT IN ('cancelled','draft')
+        AND COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp WHERE sp.invoice_id = inv.id AND sp.status != 'cancelled'), 0) > 0
+        AND COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp WHERE sp.invoice_id = inv.id AND sp.status != 'cancelled'), 0) < inv.total_amount
+    `, []);
+    const overdueInvoices = await dbGet(`
+      SELECT COUNT(DISTINCT so.client_id) as count FROM invoices inv
+      JOIN sales_orders so ON inv.so_id = so.id
+      WHERE so.client_id IS NOT NULL AND inv.status NOT IN ('cancelled','draft','paid')
+        AND inv.due_date < CURDATE()
+        AND COALESCE((SELECT SUM(sp.amount) FROM sales_payments sp WHERE sp.invoice_id = inv.id AND sp.status != 'cancelled'), 0) < inv.total_amount
+    `, []);
+
+    const totalClientsCount = Math.max(totalClients.count, 1);
+
     res.json({
       data: {
         metrics: {
@@ -146,13 +180,21 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
           contactsLoggedToday: contactsToday.count,
           contactsLoggedWeek: contactsWeek.count
         },
+        invoices: {
+          unpaid: unpaidInvoices.count,
+          unpaidPercentage: Math.round((unpaidInvoices.count / totalClientsCount) * 100) || 0,
+          partial: partialInvoices.count,
+          partialPercentage: Math.round((partialInvoices.count / totalClientsCount) * 100) || 0,
+          overdue: overdueInvoices.count,
+          overduePercentage: Math.round((overdueInvoices.count / totalClientsCount) * 100) || 0
+        },
         orders: {
           draft: draftOrders.count,
           active: confirmedOrders.count,
           completed: completedOrders.count,
           cancelled: cancelledOrders.count,
           new: recentOrders.count,
-          percentage: Math.round((recentOrders.count / Math.max(totalClients.count, 1)) * 100) || 0
+          percentage: Math.round((recentOrders.count / totalClientsCount) * 100) || 0
         },
         projects: {
           open: openProjects.count,
@@ -162,7 +204,7 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
         },
         tickets: {
           open: openTickets.count,
-          percentage: Math.round((openTickets.count / Math.max(totalClients.count, 1)) * 100) || 0
+          percentage: Math.round((openTickets.count / totalClientsCount) * 100) || 0
         }
       }
     });
