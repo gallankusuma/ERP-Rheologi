@@ -538,6 +538,38 @@ const ensureRnDSchema = async (connection: any) => {
   console.log('✅ R&D module schema ensured');
 };
 
+const ensurePpicSchema = async (connection: any) => {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS mps_detail_sources (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      mps_detail_id INT NOT NULL,
+      source_type ENUM('SO_ITEM','PROJECT') NOT NULL,
+      so_item_id INT NULL,
+      project_id INT NULL,
+      quantity DECIMAL(15,2) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_so_item (so_item_id),
+      UNIQUE KEY uq_project (project_id),
+      KEY idx_detail (mps_detail_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS mrp_material_settings (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      material_id INT NOT NULL,
+      lead_time INT DEFAULT 2,
+      first_stock DECIMAL(15,2) DEFAULT 0,
+      order_quantity DECIMAL(15,2) DEFAULT 0,
+      UNIQUE KEY uq_material (material_id)
+    )`,
+    `ALTER TABLE line_processes ADD COLUMN IF NOT EXISTS working_hours_per_week DECIMAL(5,1) DEFAULT 40`,
+    `ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS week_number INT NULL`,
+  ];
+
+  for (const statement of statements) {
+    await execSchemaEnsure(connection, statement);
+  }
+  console.log('PPIC module schema ensured');
+};
+
 // Helper functions for async/await query execution
 export const dbQuery = async (sql: string, params: any[] = []): Promise<any> => {
   const connection = await pool.getConnection();
@@ -877,6 +909,7 @@ export async function initializeDatabase() {
     await ensureProcurementPaymentSchema(connection);
     await ensureRnDSchema(connection);
     await ensureCrmSchema(connection);
+    await ensurePpicSchema(connection);
     await ensureApprovalPermissions(connection);
     await ensureMenuPermissions(connection);
 

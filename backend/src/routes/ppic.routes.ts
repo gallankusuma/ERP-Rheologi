@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 
@@ -103,6 +103,15 @@ function getWeekDateRange(year: number, week: number): { start: string; end: str
   sunday.setDate(monday.getDate() + 6);
   const fmt = (d: Date) => `${d.getDate()}/${d.getMonth() + 1}`;
   return { start: fmt(monday), end: fmt(sunday) };
+}
+
+// Helper: get first ISO week for a given month
+function getFirstWeekOfMonth(year: number, month: number): { week: number; year: number } {
+  const firstDay = new Date(year, month - 1, 1);
+  const week = getWeekNumber(firstDay);
+  // ISO week year may differ (e.g. Jan 1 could be W52 of prev year)
+  const weekYear = month === 1 && week > 50 ? year - 1 : year;
+  return { week, year: weekYear };
 }
 
 // GET /mps - List MPS headers
@@ -299,56 +308,52 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
 
     // Source 1: Sales Order Items
     let soItems: any[] = [];
-    try {
-      soItems = await dbAll(`
-        SELECT 'SO' as source_type, si.id as source_id, si.product_id, si.quantity,
-          so.id as so_id, so.so_date as ref_date, CONCAT('SO-', so.so_number) as ref_label,
-          p.name as product_name, p.sku as product_sku,
-          bh.id as bom_id
-        FROM so_items si
-        JOIN sales_orders so ON si.so_id = so.id
-        JOIN products p ON si.product_id = p.id
-        LEFT JOIN bom_headers bh ON bh.product_id = si.product_id AND bh.status = 'ACTIVE'
-        WHERE so.status IN ('OPEN', 'open', 'APPROVED', 'CONFIRMED', 'PROCESSING', 'DRAFT', 'confirmed')
-          AND (so.so_date BETWEEN ? AND ? OR so.so_date <= ?)
-          AND si.id NOT IN (
-            SELECT COALESCE(so_item_id, 0) FROM mps_details WHERE so_item_id IS NOT NULL
-          )
-          AND si.id NOT IN (
-            SELECT COALESCE(so_item_id, 0) FROM mps_detail_sources WHERE so_item_id IS NOT NULL
-          )
-      `, [startDate, endDate, endDate]) as any[];
-    } catch { soItems = []; }
+    soItems = await dbAll(`
+      SELECT 'SO' as source_type, si.id as source_id, si.product_id, si.quantity,
+        so.id as so_id, so.so_date as ref_date, CONCAT('SO-', so.so_number) as ref_label,
+        p.name as product_name, p.sku as product_sku,
+        bh.id as bom_id
+      FROM so_items si
+      JOIN sales_orders so ON si.so_id = so.id
+      JOIN products p ON si.product_id = p.id
+      LEFT JOIN bom_headers bh ON bh.product_id = si.product_id AND bh.status = 'ACTIVE'
+      WHERE so.status IN ('OPEN', 'open', 'APPROVED', 'CONFIRMED', 'PROCESSING', 'DRAFT', 'confirmed')
+        AND (so.so_date BETWEEN ? AND ? OR so.so_date <= ?)
+        AND si.id NOT IN (
+          SELECT COALESCE(so_item_id, 0) FROM mps_details WHERE so_item_id IS NOT NULL
+        )
+        AND si.id NOT IN (
+          SELECT COALESCE(so_item_id, 0) FROM mps_detail_sources WHERE so_item_id IS NOT NULL
+        )
+    `, [startDate, endDate, endDate]) as any[];
 
     // Source 2: Client Projects (where product_id is linked)
     let projItems: any[] = [];
-    try {
-      projItems = await dbAll(`
-        SELECT 'PROJECT' as source_type, cp.id as source_id, cp.product_id, cp.quantity,
-          cp.so_id as linked_so_id,
-          COALESCE(cp.start_date, cp.created_at) as ref_date,
-          CONCAT('PRJ-', cp.project_number) as ref_label,
-          p.name as product_name, p.sku as product_sku,
-          bh.id as bom_id
-        FROM client_projects cp
-        JOIN products p ON cp.product_id = p.id
-        LEFT JOIN bom_headers bh ON bh.product_id = cp.product_id AND bh.status = 'ACTIVE'
-        WHERE cp.status IN ('open', 'in_progress')
-          AND cp.product_id IS NOT NULL
-          AND (
-            cp.start_date BETWEEN ? AND ?
-            OR cp.end_date BETWEEN ? AND ?
-            OR (cp.start_date <= ? AND cp.end_date >= ?)
-            OR cp.start_date IS NULL
-          )
-          AND cp.id NOT IN (
-            SELECT COALESCE(project_id, 0) FROM mps_details WHERE project_id IS NOT NULL
-          )
-          AND cp.id NOT IN (
-            SELECT COALESCE(project_id, 0) FROM mps_detail_sources WHERE project_id IS NOT NULL
-          )
-      `, [startDate, endDate, startDate, endDate, startDate, endDate]) as any[];
-    } catch { projItems = []; }
+    projItems = await dbAll(`
+      SELECT 'PROJECT' as source_type, cp.id as source_id, cp.product_id, cp.quantity,
+        cp.so_id as linked_so_id,
+        COALESCE(cp.start_date, cp.created_at) as ref_date,
+        CONCAT('PRJ-', cp.project_number) as ref_label,
+        p.name as product_name, p.sku as product_sku,
+        bh.id as bom_id
+      FROM client_projects cp
+      JOIN products p ON cp.product_id = p.id
+      LEFT JOIN bom_headers bh ON bh.product_id = cp.product_id AND bh.status = 'ACTIVE'
+      WHERE cp.status IN ('open', 'in_progress')
+        AND cp.product_id IS NOT NULL
+        AND (
+          cp.start_date BETWEEN ? AND ?
+          OR cp.end_date BETWEEN ? AND ?
+          OR (cp.start_date <= ? AND cp.end_date >= ?)
+          OR cp.start_date IS NULL
+        )
+        AND cp.id NOT IN (
+          SELECT COALESCE(project_id, 0) FROM mps_details WHERE project_id IS NOT NULL
+        )
+        AND cp.id NOT IN (
+          SELECT COALESCE(project_id, 0) FROM mps_detail_sources WHERE project_id IS NOT NULL
+        )
+    `, [startDate, endDate, startDate, endDate, startDate, endDate]) as any[];
 
     // Deduplicate: If a Project was created from an SO, remove SO items from that same SO
     // Projects take priority (they represent committed demand)
@@ -373,9 +378,10 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
       return res.json({ message: 'No new orders found. All products already in MPS.', pulled: 0 });
     }
 
-    const now = new Date();
-    const currentWeek = getWeekNumber(now);
-    const currentYear = now.getFullYear();
+    // derive grid start from MPS period, not current date
+    const periodStart = getFirstWeekOfMonth(header.period_year, header.period_month);
+    const currentWeek = periodStart.week;
+    const currentYear = periodStart.year;
 
     // Group items by product_id — merge same products from different SOs
     const productMap = new Map<number, {
@@ -416,7 +422,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
       }
 
       // Distribute qty to the correct week based on ref_date
-      const refDate = item.ref_date ? new Date(item.ref_date) : now;
+      const refDate = item.ref_date ? new Date(item.ref_date) : new Date(header.period_year, header.period_month - 1, 1);
       const refWeek = getWeekNumber(refDate);
       const refYear = refDate.getFullYear();
       const weekKey = `${refWeek}:${refYear}`;
@@ -531,10 +537,10 @@ router.post('/mps/:id/add-item', authMiddleware, requirePermission('ppic.mps', '
 
     const detailId = detailResult.insertId;
 
-    // Create 12 weeks of grid data
-    const now = new Date();
-    const currentWeek = getWeekNumber(now);
-    const currentYear = now.getFullYear();
+    // Create 12 weeks of grid data using MPS period, not current date
+    const periodStart = getFirstWeekOfMonth(header.period_year, header.period_month);
+    const currentWeek = periodStart.week;
+    const currentYear = periodStart.year;
     const tgtWeek = target_week ? Number(target_week) : null;
     const tgtYear = target_year ? Number(target_year) : currentYear;
 
@@ -696,6 +702,7 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
           year: w.year,
           production_qty: Number(w.production_qty),
           wo_exists: !!existingWO,
+          already_exists: !!existingWO,
           wo_number: existingWO?.wo_number || null,
           wo_status: existingWO?.status || null,
           wo_id: existingWO?.id || null,
@@ -720,7 +727,8 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
 router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
-    const { weeks } = req.body; // [{ week_number, year }] or empty for all
+    const { selected_weeks, weeks: weeksAlt } = req.body;
+    const weeks = selected_weeks || weeksAlt; // frontend sends selected_weeks
     const userId = (req as any).user?.userId || null;
     const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
     if (!header) return res.status(404).json({ error: 'MPS not found' });
@@ -807,7 +815,8 @@ router.post('/mps/:id/details/:detailId/sync-wo', authMiddleware, requirePermiss
       [detailId]
     ) as any[];
 
-    let synced = 0;
+    const updated: any[] = [];
+    const skipped: any[] = [];
     for (const wo of draftWOs) {
       const weekData = await dbGet(
         'SELECT production_qty FROM mps_week_data WHERE mps_detail_id = ? AND week_number = ?',
@@ -815,34 +824,73 @@ router.post('/mps/:id/details/:detailId/sync-wo', authMiddleware, requirePermiss
       ) as any;
       const newQty = Number(weekData?.production_qty || 0);
       await dbRun('UPDATE work_orders SET quantity = ? WHERE id = ?', [newQty, wo.id]);
-      synced++;
+      updated.push({ wo_number: wo.wo_number, week: wo.week_number, qty: newQty });
     }
 
-    await ppicLog(req, 'SYNC_WO', 'WORK_ORDER', detailId, null, { synced });
-    res.json({ message: `${synced} DRAFT WO(s) synced`, data: { synced } });
+    await ppicLog(req, 'SYNC_WO', 'WORK_ORDER', detailId, null, { updated: updated.length });
+    res.json({ message: `${updated.length} DRAFT WO(s) synced`, data: { updated, skipped, synced: updated.length } });
   } catch (error) {
     console.error('Error syncing WOs:', error);
     res.status(500).json({ error: 'Failed to sync WOs' });
   }
 });
 
-// POST /mps/:id/details/:detailId/reset-wo - Delete DRAFT WOs only
+// POST /mps/:id/details/:detailId/reset-wo - Delete DRAFT WOs + regenerate from production
 router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermission('ppic.mps', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
+    const userId = (req as any).user?.userId || null;
     const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
     if (!header) return res.status(404).json({ error: 'MPS not found' });
 
     const detail = await dbGet('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]) as any;
     if (!detail) return res.status(404).json({ error: 'MPS detail not found' });
 
-    // only delete DRAFT WOs, never touch Released/In Progress/Completed
-    const result = await dbRun(
-      "DELETE FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT'", [detailId]
-    );
-    const deleted = result.affectedRows || 0;
+    // collect DRAFT WOs to report what was deleted
+    const draftWOs = await dbAll(
+      "SELECT wo_number, week_number FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT'", [detailId]
+    ) as any[];
+    const deleted = draftWOs.map((wo: any) => ({ wo_number: wo.wo_number, week: wo.week_number }));
 
-    // clear wo_id on detail if no more WOs exist
+    // delete DRAFT WOs only
+    await dbRun("DELETE FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT'", [detailId]);
+
+    // regenerate from current production_qty > 0 weeks
+    const weekData = await dbAll(
+      'SELECT * FROM mps_week_data WHERE mps_detail_id = ? AND production_qty > 0 ORDER BY year, week_number', [detailId]
+    ) as any[];
+
+    const created: any[] = [];
+    for (const w of weekData) {
+      // skip if non-DRAFT WO already exists for this week
+      const existing = await dbGet(
+        'SELECT id FROM work_orders WHERE mps_detail_id = ? AND week_number = ?', [detailId, w.week_number]
+      ) as any;
+      if (existing) continue;
+
+      const qty = Number(w.production_qty);
+      if (qty <= 0) continue;
+
+      const woCount = await dbGet('SELECT COUNT(*) as cnt FROM work_orders') as any;
+      const woNumber = `WO-${String((woCount?.cnt || 0) + 1).padStart(5, '0')}`;
+
+      const jan4 = new Date(w.year, 0, 4);
+      const dayOfWeek = jan4.getDay() || 7;
+      const monday = new Date(jan4);
+      monday.setDate(jan4.getDate() - dayOfWeek + 1 + (w.week_number - 1) * 7);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+      await dbRun(`
+        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, created_by, notes)
+        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
+      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
+
+      created.push({ wo_number: woNumber, week: w.week_number, qty });
+    }
+
+    // update detail status
     const remaining = await dbGet(
       'SELECT COUNT(*) as cnt FROM work_orders WHERE mps_detail_id = ?', [detailId]
     ) as any;
@@ -850,8 +898,11 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
       await dbRun("UPDATE mps_details SET wo_id = NULL, status = 'Scheduled' WHERE id = ?", [detailId]);
     }
 
-    await ppicLog(req, 'RESET_WO', 'WORK_ORDER', detailId, null, { deleted });
-    res.json({ message: `${deleted} DRAFT WO(s) deleted`, data: { deleted } });
+    await ppicLog(req, 'RESET_WO', 'WORK_ORDER', detailId, null, { deleted: deleted.length, created: created.length });
+    res.json({
+      message: `${deleted.length} DRAFT WO(s) deleted, ${created.length} new WO(s) created`,
+      data: { deleted, created }
+    });
   } catch (error) {
     console.error('Error resetting WOs:', error);
     res.status(500).json({ error: 'Failed to reset WOs' });
@@ -1064,6 +1115,89 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('
   }
 });
 
+// POST /mps/:id/details/:detailId/mrp/generate-pr - Embedded MRP → PR from MPS detail
+router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'create'), async (req: Request, res: Response) => {
+  try {
+    const { id, detailId } = req.params;
+    const { material_net_reqs, needed_by_week, needed_by_year } = req.body;
+
+    if (!material_net_reqs || !Array.isArray(material_net_reqs) || material_net_reqs.length === 0) {
+      return res.status(400).json({ error: 'No materials with net requirements provided.' });
+    }
+
+    const validMaterials = material_net_reqs.filter((m: any) => Number(m.net_req_qty) > 0);
+    if (validMaterials.length === 0) {
+      return res.status(400).json({ error: 'No materials have net requirements > 0.' });
+    }
+
+    const header = await dbGet('SELECT mps_number, period_year, period_month FROM mps_headers WHERE id = ?', [id]) as any;
+    const userId = (req as any).user?.userId || null;
+
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const rand = Math.floor(100 + Math.random() * 900);
+    const prNumber = `PR-MRP-${datePart}-${rand}`;
+
+    // compute needed_by from week/year if provided
+    let neededByDate: string;
+    if (needed_by_week && needed_by_year) {
+      const jan4 = new Date(needed_by_year, 0, 4);
+      const dayOfWeek = jan4.getDay() || 7;
+      const friday = new Date(jan4);
+      friday.setDate(jan4.getDate() - dayOfWeek + 5 + (needed_by_week - 1) * 7);
+      neededByDate = friday.toISOString().slice(0, 10);
+    } else {
+      const maxLead = Math.max(...validMaterials.map((m: any) => 2)); // default lead
+      const nb = new Date();
+      nb.setDate(nb.getDate() + maxLead * 7);
+      neededByDate = nb.toISOString().slice(0, 10);
+    }
+
+    const prNotes = [
+      `[Auto-generated from MRP for MPS ${header?.mps_number || id}, Detail #${detailId}]`,
+      `Materials: ${validMaterials.length} items`,
+      `Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`
+    ].join('\n');
+
+    const result = await dbTransaction(async (conn: any) => {
+      const [prInsert] = await conn.execute(
+        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by) VALUES (?, ?, 'DRAFT', ?, ?, ?)`,
+        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededByDate]
+      );
+      const prId = prInsert.insertId;
+
+      let itemCount = 0;
+      for (const mat of validMaterials) {
+        const qty = Number(mat.net_req_qty) || 0;
+        if (qty <= 0) continue;
+        await conn.execute(
+          `INSERT INTO purchase_request_items (purchase_request_id, product_id, quantity, notes) VALUES (?, ?, ?, ?)`,
+          [prId, mat.material_id, qty, `MRP Net Req | ${mat.material_name || ''} | UOM: ${mat.uom_name || '-'}`]
+        );
+        itemCount++;
+      }
+      if (itemCount === 0) throw new Error('No valid items to insert');
+      return { prId, itemCount };
+    });
+
+    console.log(`Embedded PR generated: ${prNumber} with ${result.itemCount} items (MPS detail ${detailId})`);
+    await ppicLog(req, 'GENERATE_PR', 'MRP', result.prId, null, { pr_number: prNumber, item_count: result.itemCount, mps_detail_id: detailId });
+
+    res.status(201).json({
+      pr_number: prNumber,
+      pr_id: result.prId,
+      items_created: result.itemCount,
+      needed_by: neededByDate,
+    });
+  } catch (error: any) {
+    console.error('Error generating embedded PR:', error);
+    if (error.message?.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'PR number conflict. Please try again.' });
+    }
+    res.status(500).json({ error: 'Failed to generate Purchase Request from embedded MRP' });
+  }
+});
+
 // ==========================================
 // STANDALONE MRP — Aggregated across ALL confirmed MPS
 // ==========================================
@@ -1072,16 +1206,20 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('
 router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async (req: Request, res: Response) => {
   try {
     const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentWeek = getWeekNumber(now);
-    const year = Number(req.query.year) || currentYear;
+    const year = Number(req.query.year) || now.getFullYear();
+    const month = Number(req.query.month) || (now.getMonth() + 1);
 
-    // Generate 12 week columns from current week
+    // derive grid start from requested period
+    const periodStart = getFirstWeekOfMonth(year, month);
+    const startWeek = periodStart.week;
+    const startYear = periodStart.year;
+
+    // Generate 12 week columns from period start
     const numWeeks = 12;
     const weekColumns: any[] = [];
     for (let i = 0; i < numWeeks; i++) {
-      let wk = currentWeek + i;
-      let yr = currentYear;
+      let wk = startWeek + i;
+      let yr = startYear;
       if (wk > 52) { wk -= 52; yr++; }
       const range = getWeekDateRange(yr, wk);
       weekColumns.push({ week: wk, year: yr, label: `W${wk}`, dateRange: `${range.start}-${range.end}` });
@@ -1349,7 +1487,6 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
     ].filter(Boolean).join('\n');
 
     // transactional: PR header + all items, rollback if any item fails
-    const { dbTransaction } = require('../config/database');
     const result = await dbTransaction(async (conn: any) => {
       const [prInsert] = await conn.execute(
         `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by) VALUES (?, ?, 'DRAFT', ?, ?, ?)`,
