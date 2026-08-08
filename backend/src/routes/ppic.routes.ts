@@ -683,6 +683,16 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
     const detail = await dbGet('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]) as any;
     if (!detail) return res.status(404).json({ error: 'MPS detail not found' });
 
+    // resolve production line for this product
+    const lineInfo = await dbGet(`
+      SELECT lp.id as line_process_id, lp.name as line_name, p.uom_name
+      FROM line_process_products lpp
+      JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
+      LEFT JOIN products p ON p.id = ?
+      WHERE lpp.product_id = ?
+      LIMIT 1
+    `, [detail.product_id, detail.product_id]) as any;
+
     // get weekly production data
     const weekData = await dbAll(
       'SELECT * FROM mps_week_data WHERE mps_detail_id = ? ORDER BY year, week_number', [detailId]
@@ -715,7 +725,9 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
           wo_id: existingWO?.id || null,
           scheduled_start: monday.toISOString().slice(0, 10),
           scheduled_end: sunday.toISOString().slice(0, 10),
-          line_name: null,
+          line_process_id: lineInfo?.line_process_id || null,
+          line_name: lineInfo?.line_name || null,
+          uom_name: lineInfo?.uom_name || null,
         };
       });
 
@@ -755,6 +767,16 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePer
 
     const detail = await dbGet('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]) as any;
     if (!detail) return res.status(404).json({ error: 'MPS detail not found' });
+
+    // resolve production line for this product
+    const lineInfo = await dbGet(`
+      SELECT lp.id as line_process_id
+      FROM line_process_products lpp
+      JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
+      WHERE lpp.product_id = ?
+      LIMIT 1
+    `, [detail.product_id]) as any;
+    const lineProcessId = lineInfo?.line_process_id || null;
 
     // get weekly data with production_qty > 0
     let weekData = await dbAll(
@@ -800,9 +822,9 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePer
       const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
       await dbRun(`
-        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, created_by, notes)
-        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
-      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, userId, `MPS ${header.mps_number} W${w.week_number}`]);
+        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes)
+        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)
+      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number}`]);
 
       created.push({ week_number: w.week_number, wo_number: woNumber, quantity: qty });
     }
@@ -865,6 +887,16 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
     const detail = await dbGet('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]) as any;
     if (!detail) return res.status(404).json({ error: 'MPS detail not found' });
 
+    // resolve production line for this product
+    const lineInfo = await dbGet(`
+      SELECT lp.id as line_process_id
+      FROM line_process_products lpp
+      JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
+      WHERE lpp.product_id = ?
+      LIMIT 1
+    `, [detail.product_id]) as any;
+    const lineProcessId = lineInfo?.line_process_id || null;
+
     // collect DRAFT WOs to report what was deleted
     const draftWOs = await dbAll(
       "SELECT wo_number, week_number FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT'", [detailId]
@@ -902,9 +934,9 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
       const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
       await dbRun(`
-        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, created_by, notes)
-        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
-      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
+        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes)
+        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)
+      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
 
       created.push({ wo_number: woNumber, week_number: w.week_number, quantity: qty });
     }
