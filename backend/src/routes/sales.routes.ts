@@ -222,6 +222,24 @@ router.put('/sales-orders/:id', authMiddleware, requirePermission('crm.sales', '
   }
 });
 
+
+// delete draft SO only
+router.delete('/sales-orders/:id', authMiddleware, requirePermission('crm.sales', 'delete'), async (req: Request, res: Response) => {
+  try {
+    const so = await dbGet('SELECT id, status, so_number FROM sales_orders WHERE id = ?', [req.params.id]) as any;
+    if (!so) return res.status(404).json({ error: 'Sales order not found' });
+    if (so.status !== 'draft') {
+      return res.status(400).json({ error: `Cannot delete SO with status '${so.status}'. Only draft orders can be deleted.` });
+    }
+    await dbRun('DELETE FROM so_items WHERE so_id = ?', [so.id]);
+    await dbRun('DELETE FROM sales_orders WHERE id = ?', [so.id]);
+    res.json({ message: `Sales order ${so.so_number} deleted` });
+  } catch (error) {
+    console.error('Error deleting sales order:', error);
+    res.status(500).json({ error: 'Failed to delete sales order' });
+  }
+});
+
 // Deliveries
 router.get('/deliveries', authMiddleware, requirePermission('sales.sales-orders-list', 'view'), async (req: Request, res: Response) => {
   try {
