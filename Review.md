@@ -1,46 +1,17 @@
-Team, revisi commit `6361bb4` sudah menutup mayoritas comment terakhir. Sample Request lifecycle sudah OK dan tidak perlu disentuh lagi.
+CRM Code Review = Conditionally Clean / Test Gate Required.
 
-Masih tersisa 2 targeted cleanup sebelum CRM freeze:
+Artinya dari scope blocker yang kita sepakati, gue sudah tidak punya comment code P0/P1 lagi. Jangan screening nambah scope baru.
 
-1. CRM Dashboard multi-currency
+Yang tersisa cuma final runtime E2E smoke test, bukan revisi arsitektur:
 
-Prospect/Lead pipeline sudah menggunakan currency map dengan benar.
+Prospect IDR + USD → Qualified → Lead → Proposal → Negotiation → Won → Client → Sales Order dengan item → Client 360 → CRM Dashboard
 
-Namun Client Total Revenue masih melakukan raw SUM `sales_orders.total_amount` tanpa grouping currency, lalu frontend menampilkannya sebagai IDR.
+plus:
 
-Mohon ubah Client financial total menjadi grouped by currency, sama seperti Prospect/Lead.
+Sample Request → In Progress → Ready for Delivery → Delivered → Feedback Received
 
-Recent Activity juga sudah menerima field `currency` dari backend, tetapi frontend masih menggunakan:
+dan satu negative test:
 
-`formatCurrency(item.value)`
+Requested → Delivered harus ditolak.
 
-ubah menjadi:
-
-`formatCurrency(item.value, item.currency)`
-
-Jangan ubah flow lain.
-
-2. Client Due / Overview consistency
-
-Filter `has_due` saat ini mengecek adanya active Sales Order. Itu bukan definisi outstanding/due yang sama dengan Client 360.
-
-Gunakan canonical source yang sama dengan Client 360:
-
-Invoices
-→ Sales Payments
-→ Outstanding = Invoice Total - Payments
-
-Selain itu `/clients/dashboard` sekarang tidak lagi mengembalikan object `invoices`, sementara `ClientsManagement.vue` masih menampilkan `dashboard.invoices.unpaid / partial / overdue`.
-
-Mohon restore invoice statistics dari canonical `invoices + sales_payments`, bukan dari legacy `client_invoices`.
-
-Target akhir:
-
-- Client List
-- Client Overview
-- Client 360
-- CRM Dashboard
-
-harus membaca sumber transaksi yang konsisten.
-
-Tidak perlu refactor atau screening scope baru. Setelah dua poin ini selesai, lanjut final CRM E2E smoke test dan freeze module.
+Satu catatan administratif: GitHub masih menunjukkan tidak ada CI/status check otomatis pada commit 8df6a29, jadi gue belum mau menyebut “automated tests passed”.

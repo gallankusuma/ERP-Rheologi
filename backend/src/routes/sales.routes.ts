@@ -174,7 +174,7 @@ router.post('/sales-orders', authMiddleware, requirePermission('crm.sales', 'cre
       totalAmount += lineTotal;
       await dbRun(
         'INSERT INTO so_items (so_id, product_id, quantity, unit_price, line_total, notes) VALUES (?, ?, ?, ?, ?, ?)',
-        [soId, item.product_id, item.quantity, item.unit_price || 0, lineTotal, item.notes || null]
+        [soId, item.product_id || null, item.quantity, item.unit_price || 0, lineTotal, item.notes || null]
       );
     }
 
