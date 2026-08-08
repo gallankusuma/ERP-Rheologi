@@ -685,10 +685,11 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
 
     // resolve production line for this product
     const lineInfo = await dbGet(`
-      SELECT lp.id as line_process_id, lp.name as line_name, p.uom_name
+      SELECT lp.id as line_process_id, lp.name as line_name, u.name as uom_name
       FROM line_process_products lpp
       JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
       LEFT JOIN products p ON p.id = ?
+      LEFT JOIN uom u ON p.unit_of_measure_id = u.id
       WHERE lpp.product_id = ?
       LIMIT 1
     `, [detail.product_id, detail.product_id]) as any;
@@ -777,6 +778,9 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePer
       LIMIT 1
     `, [detail.product_id]) as any;
     const lineProcessId = lineInfo?.line_process_id || null;
+    if (!lineProcessId) {
+      return res.status(400).json({ error: 'No active production line mapped to this product. Please assign a line in Line Process management first.' });
+    }
 
     // get weekly data with production_qty > 0
     let weekData = await dbAll(
@@ -896,6 +900,9 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
       LIMIT 1
     `, [detail.product_id]) as any;
     const lineProcessId = lineInfo?.line_process_id || null;
+    if (!lineProcessId) {
+      return res.status(400).json({ error: 'No active production line mapped to this product. Please assign a line in Line Process management first.' });
+    }
 
     // collect DRAFT WOs to report what was deleted
     const draftWOs = await dbAll(
