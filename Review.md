@@ -1,165 +1,400 @@
-🔴 1. Forecast → MPS masih bisa salah period
+1. Tambahkan workflow .github/workflows/ci.yml
 
-Weekly forecast sudah period-based, tetapi ketika Push to MPS tidak menemukan Draft MPS pada period yang sama, backend masih fallback ke:
+Karena repo sekarang belum punya lockfile package-lock.json, untuk sementara pakai npm install. Setelah lockfile ditambahkan, ganti ke npm ci supaya dependency build reproducible. GitHub sendiri merekomendasikan setup-node dan penggunaan package-manager install/build commands di workflow Node.js.
 
-latest Draft MPS
+Contoh awal yang cocok dengan repo kita:
 
-Jadi misalnya:
+name: ERP CI
 
-Forecast October 2026
-→ tidak ada MPS October
-→ ada MPS August Draft
-→ forecast October bisa masuk ke MPS August.
+on:
+push:
+branches: - main
+pull_request:
+branches: - main
 
-Itu salah secara planning period.
+jobs:
+backend-build:
+name: Backend Build
+runs-on: ubuntu-latest
 
-Monthly lebih berat lagi. UI Monthly adalah Yearly Jan–Dec, lalu tombol Push to MPS mengirim hanya { year }. Backend kemudian mengambil satu latest Draft MPS dan mendistribusikan semua monthly forecast tahun tersebut ke MPS itu.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-Target fix:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-Forecast YYYY-MM → MPS YYYY-MM
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
 
-exact period only, tidak boleh fallback ke MPS period lain.
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
 
-Untuk Monthly push, harus pilih/resolve bulan tertentu, bukan seluruh tahun dimasukkan ke satu MPS.
+frontend-build:
+name: Frontend Build
+runs-on: ubuntu-latest
 
-🔴 2. Forecast + Sales Order untuk product yang sama belum merge
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-Ini penting banget.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-Flow normal kita bisa:
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
 
-Forecast Product A
-→ Push to MPS
-→ MPS Detail Product A sudah ada
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
 
-lalu:
+Backend npm run build menjalankan TypeScript tsc, sedangkan frontend menjalankan vue-tsc && vite build, jadi bahkan versi pertama ini sudah menangkap banyak regression compile/type-contract.
 
-Sales Order Product A
-→ Pull Orders
+Setelah file itu masuk ke main, setiap commit akan mulai punya:
 
-Tapi pull-orders sekarang mengambil daftar product yang sudah ada di MPS, lalu membuang semua incoming demand dengan product_id tersebut:
+✓ Backend Build
+✓ Frontend Build
 
-newItems = allItems.filter(product belum ada di MPS)
+atau:
 
-Artinya SO nyata untuk Product A bisa tidak pernah masuk ke so_qty hanya karena Forecast Product A sudah lebih dulu membuat detail.
+✗ Backend Build
+✓ Frontend Build
 
-Padahal MPS frontend memang didesain punya dua row:
+Itulah yang tadi tidak ada.
 
-forecast_qty
-dan
-so_qty
+2. Tambahkan lint setelah build sudah stabil
 
-dan planning demand memilih max(SO, Forecast) untuk menghindari double count.
+Karena kedua project juga punya lint command, next step:
 
-Jadi fix yang benar:
+      - name: Lint backend
+        working-directory: backend
+        run: npm run lint
 
-jangan skip berdasarkan product existing.
+dan frontend:
 
-Kalau product sudah ada:
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
 
-pakai existing mps_detail
-insert lineage SO/Project ke mps_detail_sources
-update/add so_qty pada week yang sesuai.
+Tapi gue sarankan jangan langsung jadikan lint blocker pertama kalau existing repo punya banyak legacy lint warning. Kita bisa mulai:
 
-Kalau product belum ada:
+Build = blocking
+Lint = observability
 
-baru create mps_detail.
+lalu setelah lint debt dibersihkan:
 
-Duplicate prevention tetap berdasarkan SO item/project source ID, bukan berdasarkan product ID.
+Build = blocking
+Lint = blocking
+Smoke = blocking 3. Yang lebih penting: bikin PPIC Integration Smoke
 
-🔴 3. MRP → PR → Procurement masih beda canonical item source
+Ini yang akhirnya membuktikan business flow kita.
 
-MRP Generate PR sekarang secara database bagus:
+Backend lo menggunakan MySQL dan membaca environment seperti:
 
-purchase_requests
+DB_HOST
+DB_USER
+DB_PASSWORD
+DB_NAME
 
-- purchase_request_items
+dengan default DB erp_manufacturing.
 
-dan transactional.
+GitHub Actions bisa menjalankan database sebagai service container sementara untuk setiap CI job; service tersebut dibuat fresh untuk job dan dibuang setelah selesai.
 
-Masalahnya Procurement existing masih menggunakan format lama:
+Kita bisa bikin:
 
-purchase_requests.notes = JSON { items:[...] }
+ppic-smoke:
+name: PPIC Integration Smoke
+runs-on: ubuntu-latest
 
-PR detail frontend menjalankan parseNotes(pr.notes) dan mengambil parsed.items. Kalau notes bukan JSON, items menjadi kosong.
+services:
+mysql:
+image: mysql:8.0
+env:
+MYSQL_ROOT_PASSWORD: root
+MYSQL_DATABASE: erp_manufacturing
+ports: - 3306:3306
+options: >-
+--health-cmd="mysqladmin ping -h localhost -proot"
+--health-interval=10s
+--health-timeout=5s
+--health-retries=10
 
-Bidding backend juga parse:
+env:
+DB_HOST: 127.0.0.1
+DB_USER: root
+DB_PASSWORD: root
+DB_NAME: erp_manufacturing
+JWT_SECRET: ci-test-secret
+NODE_ENV: test
 
-JSON.parse(pr.notes)
-→ notesData.items
+Lalu workflow:
 
-untuk membuat bid items. Jadi PR dari MRP yang item-nya hanya masuk purchase_request_items bisa menghasilkan header PR tetapi Procurement melihat/bidding tanpa material items.
+steps:
 
-Target fix:
+- uses: actions/checkout@v4
 
-purchase_request_items harus menjadi canonical item source.
+- uses: actions/setup-node@v4
+  with:
+  node-version: 22
 
-Untuk PR detail/bidding:
+- name: Install backend
+  working-directory: backend
+  run: npm install
 
-load purchase_request_items
-join products + UOM
-expose sebagai items ke frontend.
+- name: Initialize database
+  run: |
+  mysql \
+   -h 127.0.0.1 \
+   -u root \
+   -proot \
+   erp_manufacturing \
+   < backend/database/schema_mysql.sql
 
-Kalau masih perlu support PR lama yang item-nya JSON di notes, boleh fallback untuk backward compatibility:
+- name: Build backend
+  working-directory: backend
+  run: npm run build
 
-purchase_request_items → primary
-notes.items → fallback legacy
+- name: Start backend
+  working-directory: backend
+  run: |
+  npm start > /tmp/backend.log 2>&1 &
+  echo $! > /tmp/backend.pid
 
-Jangan sebaliknya.
+- name: Wait for API
+  run: |
+  for i in {1..30}; do
+  if curl -fsS http://127.0.0.1:3000/api/health; then
+  exit 0
+  fi
+  sleep 2
+  done
 
-Yang sekarang gue anggap sudah benar:
+  cat /tmp/backend.log
+  exit 1
 
-Flow Status
-Forecast period grid ✅
-MPS period grid ✅
-SO/Project source lineage structure ✅
-production_qty → MRP ✅
-BOM explosion ✅
-Inventory netting ✅
-MRP material settings persistence ✅
-MRP PR transaction ✅
-PR duplicate protection ✅
-Confirmed MPS lock ✅
-Capacity actual data ✅
-Stock Report actual data ✅
-Selected-week WO ✅
-WO duplicate protection ✅
-WO line mapping ✅
-Missing production line guard ✅
-WO UOM preview ✅
-WO → Production state machine ✅
+- name: PPIC smoke test
+  working-directory: backend
+  run: npm run test:ppic
 
-Untuk WO → Production, flow yang benar adalah:
+4. Jangan pakai test_mrp_pr.sh sekarang apa adanya
 
-MPS Confirmed
-→ Generate DRAFT WO
-→ Approved
-→ Released
-→ In Progress
-→ Completed
-→ Closed
+Ini penting.
 
-Production state machine memang menormalisasi DRAFT uppercase sehingga PPIC-generated WO aman, dan released/in_progress membutuhkan line process.
+Repo kita memang sudah punya:
 
-Jadi gue koreksi smoke test kita: bukan Draft → Released langsung, tetapi:
+backend/test_mrp_pr.sh
 
-DRAFT → APPROVED → RELEASED → IN_PROGRESS.
+tapi script sekarang mengandung hal-hal seperti:
 
-Verdict
+/var/www/erp-rheologi-dev/backend/node_modules/jsonwebtoken
 
-PPIC core calculation: ✅ CLEAN
-WO → Production: ✅ CLEAN
-Forecast → MPS: ❌ integration blocker
-SO demand merge into forecasted product: ❌ integration blocker
-MRP PR → Procurement item handoff: ❌ integration blocker
+kemudian database credential hardcoded:
 
-Jadi kali ini gue memang belum mau bilang freeze, bro. Tiga ini bukan scope tambahan; ini gue temukan karena lo minta gue make sure flow-nya benar end-to-end, dan kalau dilewatkan sistem bisa kelihatan sukses di UI tetapi planning/procurement datanya salah.
+erp_user
+ErpSecure2024!
+erp_rheologi_dev
 
-Tim cukup perbaiki 3 kelompok ini saja. Setelah revisi, gue re-check hanya 3 ini, lalu final smoke:
+serta fixed material:
 
-Monthly/Weekly Forecast → exact-period MPS → SO merge → Production Qty → MRP → PR → Procurement sees same materials
+material_id 221
+material_id 222
 
-dan:
+dan port:
 
-Confirmed MPS → WO → Approved → Released → In Progress.
+3007
+
+Jangan masukkan script ini apa adanya ke GitHub Actions.
+
+Kita harus ubah menjadi test portable.
+
+Idealnya:
+
+backend/
+└── tests/
+└── ppic-smoke.ts
+
+dan package.json:
+
+"scripts": {
+"test:ppic": "tsx tests/ppic-smoke.ts"
+} 5. Isi ppic-smoke.ts harus test business flow kita
+
+Ini bagian paling penting.
+
+Bukan hanya:
+
+GET endpoint → 200
+
+Tapi benar-benar:
+
+Seed Test Product
+↓
+Seed BOM
+↓
+Seed Raw Material Inventory
+↓
+Create Forecast October
+↓
+Create MPS October
+↓
+Push Forecast
+↓
+Pull Sales Order
+↓
+Verify forecast_qty + so_qty
+↓
+Set production_qty
+↓
+Confirm MPS
+↓
+Generate MRP
+↓
+Verify Gross Requirement
+↓
+Verify Inventory Netting
+↓
+Generate PR
+↓
+Open PR via Procurement
+↓
+Verify same Material + Qty
+
+Kemudian branch kedua:
+
+Confirmed MPS
+↓
+Generate WO Preview
+↓
+Generate selected week
+↓
+Verify line_process_id
+↓
+Approve WO
+↓
+Release WO
+↓
+In Progress
+
+Dan negative tests:
+
+✓ Forecast Oct tidak masuk MPS Aug
+✓ Pull SO kedua kali tidak duplicate
+✓ Edit Confirmed MPS rejected
+✓ Generate PR kedua rejected
+✓ Generate WO kedua rejected
+✓ WO tanpa line mapping rejected
+✓ Failed PR item creation rollback header
+
+Kalau ada satu assertion gagal:
+
+PPIC Integration Smoke ❌
+
+GitHub commit otomatis merah.
+
+6. Tambahkan lockfile
+
+Ini juga gue sarankan.
+
+Saat ini gue cek:
+
+backend/package-lock.json → tidak ada
+frontend/package-lock.json → tidak ada
+
+Jadi dependency yang ter-install bisa bergeser antar hari.
+
+Di developer machine:
+
+cd backend
+npm install
+
+cd ../frontend
+npm install
+
+Commit:
+
+backend/package-lock.json
+frontend/package-lock.json
+
+Setelah itu CI ubah:
+
+npm install
+
+menjadi:
+
+npm ci
+
+Ini bikin environment dev, CI, dan production jauh lebih deterministic. GitHub Node.js workflow guidance juga menggunakan npm ci ketika lockfile tersedia.
+
+7. Setelah CI pertama sukses, protect main
+
+Setelah job tersebut pernah jalan sukses, masuk:
+
+GitHub Repo → Settings → Branches / Rules → main
+
+lalu aktifkan:
+
+Require status checks to pass before merging
+
+dan pilih:
+
+Backend Build
+Frontend Build
+PPIC Integration Smoke
+
+GitHub branch protection memang bisa mewajibkan status checks lolos sebelum perubahan boleh masuk ke protected branch.
+
+Jadi developer tidak bisa lagi:
+
+push code rusak
+↓
+merge
+↓
+production error
+
+Flow berubah menjadi:
+
+Developer Revision
+↓
+Pull Request
+↓
+Backend Build ──────┐
+Frontend Build ─────┤
+PPIC Smoke ─────────┤
+↓
+ALL GREEN
+↓
+MERGE
+↓
+main
+Untuk ERP lo, target akhirnya begini
+GitHub Push / PR
+│
+┌──────────────┼──────────────┐
+▼ ▼ ▼
+Backend Build Frontend Build PPIC Smoke
+│ │ │
+PASS PASS PASS
+└──────────────┼──────────────┘
+▼
+CI GREEN
+│
+▼
+Eligible to Merge
+│
+▼
+MAIN
+
+Nah, kalau PPIC Integration Smoke green pada SHA terbaru, baru gue punya evidence yang jauh lebih kuat untuk bilang:
+
+PPIC MODULE = FIRM / FREEZE ✅
+
+Bukan berdasarkan commit message atau code inspection saja, tapi GitHub sendiri punya repeatable automated evidence bahwa build + business integration flow lolos.
+
+Menurut gue urutan implementasinya: buat ci.yml → commit lockfiles → buat portable ppic-smoke.ts → tambahkan MySQL integration job → protect main. Jangan bikin deployment CI/CD dulu; kita bereskan CI quality gate lebih dulu.
