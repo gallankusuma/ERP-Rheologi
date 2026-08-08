@@ -279,4 +279,22 @@ router.delete('/files/:fileId', authMiddleware, requirePermission('crm.sample-re
   }
 });
 
+// delete sample request (only if status is Requested)
+router.delete('/:id', authMiddleware, requirePermission('crm.sample-requests', 'delete'), async (req: Request, res: Response) => {
+  try {
+    const sr = await dbGet('SELECT id, status, request_number FROM sample_requests WHERE id = ?', [req.params.id]) as any;
+    if (!sr) return res.status(404).json({ error: 'Sample request not found' });
+    if (sr.status !== 'Requested') {
+      return res.status(400).json({ error: `Cannot delete sample request with status '${sr.status}'. Only requests with status 'Requested' can be deleted.` });
+    }
+    await dbRun('DELETE FROM sample_request_comments WHERE sample_request_id = ?', [sr.id]);
+    await dbRun('DELETE FROM sample_request_files WHERE sample_request_id = ?', [sr.id]);
+    await dbRun('DELETE FROM sample_requests WHERE id = ?', [sr.id]);
+    res.json({ message: `Sample request ${sr.request_number} deleted` });
+  } catch (error) {
+    console.error('Error deleting sample request:', error);
+    res.status(500).json({ error: 'Failed to delete sample request' });
+  }
+});
+
 export default router;
