@@ -91,11 +91,25 @@ jobs:
         working-directory: backend
         run: npm run build:ci
 
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -u root -proot --silent 2>/dev/null; then
+              echo "MySQL is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL failed to start"
+          exit 1
+
       - name: Start backend
         working-directory: backend
         run: |
-          node dist/index.js > /tmp/backend.log 2>&1 &
+          nohup node dist/index.js > /tmp/backend.log 2>&1 &
           echo $! > /tmp/backend.pid
+          sleep 3
+          cat /tmp/backend.log
 
       - name: Wait for API
         run: |
@@ -105,9 +119,10 @@ jobs:
               echo "API is up"
               exit 0
             fi
+            echo "Attempt $i: waiting..."
             sleep 2
           done
-          echo "API failed to start"
+          echo "API failed to start. Backend logs:"
           cat /tmp/backend.log
           exit 1
 
