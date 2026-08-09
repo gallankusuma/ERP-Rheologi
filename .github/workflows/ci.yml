@@ -103,12 +103,16 @@ jobs:
           echo "MySQL failed to start"
           exit 1
 
+      - name: Initialize database schema
+        run: |
+          mysql -h 127.0.0.1 -u root -proot erp_manufacturing < backend/database/schema_mysql.sql
+
       - name: Start backend
         working-directory: backend
         run: |
           nohup node dist/index.js > /tmp/backend.log 2>&1 &
           echo $! > /tmp/backend.pid
-          sleep 3
+          sleep 5
           cat /tmp/backend.log
 
       - name: Wait for API
