@@ -73,7 +73,7 @@ router.post('/', authMiddleware, requirePermission('production.workorders', 'cre
 
     // auto-pin BOM at creation — locks the recipe so later BOM changes don't affect this WO
     const bom = await dbGet(
-      `SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1`,
+      `SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' AND approval_status = 2 ORDER BY id DESC LIMIT 1`,
       [product_id]
     ) as any;
     const bomId = bom?.id || null;
@@ -112,15 +112,41 @@ router.put('/:id', authMiddleware, requirePermission('production.workorders', 'u
       }
 
       // Prerequisites for specific transitions
-      if (status === 'in_progress' || status === 'released') {
+      if (status === 'released') {
         // Must have line_process set
         const effectiveLine = line_process_id || current.line_process_id;
         if (!effectiveLine) {
-          return res.status(400).json({ error: `Cannot ${status === 'released' ? 'release' : 'start'} WO without a line process assigned` });
+          return res.status(400).json({ error: 'Cannot release WO without a line process assigned' });
+        }
+        // Must have an active, fully-approved BOM
+        const effectiveBom = current.bom_id;
+        if (!effectiveBom) {
+          return res.status(400).json({ error: 'Cannot release WO without a BOM assigned. Create or import a BOM first.' });
+        }
+        const bomCheck = await dbGet(
+          'SELECT id, status, approval_status, product_id FROM bom_headers WHERE id = ?',
+          [effectiveBom]
+        ) as any;
+        if (!bomCheck) {
+          return res.status(400).json({ error: 'Cannot release WO: assigned BOM no longer exists' });
+        }
+        if (bomCheck.product_id !== current.product_id) {
+          return res.status(400).json({ error: 'Cannot release WO: BOM product does not match WO product' });
+        }
+        if (bomCheck.status !== 'ACTIVE') {
+          return res.status(400).json({ error: `Cannot release WO: BOM status is '${bomCheck.status}', must be ACTIVE` });
+        }
+        if (Number(bomCheck.approval_status) !== 2) {
+          return res.status(400).json({ error: 'Cannot release WO without a fully-approved BOM (approval_status must be 2/2)' });
         }
       }
 
       if (status === 'in_progress') {
+        // Must have line_process set
+        const effectiveLine = line_process_id || current.line_process_id;
+        if (!effectiveLine) {
+          return res.status(400).json({ error: 'Cannot start WO without a line process assigned' });
+        }
         // Check material availability (soft warning — we allow starting with partial materials)
         const materials = await dbAll(
           'SELECT wm.*, p.name as product_name FROM wo_materials wm JOIN products p ON p.id = wm.product_id WHERE wm.wo_id = ?',

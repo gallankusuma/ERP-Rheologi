@@ -653,6 +653,18 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
       return res.status(400).json({ error: 'Work Order has no BOM assigned. Assign a BOM before generating materials.' });
     }
 
+    // revalidate the pinned BOM is still valid
+    const bomCheck = await dbGet(
+      'SELECT id, status, approval_status FROM bom_headers WHERE id = ?',
+      [bomId]
+    ) as any;
+    if (!bomCheck) {
+      return res.status(400).json({ error: 'Pinned BOM no longer exists. Re-assign a valid BOM.' });
+    }
+    if (bomCheck.status !== 'ACTIVE' || Number(bomCheck.approval_status) !== 2) {
+      return res.status(400).json({ error: `Pinned BOM is not valid for production (status=${bomCheck.status}, approval=${bomCheck.approval_status}). Requires ACTIVE + fully approved.` });
+    }
+
     const bomDetails = await dbAll('SELECT * FROM bom_details WHERE bom_header_id = ?', [bomId]);
 
     for (const item of bomDetails) {
@@ -1150,9 +1162,12 @@ router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-recei
     const receipts = await dbAll(
       `SELECT w.id AS wo_id, w.wo_number, w.quantity AS planned_qty, w.status,
               p.id AS product_id, p.name AS product_name, p.sku,
-              wr.output_quantity, wr.batch_number, wr.qc_status,
+              wr.output_quantity, wr.batch_number,
               wr.completed_at,
-              COALESCE(sm.received, 0) AS received_into_stock
+              COALESCE(sm.received, 0) AS received_into_stock,
+              COALESCE(qc.qc_total, 0) AS qc_total,
+              COALESCE(qc.mandatory_not_passed, 0) AS qc_mandatory_pending,
+              COALESCE(qc.any_failed, 0) AS qc_any_failed
        FROM work_orders w
        JOIN products p ON p.id = w.product_id
        LEFT JOIN wo_results wr ON wr.wo_id = w.id
@@ -1162,10 +1177,30 @@ router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-recei
          WHERE reference_type = 'fg_receipt' AND movement_type = 'in'
          GROUP BY reference_id
        ) sm ON sm.wo_id = w.id
+       LEFT JOIN (
+         SELECT wo_id,
+                COUNT(*) AS qc_total,
+                SUM(CASE WHEN is_mandatory = 1 AND status NOT IN ('passed') THEN 1 ELSE 0 END) AS mandatory_not_passed,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS any_failed
+         FROM wo_qc_checkpoints
+         GROUP BY wo_id
+       ) qc ON qc.wo_id = w.id
        WHERE w.status = 'completed' OR wr.id IS NOT NULL
        ORDER BY wr.completed_at DESC`
     );
-    res.json({ success: true, data: receipts });
+
+    // derive qc_status from checkpoint data — same logic as POST /fg-receipt gate
+    const enriched = (receipts as any[]).map(r => {
+      let qc_status = 'pending';
+      if (r.qc_total > 0 && r.qc_mandatory_pending === 0 && r.qc_any_failed === 0) {
+        qc_status = 'passed';
+      } else if (r.qc_any_failed > 0) {
+        qc_status = 'failed';
+      }
+      return { ...r, qc_status };
+    });
+
+    res.json({ success: true, data: enriched });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch FG receipts' });
   }
@@ -1394,7 +1429,7 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
              COALESCE(req.total_required, 0) AS total_required,
              GREATEST(COALESCE(req.total_required, 0) - COALESCE(inv.total_qty, 0), 0) AS total_shortage
       FROM products p
-      LEFT JOIN uom u ON p.uom_id = u.id
+      LEFT JOIN uom u ON p.unit_of_measure_id = u.id
       LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = p.id
       JOIN (
         SELECT bd.raw_material_id AS product_id, SUM(bd.quantity * wo.quantity) AS total_required
