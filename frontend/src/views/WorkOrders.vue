@@ -315,11 +315,13 @@ const months = [
 
 const statusOptions = [
   { value: 'DRAFT', label: 'Draft' },
-  { value: 'Planned', label: 'Planned' },
-  { value: 'In Production', label: 'In Production' },
-  { value: 'On Hold', label: 'On Hold' },
-  { value: 'Completed', label: 'Completed' },
-  { value: 'Cancelled', label: 'Cancelled' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'released', label: 'Released' },
+  { value: 'in_progress', label: 'In Production' },
+  { value: 'on_hold', label: 'On Hold' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 const defaultForm = () => ({
@@ -339,9 +341,14 @@ const defaultForm = () => ({
 const form = ref(defaultForm());
 
 const summaryMap: Record<string, string> = {
-  all: 'Semua', DRAFT: 'Draft', Planned: 'Planned',
-  'In Production': 'In Production', 'On Hold': 'On Hold',
-  Completed: 'Selesai', Cancelled: 'Dibatalkan',
+  all: 'Semua', DRAFT: 'Draft', draft: 'Draft',
+  approved: 'Approved', APPROVED: 'Approved',
+  released: 'Released', RELEASED: 'Released',
+  in_progress: 'In Production', IN_PROGRESS: 'In Production',
+  on_hold: 'On Hold', ON_HOLD: 'On Hold',
+  completed: 'Selesai', COMPLETED: 'Selesai',
+  closed: 'Closed', CLOSED: 'Closed',
+  cancelled: 'Dibatalkan', CANCELLED: 'Dibatalkan',
 };
 
 const summaryWithAll = computed(() => {
@@ -484,8 +491,8 @@ const quickStatusChange = async (wo: any, newStatus: string) => {
   if (wo.status === newStatus) return;
   try {
     const patch: any = { status: newStatus };
-    if (newStatus === 'In Production' && !wo.actual_start) patch.actual_start = new Date().toISOString().slice(0, 10);
-    if (newStatus === 'Completed' && !wo.actual_end) patch.actual_end = new Date().toISOString().slice(0, 10);
+    if (newStatus === 'in_progress' && !wo.actual_start) patch.actual_start = new Date().toISOString().slice(0, 10);
+    if (newStatus === 'completed' && !wo.actual_end) patch.actual_end = new Date().toISOString().slice(0, 10);
     await api.patch(`/workorders/${wo.id}/status`, patch);
     wo.status = newStatus;
     await loadWOs();
@@ -541,11 +548,21 @@ const progressColor = (wo: any) => {
 
 const STATUS_STYLES: Record<string, { bg: string, dot: string, activeBg: string }> = {
   'DRAFT':         { bg: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400',    activeBg: 'bg-gray-200 text-gray-800 border-gray-400' },
-  'Planned':       { bg: 'bg-blue-50 text-blue-700',  dot: 'bg-blue-500',    activeBg: 'bg-blue-100 text-blue-800 border-blue-400' },
-  'In Production': { bg: 'bg-purple-50 text-purple-700', dot: 'bg-purple-500', activeBg: 'bg-purple-100 text-purple-800 border-purple-400' },
-  'On Hold':       { bg: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400',  activeBg: 'bg-amber-100 text-amber-800 border-amber-400' },
-  'Completed':     { bg: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', activeBg: 'bg-emerald-100 text-emerald-800 border-emerald-400' },
-  'Cancelled':     { bg: 'bg-red-50 text-red-600',    dot: 'bg-red-400',     activeBg: 'bg-red-100 text-red-800 border-red-400' },
+  'draft':         { bg: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400',    activeBg: 'bg-gray-200 text-gray-800 border-gray-400' },
+  'approved':      { bg: 'bg-blue-50 text-blue-700',  dot: 'bg-blue-500',    activeBg: 'bg-blue-100 text-blue-800 border-blue-400' },
+  'APPROVED':      { bg: 'bg-blue-50 text-blue-700',  dot: 'bg-blue-500',    activeBg: 'bg-blue-100 text-blue-800 border-blue-400' },
+  'released':      { bg: 'bg-cyan-50 text-cyan-700',  dot: 'bg-cyan-500',    activeBg: 'bg-cyan-100 text-cyan-800 border-cyan-400' },
+  'RELEASED':      { bg: 'bg-cyan-50 text-cyan-700',  dot: 'bg-cyan-500',    activeBg: 'bg-cyan-100 text-cyan-800 border-cyan-400' },
+  'in_progress':   { bg: 'bg-purple-50 text-purple-700', dot: 'bg-purple-500', activeBg: 'bg-purple-100 text-purple-800 border-purple-400' },
+  'IN_PROGRESS':   { bg: 'bg-purple-50 text-purple-700', dot: 'bg-purple-500', activeBg: 'bg-purple-100 text-purple-800 border-purple-400' },
+  'on_hold':       { bg: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400',  activeBg: 'bg-amber-100 text-amber-800 border-amber-400' },
+  'ON_HOLD':       { bg: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400',  activeBg: 'bg-amber-100 text-amber-800 border-amber-400' },
+  'completed':     { bg: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', activeBg: 'bg-emerald-100 text-emerald-800 border-emerald-400' },
+  'COMPLETED':     { bg: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', activeBg: 'bg-emerald-100 text-emerald-800 border-emerald-400' },
+  'closed':        { bg: 'bg-slate-50 text-slate-600', dot: 'bg-slate-400',  activeBg: 'bg-slate-100 text-slate-800 border-slate-400' },
+  'CLOSED':        { bg: 'bg-slate-50 text-slate-600', dot: 'bg-slate-400',  activeBg: 'bg-slate-100 text-slate-800 border-slate-400' },
+  'cancelled':     { bg: 'bg-red-50 text-red-600',    dot: 'bg-red-400',     activeBg: 'bg-red-100 text-red-800 border-red-400' },
+  'CANCELLED':     { bg: 'bg-red-50 text-red-600',    dot: 'bg-red-400',     activeBg: 'bg-red-100 text-red-800 border-red-400' },
 };
 const statusBg = (s: string) => STATUS_STYLES[s]?.bg || 'bg-gray-100 text-gray-600';
 const statusColor = (s: string, active: boolean) => active ? (STATUS_STYLES[s]?.activeBg || 'bg-gray-200 border-gray-400') : '';

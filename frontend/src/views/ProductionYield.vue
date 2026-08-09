@@ -78,11 +78,9 @@
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700">QC Status</label>
-              <select v-model="form.qc_status" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
-                <option value="pending">Pending</option>
-                <option value="passed">Passed</option>
-                <option value="failed">Failed</option>
-              </select>
+              <div class="mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-500 italic">
+                Pending — QC status is set by the Quality module after inspection
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700">Notes</label>

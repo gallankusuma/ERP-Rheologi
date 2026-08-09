@@ -17,8 +17,8 @@
         <div v-for="wo in store.executionOrders" :key="wo.id"
           class="rounded-lg shadow p-5 transition-all"
           :class="[
-            isPlanned(wo.status) ? 'bg-gray-50 border-2 border-dashed border-gray-300 opacity-80' : 'bg-white border-l-4',
-            !isPlanned(wo.status) ? borderColor(wo.status) : ''
+            isStartable(wo.status) ? 'bg-gray-50 border-2 border-dashed border-gray-300 opacity-80' : 'bg-white border-l-4',
+            !isStartable(wo.status) ? borderColor(wo.status) : ''
           ]">
           <div class="flex justify-between items-start mb-3">
             <div>
@@ -73,16 +73,16 @@
 
           <!-- Action Buttons -->
           <div class="flex flex-wrap gap-2">
-            <!-- Planned: only Start button -->
-            <template v-if="isPlanned(wo.status)">
+            <!-- Released: only Start button -->
+            <template v-if="isStartable(wo.status)">
               <button @click="doAction('start', wo.id)" class="px-3 py-1.5 bg-green-600 text-white text-xs rounded hover:bg-green-700 font-semibold">
                 ▶ Start Production
               </button>
-              <span class="text-xs text-gray-400 italic self-center">⚠️ Start WO to enable Process Logs & QC</span>
+              <span class="text-xs text-gray-400 italic self-center">Start WO to enable Process Logs & QC</span>
             </template>
 
             <!-- In Progress -->
-            <template v-else-if="wo.status === 'in_progress' || wo.status === 'in-progress'">
+            <template v-else-if="wo.status === 'in_progress' || wo.status === 'IN_PROGRESS'">
               <button @click="doAction('pause', wo.id)" class="px-3 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-700">
                 ⏸ Pause
               </button>
@@ -324,7 +324,7 @@ const doAction = async (action: string, woId: number) => {
   }
 };
 
-const isPlanned = (status: string) => ['planned', 'Planned', 'pending', 'DRAFT', 'Draft'].includes(status);
+const isStartable = (status: string) => ['released', 'RELEASED', 'Released'].includes(status);
 
 const openLogs = async (wo: any) => {
   selectedWo.value = wo;
@@ -409,24 +409,27 @@ const formatDate = (d: string | null) => d ? new Date(d).toLocaleDateString() : 
 const formatDateTime = (d: string | null) => d ? new Date(d).toLocaleString() : '-';
 
 const statusLabel = (s: string) => ({
-  pending: '⏳ Pending', planned: '📋 Planned', Planned: '📋 Planned',
-  in_progress: '🔵 In Progress', 'in-progress': '🔵 In Progress',
-  completed: '✅ Completed', on_hold: '⏸ On Hold',
-  DRAFT: '📋 Draft', Draft: '📋 Draft',
+  released: '🚀 Released', RELEASED: '🚀 Released', Released: '🚀 Released',
+  in_progress: '🔵 In Progress', IN_PROGRESS: '🔵 In Progress',
+  completed: '✅ Completed', COMPLETED: '✅ Completed',
+  on_hold: '⏸ On Hold', ON_HOLD: '⏸ On Hold',
+  DRAFT: '📋 Draft', Draft: '📋 Draft', draft: '📋 Draft',
 }[s] || s);
 
 const statusBadge = (s: string) => ({
-  pending: 'bg-yellow-100 text-yellow-800', planned: 'bg-gray-200 text-gray-700', Planned: 'bg-gray-200 text-gray-700',
-  in_progress: 'bg-blue-100 text-blue-800', 'in-progress': 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800', on_hold: 'bg-orange-100 text-orange-800',
-  DRAFT: 'bg-gray-200 text-gray-700', Draft: 'bg-gray-200 text-gray-700',
+  released: 'bg-cyan-100 text-cyan-800', RELEASED: 'bg-cyan-100 text-cyan-800', Released: 'bg-cyan-100 text-cyan-800',
+  in_progress: 'bg-blue-100 text-blue-800', IN_PROGRESS: 'bg-blue-100 text-blue-800',
+  completed: 'bg-green-100 text-green-800', COMPLETED: 'bg-green-100 text-green-800',
+  on_hold: 'bg-orange-100 text-orange-800', ON_HOLD: 'bg-orange-100 text-orange-800',
+  DRAFT: 'bg-gray-200 text-gray-700', Draft: 'bg-gray-200 text-gray-700', draft: 'bg-gray-200 text-gray-700',
 }[s] || 'bg-gray-100 text-gray-800');
 
 const borderColor = (s: string) => ({
-  pending: 'border-yellow-400', planned: 'border-gray-300', Planned: 'border-gray-300',
-  in_progress: 'border-blue-500', 'in-progress': 'border-blue-500',
-  completed: 'border-green-500', on_hold: 'border-orange-400',
-  DRAFT: 'border-gray-300', Draft: 'border-gray-300',
+  released: 'border-cyan-500', RELEASED: 'border-cyan-500', Released: 'border-cyan-500',
+  in_progress: 'border-blue-500', IN_PROGRESS: 'border-blue-500',
+  completed: 'border-green-500', COMPLETED: 'border-green-500',
+  on_hold: 'border-orange-400', ON_HOLD: 'border-orange-400',
+  DRAFT: 'border-gray-300', Draft: 'border-gray-300', draft: 'border-gray-300',
 }[s] || 'border-gray-300');
 </script>
 

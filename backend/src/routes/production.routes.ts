@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
+import { validateTransition, EXECUTION_STATUSES, ISSUABLE_STATUSES } from '../utils/wo-transitions';
 
 const router = Router();
 
@@ -443,6 +444,9 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
     if (!wo_material_id || !quantity) {
       return res.status(400).json({ error: 'wo_material_id and quantity are required' });
     }
+    if (!warehouse_id) {
+      return res.status(400).json({ error: 'warehouse_id is required for material issue' });
+    }
 
     const userId = (req as any).user?.userId;
 
@@ -454,17 +458,22 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
       const mat = matRows[0];
       if (!mat) throw new Error('WO material not found');
 
+      // 1b. Check WO status — only allow issue for RELEASED/IN_PROGRESS/ON_HOLD
+      const [woRows] = await conn.execute('SELECT status FROM work_orders WHERE id = ?', [mat.wo_id]);
+      const woStatus = woRows[0]?.status?.toLowerCase();
+      if (!ISSUABLE_STATUSES.includes(woStatus)) {
+        throw new Error(`Cannot issue material for WO with status '${woRows[0]?.status}'. WO must be RELEASED, IN_PROGRESS, or ON_HOLD.`);
+      }
+
       const newIssued = (mat.quantity_issued || 0) + quantity;
       if (newIssued > mat.quantity_required) {
         throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${mat.quantity_required}). Already issued: ${mat.quantity_issued || 0}`);
       }
 
-      const effectiveWarehouseId = warehouse_id || mat.warehouse_id || 1;
-
       // 2. Lock and validate inventory stock — prevent negative stock
       const [stockRows] = await conn.execute(
         'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? FOR UPDATE',
-        [mat.product_id, effectiveWarehouseId]
+        [mat.product_id, warehouse_id]
       );
       const stock = stockRows[0];
       const currentQty = stock ? (stock.quantity || 0) : 0;
@@ -476,7 +485,7 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
       // 3. Update WO material issued quantity
       await conn.execute(
         `UPDATE wo_materials SET quantity_issued=?, warehouse_id=?, batch_number=?, issued_at=CURRENT_TIMESTAMP, issued_by=? WHERE id=?`,
-        [newIssued, effectiveWarehouseId, batch_number || null, userId, wo_material_id]
+        [newIssued, warehouse_id, batch_number || null, userId, wo_material_id]
       );
 
       // 4. Deduct inventory stock
@@ -489,7 +498,7 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
       await conn.execute(
         `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
          VALUES (?, ?, ?, 'out', ?, 'work_order', ?, 'Material issued to WO', ?)`,
-        [effectiveWarehouseId, mat.product_id, batch_number || null, quantity, mat.wo_id, userId]
+        [warehouse_id, mat.product_id, batch_number || null, quantity, mat.wo_id, userId]
       );
     });
 
@@ -497,7 +506,7 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
   } catch (error: any) {
     console.error('Error issuing material:', error);
     const msg = error.message || 'Failed to issue material';
-    const status = msg.includes('Insufficient stock') || msg.includes('exceed') ? 400 : 500;
+    const status = msg.includes('Insufficient stock') || msg.includes('exceed') || msg.includes('Cannot issue') || msg.includes('warehouse_id') ? 400 : 500;
     res.status(status).json({ error: msg });
   }
 });
@@ -508,13 +517,18 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
     const wo = await dbGet('SELECT * FROM work_orders WHERE id = ?', [req.params.woId]);
     if (!wo) return res.status(404).json({ error: 'Work order not found' });
 
-    const bom = await dbGet(
-      `SELECT bh.id FROM bom_headers bh WHERE bh.product_id = ? AND bh.status = 'approved' ORDER BY bh.version DESC LIMIT 1`,
-      [wo.product_id]
-    );
-    if (!bom) return res.status(404).json({ error: 'No approved BOM found for this product' });
+    // prefer exact bom_id from WO (set by PPIC), fallback to product lookup
+    let bomId = wo.bom_id;
+    if (!bomId) {
+      const bom = await dbGet(
+        `SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1`,
+        [wo.product_id]
+      );
+      bomId = bom?.id;
+    }
+    if (!bomId) return res.status(404).json({ error: 'No active BOM found for this product' });
 
-    const bomDetails = await dbAll('SELECT * FROM bom_details WHERE bom_header_id = ?', [bom.id]);
+    const bomDetails = await dbAll('SELECT * FROM bom_details WHERE bom_header_id = ?', [bomId]);
 
     for (const item of bomDetails) {
       const exists = await dbGet('SELECT id FROM wo_materials WHERE wo_id = ? AND product_id = ?', [wo.id, item.raw_material_id]);
@@ -538,6 +552,8 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
 // ============================================================
 router.get('/execution', authMiddleware, requirePermission('production.production-execution', 'view'), async (_req: Request, res: Response) => {
   try {
+    // include RELEASED (startable), IN_PROGRESS (active), ON_HOLD (paused)
+    const statusPlaceholders = EXECUTION_STATUSES.map(() => '?').join(',');
     const active = await dbAll(
       `SELECT w.id, w.wo_number, w.quantity, w.status,
               w.scheduled_start, w.scheduled_end, w.actual_start, w.actual_end,
@@ -552,8 +568,9 @@ router.get('/execution', authMiddleware, requirePermission('production.productio
        FROM work_orders w
        JOIN products p ON w.product_id = p.id
        LEFT JOIN line_processes lp ON w.line_process_id = lp.id
-       WHERE w.status IN ('in_progress', 'in-progress', 'pending', 'planned')
-       ORDER BY w.actual_start DESC, w.scheduled_start ASC`
+       WHERE LOWER(w.status) IN (${statusPlaceholders})
+       ORDER BY w.actual_start DESC, w.scheduled_start ASC`,
+      EXECUTION_STATUSES
     );
     res.json({ success: true, data: active });
   } catch (error) {
@@ -563,8 +580,14 @@ router.get('/execution', authMiddleware, requirePermission('production.productio
 
 router.post('/execution/:woId/start', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
+    const wo = await dbGet('SELECT status FROM work_orders WHERE id = ?', [req.params.woId]) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+
+    const check = validateTransition(wo.status, 'in_progress');
+    if (!check.valid) return res.status(400).json({ error: check.error });
+
     await dbRun(
-      `UPDATE work_orders SET status='in_progress', actual_start=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      `UPDATE work_orders SET status='in_progress', actual_start=COALESCE(actual_start, CURRENT_TIMESTAMP), updated_at=CURRENT_TIMESTAMP WHERE id=?`,
       [req.params.woId]
     );
     res.json({ success: true, message: 'Work order started' });
@@ -575,6 +598,12 @@ router.post('/execution/:woId/start', authMiddleware, requirePermission('product
 
 router.post('/execution/:woId/pause', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
+    const wo = await dbGet('SELECT status FROM work_orders WHERE id = ?', [req.params.woId]) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+
+    const check = validateTransition(wo.status, 'on_hold');
+    if (!check.valid) return res.status(400).json({ error: check.error });
+
     await dbRun(
       `UPDATE work_orders SET status='on_hold', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
       [req.params.woId]
@@ -587,6 +616,12 @@ router.post('/execution/:woId/pause', authMiddleware, requirePermission('product
 
 router.post('/execution/:woId/resume', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
+    const wo = await dbGet('SELECT status FROM work_orders WHERE id = ?', [req.params.woId]) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+
+    const check = validateTransition(wo.status, 'in_progress');
+    if (!check.valid) return res.status(400).json({ error: check.error });
+
     await dbRun(
       `UPDATE work_orders SET status='in_progress', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
       [req.params.woId]
@@ -600,6 +635,12 @@ router.post('/execution/:woId/resume', authMiddleware, requirePermission('produc
 router.post('/execution/:woId/complete', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
   try {
     const woId = req.params.woId;
+
+    // validate state transition
+    const wo = await dbGet('SELECT status FROM work_orders WHERE id = ?', [woId]) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+    const check = validateTransition(wo.status, 'completed');
+    if (!check.valid) return res.status(400).json({ error: check.error });
 
     // Check mandatory QC checkpoints
     const pendingQC = await dbAll(
@@ -927,7 +968,7 @@ router.get('/yield/wo/:woId', authMiddleware, requirePermission('production.yiel
 
 router.post('/yield', authMiddleware, requirePermission('production.yield-scrap', 'create'), async (req: Request, res: Response) => {
   try {
-    const { wo_id, output_quantity, loss_quantity, batch_number, qc_status, notes } = req.body;
+    const { wo_id, output_quantity, loss_quantity, batch_number, notes } = req.body;
     if (!wo_id || output_quantity === undefined) {
       return res.status(400).json({ error: 'wo_id and output_quantity are required' });
     }
@@ -936,10 +977,11 @@ router.post('/yield', authMiddleware, requirePermission('production.yield-scrap'
     const totalOutput = Number(output_quantity) + Number(loss_quantity || 0);
     const lossPct = totalOutput > 0 ? ((Number(loss_quantity || 0) / totalOutput) * 100).toFixed(2) : '0.00';
 
+    // qc_status always starts as 'pending' — only QC module can set passed/failed
     const result = await dbRun(
       `INSERT INTO wo_results (wo_id, output_quantity, loss_quantity, loss_percentage, batch_number, qc_status, completed_by, completed_at, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
-      [wo_id, output_quantity, loss_quantity || 0, lossPct, batch_number || null, qc_status || 'pending', userId, notes || null]
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?)`,
+      [wo_id, output_quantity, loss_quantity || 0, lossPct, batch_number || null, userId, notes || null]
     );
     res.status(201).json({ success: true, message: 'Yield recorded', id: result.insertId });
   } catch (error) {
@@ -1027,15 +1069,25 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
         }
       }
 
-      // 3. Validate total receipt does not exceed WO quantity
+      // 3. Validate QC passed and total receipt does not exceed actual output
+      const [yieldRows] = await conn.execute(
+        `SELECT COALESCE(SUM(output_quantity), 0) as total_output
+         FROM wo_results WHERE wo_id = ? AND qc_status = 'passed'`,
+        [wo_id]
+      );
+      const maxReceivable = Number(yieldRows[0]?.total_output || 0);
+      if (maxReceivable === 0) {
+        throw new Error('Cannot receive FG: no QC-passed yield records found. Complete QC inspection first.');
+      }
+
       const [existingReceipts] = await conn.execute(
         `SELECT COALESCE(SUM(quantity), 0) as total_received FROM stock_movements 
          WHERE reference_type = 'fg_receipt' AND reference_id = ? AND movement_type = 'in'`,
         [wo_id]
       );
       const alreadyReceived = Number(existingReceipts[0]?.total_received || 0);
-      if (alreadyReceived + quantity > wo.quantity * 1.1) { // Allow 10% over for yield variance
-        throw new Error(`Total receipt (${alreadyReceived + quantity}) would exceed WO quantity (${wo.quantity}). Already received: ${alreadyReceived}`);
+      if (alreadyReceived + quantity > maxReceivable) {
+        throw new Error(`Total receipt (${alreadyReceived + quantity}) exceeds QC-accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
       }
 
       // 4. Update inventory stock (with row lock)
@@ -1155,7 +1207,7 @@ router.get('/history/stats', authMiddleware, requirePermission('production.produ
   }
 });
 
-// GET /mrp/dashboard - MRP dashboard with shortage summary
+// GET /mrp/dashboard - WO Material Readiness dashboard (canonical schema)
 router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp', 'view'), async (req: Request, res: Response) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
@@ -1168,25 +1220,27 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
     const woWithShortage = await dbGet(`
       SELECT COUNT(DISTINCT wo.id) as count
       FROM work_orders wo
-      JOIN bom_items bi ON bi.bom_id = (SELECT bom_id FROM boms WHERE product_id = wo.product_id LIMIT 1)
-      LEFT JOIN (SELECT product_id, SUM(quantity) as stock FROM inventory_transactions GROUP BY product_id) inv ON inv.product_id = bi.material_id
-      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
-      AND (COALESCE(inv.stock, 0) < bi.quantity * wo.qty)
+      LEFT JOIN bom_headers bh ON bh.id = wo.bom_id
+      JOIN bom_details bd ON bd.bom_header_id = COALESCE(bh.id, (SELECT id FROM bom_headers WHERE product_id = wo.product_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1))
+      LEFT JOIN inventory_stocks inv ON inv.product_id = bd.raw_material_id
+      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
+      AND (COALESCE(inv.quantity, 0) < bd.quantity * wo.quantity)
     `, [year]) as any;
 
     const materials = await dbAll(`
-      SELECT p.id, p.name, p.sku, COALESCE(inv.stock, 0) as current_stock,
+      SELECT p.id, p.name, p.sku,
+             COALESCE(inv.quantity, 0) as current_stock,
              COALESCE(req.required, 0) as required_qty,
-             COALESCE(inv.stock, 0) - COALESCE(req.required, 0) as gap
+             COALESCE(inv.quantity, 0) - COALESCE(req.required, 0) as gap
       FROM products p
-      LEFT JOIN (SELECT product_id, SUM(quantity) as stock FROM inventory_transactions GROUP BY product_id) inv ON inv.product_id = p.id
+      LEFT JOIN (SELECT product_id, SUM(quantity) as quantity FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = p.id
       LEFT JOIN (
-        SELECT bi.material_id as product_id, SUM(bi.quantity * wo.qty) as required
+        SELECT bd.raw_material_id as product_id, SUM(bd.quantity * wo.quantity) as required
         FROM work_orders wo
-        JOIN boms b ON b.product_id = wo.product_id
-        JOIN bom_items bi ON bi.bom_id = b.id
-        WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
-        GROUP BY bi.material_id
+        LEFT JOIN bom_headers bh ON bh.id = wo.bom_id
+        JOIN bom_details bd ON bd.bom_header_id = COALESCE(bh.id, (SELECT id FROM bom_headers WHERE product_id = wo.product_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1))
+        WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
+        GROUP BY bd.raw_material_id
       ) req ON req.product_id = p.id
       WHERE req.required > 0
       ORDER BY gap ASC
@@ -1194,11 +1248,11 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
     `, [year]) as any[];
 
     const workOrders = await dbAll(`
-      SELECT wo.id, wo.wo_number, wo.status, wo.qty, wo.scheduled_start, wo.scheduled_end,
+      SELECT wo.id, wo.wo_number, wo.status, wo.quantity, wo.scheduled_start, wo.scheduled_end,
              p.name as product_name, p.sku
       FROM work_orders wo
       JOIN products p ON wo.product_id = p.id
-      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed')
+      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
       ORDER BY wo.scheduled_start
       LIMIT 50
     `, [year]) as any[];

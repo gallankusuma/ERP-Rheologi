@@ -1,400 +1,289 @@
-1. Tambahkan workflow .github/workflows/ci.yml
+Feature-nya sebenarnya sudah lumayan lengkap:
 
-Karena repo sekarang belum punya lockfile package-lock.json, untuk sementara pakai npm install. Setelah lockfile ditambahkan, ganti ke npm ci supaya dependency build reproducible. GitHub sendiri merekomendasikan setup-node dan penggunaan package-manager install/build commands di workflow Node.js.
+Production Planning → Material Readiness/MRP → Issue Material → Production Execution → QC → Yield/Scrap → FG Receipt → History
 
-Contoh awal yang cocok dengan repo kita:
+Tapi business lifecycle-nya belum konsisten. Ada beberapa blocker yang menurut gue memang harus dibereskan sebelum kita bicara Production firm.
 
-name: ERP CI
+Priority Blocker Status
+🔴 P0 WO state machine bisa dibypass dari Production Execution OPEN
+🔴 P0 PPIC WO DRAFT/APPROVED/RELEASED tidak nyambung ke Execution UI OPEN
+🔴 P0 BOM Production tidak pakai exact work_orders.bom_id OPEN
+🔴 P0 BOM status ACTIVE vs query Production approved mismatch OPEN
+🔴 P0 Issue Material bisa potong default warehouse 1 OPEN
+🔴 P0 FG Receipt belum backend-enforce actual yield/QC OPEN
+🔴 P0 Yield bisa mengisi qc_status='passed' manual OPEN
+🟠 P1 Production MRP dashboard masih query legacy schema OPEN
+🟠 P1 Planning daily Planned/Actual tidak persistent OPEN
+🟠 P1 WorkOrders UI masih status legacy OPEN
+🟠 P1 Production permission resources tidak konsisten OPEN
+P0 paling fundamental: satu WO punya dua state machine
 
-on:
-push:
-branches: - main
-pull_request:
-branches: - main
+Backend /api/workorders sebenarnya sudah bagus dan punya canonical transition:
 
-jobs:
-backend-build:
-name: Backend Build
-runs-on: ubuntu-latest
+DRAFT → APPROVED → RELEASED → IN_PROGRESS → ON_HOLD / COMPLETED → CLOSED
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+dengan validation transition dan line-process prerequisite.
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+Tapi /api/production/execution/:woId/start sekarang langsung melakukan:
 
-      - name: Install backend dependencies
-        working-directory: backend
-        run: npm install
+UPDATE work_orders SET status='in_progress'
 
-      - name: Build backend
-        working-directory: backend
-        run: npm run build
+tanpa melewati state machine itu. Pause/resume/complete juga direct UPDATE.
 
-frontend-build:
-name: Frontend Build
-runs-on: ubuntu-latest
+Frontend bahkan menganggap DRAFT, pending, dan planned sebagai WO yang boleh langsung Start Production.
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+Artinya secara API saat ini potensial:
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+DRAFT → IN_PROGRESS
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm install
+langsung.
 
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+Itu harus ditutup.
 
-Backend npm run build menjalankan TypeScript tsc, sedangkan frontend menjalankan vue-tsc && vite build, jadi bahkan versi pertama ini sudah menangkap banyak regression compile/type-contract.
+Semua perubahan status Production harus memakai satu transition service/business rule yang sama dengan workorder.routes.ts.
 
-Setelah file itu masuk ke main, setiap commit akan mulai punya:
+PPIC → Production sekarang juga belum nyambung sempurna
 
-✓ Backend Build
-✓ Frontend Build
+PPIC menghasilkan WO sebagai:
 
-atau:
+DRAFT
 
-✗ Backend Build
-✓ Frontend Build
+dan flow yang kita sepakati adalah:
 
-Itulah yang tadi tidak ada.
+DRAFT → APPROVED → RELEASED → IN_PROGRESS
 
-2. Tambahkan lint setelah build sudah stabil
+Tetapi endpoint /production/execution hanya mengambil:
 
-Karena kedua project juga punya lint command, next step:
+in_progress
+in-progress
+pending
+planned
 
-      - name: Lint backend
-        working-directory: backend
-        run: npm run lint
+Jadi WO RELEASED justru tidak muncul untuk di-Start.
 
-dan frontend:
+ON_HOLD juga tidak masuk query tersebut, padahal UI punya tombol Resume. Akibatnya setelah Pause, WO bisa menghilang dari halaman Execution.
 
-      - name: Lint frontend
-        working-directory: frontend
-        run: npm run lint
+Target Execution harus minimal melihat:
 
-Tapi gue sarankan jangan langsung jadikan lint blocker pertama kalau existing repo punya banyak legacy lint warning. Kita bisa mulai:
+RELEASED / IN_PROGRESS / ON_HOLD
 
-Build = blocking
-Lint = observability
+dan Start hanya dari RELEASED.
 
-lalu setelah lint debt dibersihkan:
+P0 BOM / recipe integrity
 
-Build = blocking
-Lint = blocking
-Smoke = blocking 3. Yang lebih penting: bikin PPIC Integration Smoke
+Ini lebih serius dari sekadar status.
 
-Ini yang akhirnya membuktikan business flow kita.
+WO dari PPIC sudah menyimpan exact bom_id.
 
-Backend lo menggunakan MySQL dan membaca environment seperti:
+Tetapi Generate Material Production sekarang mengabaikan wo.bom_id dan mencari lagi BOM berdasarkan product:
 
-DB_HOST
-DB_USER
-DB_PASSWORD
-DB_NAME
+WHERE bh.product_id = ? AND bh.status = 'approved'
 
-dengan default DB erp_manufacturing.
+Padahal canonical BOM saat create diberi:
 
-GitHub Actions bisa menjalankan database sebagai service container sementara untuk setiap CI job; service tersebut dibuat fresh untuk job dan dibuang setelah selesai.
+status = 'ACTIVE'
 
-Kita bisa bikin:
+dan approval memakai field terpisah approval_status.
 
-ppic-smoke:
-name: PPIC Integration Smoke
-runs-on: ubuntu-latest
+Jadi ada dua risiko sekaligus.
 
-services:
-mysql:
-image: mysql:8.0
-env:
-MYSQL_ROOT_PASSWORD: root
-MYSQL_DATABASE: erp_manufacturing
-ports: - 3306:3306
-options: >-
---health-cmd="mysqladmin ping -h localhost -proot"
---health-interval=10s
---health-timeout=5s
---health-retries=10
+Pertama, WO bisa bilang “No approved BOM” padahal BOM valid sebenarnya ACTIVE.
 
-env:
-DB_HOST: 127.0.0.1
-DB_USER: root
-DB_PASSWORD: root
-DB_NAME: erp_manufacturing
-JWT_SECRET: ci-test-secret
-NODE_ENV: test
+Kedua, yang jauh lebih berbahaya: kalau BOM Product A berubah setelah WO dibuat, Production bisa mengambil BOM terbaru, bukan BOM yang sebenarnya melekat ke WO.
 
-Lalu workflow:
+Untuk manufacturing ERP, ini nggak boleh.
 
-steps:
+Canonical harus:
 
-- uses: actions/checkout@v4
+WO → work_orders.bom_id → exact BOM details
 
-- uses: actions/setup-node@v4
-  with:
-  node-version: 22
+Jangan lookup recipe lagi berdasarkan product.
 
-- name: Install backend
-  working-directory: backend
-  run: npm install
+Manual WO juga sebaiknya saat dibuat harus memilih/resolve BOM tertentu dan menyimpan bom_id.
 
-- name: Initialize database
-  run: |
-  mysql \
-   -h 127.0.0.1 \
-   -u root \
-   -proot \
-   erp_manufacturing \
-   < backend/database/schema_mysql.sql
+P0 Issue Material
 
-- name: Build backend
-  working-directory: backend
-  run: npm run build
-
-- name: Start backend
-  working-directory: backend
-  run: |
-  npm start > /tmp/backend.log 2>&1 &
-  echo $! > /tmp/backend.pid
-
-- name: Wait for API
-  run: |
-  for i in {1..30}; do
-  if curl -fsS http://127.0.0.1:3000/api/health; then
-  exit 0
-  fi
-  sleep 2
-  done
-
-  cat /tmp/backend.log
-  exit 1
-
-- name: PPIC smoke test
-  working-directory: backend
-  run: npm run test:ppic
-
-4. Jangan pakai test_mrp_pr.sh sekarang apa adanya
-
-Ini penting.
-
-Repo kita memang sudah punya:
-
-backend/test_mrp_pr.sh
-
-tapi script sekarang mengandung hal-hal seperti:
-
-/var/www/erp-rheologi-dev/backend/node_modules/jsonwebtoken
-
-kemudian database credential hardcoded:
-
-erp_user
-ErpSecure2024!
-erp_rheologi_dev
-
-serta fixed material:
-
-material_id 221
-material_id 222
-
-dan port:
-
-3007
+Transaksi issue material sudah lumayan bagus karena menggunakan transaction + FOR UPDATE dan mencegah negative stock.
 
-Jangan masukkan script ini apa adanya ke GitHub Actions.
+Tapi ada satu masalah besar:
 
-Kita harus ubah menjadi test portable.
+backend menentukan:
 
-Idealnya:
+warehouse_id || mat.warehouse_id || 1
 
-backend/
-└── tests/
-└── ppic-smoke.ts
+Artinya kalau warehouse tidak dikirim, Warehouse ID 1 dipakai diam-diam.
 
-dan package.json:
+Frontend tombol Issue Semua memang bisa mengirim warehouse undefined.
 
-"scripts": {
-"test:ppic": "tsx tests/ppic-smoke.ts"
-} 5. Isi ppic-smoke.ts harus test business flow kita
+Jadi satu click bisa memotong gudang yang salah.
 
-Ini bagian paling penting.
+Target:
 
-Bukan hanya:
+warehouse wajib explicit.
 
-GET endpoint → 200
+Tidak boleh fallback default warehouse untuk stock transaction.
 
-Tapi benar-benar:
+Selain itu Issue Material backend harus cek status WO. Idealnya material issue hanya boleh untuk:
 
-Seed Test Product
-↓
-Seed BOM
-↓
-Seed Raw Material Inventory
-↓
-Create Forecast October
-↓
-Create MPS October
-↓
-Push Forecast
-↓
-Pull Sales Order
-↓
-Verify forecast_qty + so_qty
-↓
-Set production_qty
-↓
-Confirm MPS
-↓
-Generate MRP
-↓
-Verify Gross Requirement
-↓
-Verify Inventory Netting
-↓
-Generate PR
-↓
-Open PR via Procurement
-↓
-Verify same Material + Qty
+RELEASED / IN_PROGRESS / ON_HOLD
 
-Kemudian branch kedua:
+bukan Draft/Closed/Cancelled.
 
-Confirmed MPS
-↓
-Generate WO Preview
-↓
-Generate selected week
-↓
-Verify line_process_id
-↓
-Approve WO
-↓
-Release WO
-↓
-In Progress
+P0 Yield → QC → Finished Goods
 
-Dan negative tests:
+Saat ini halaman Yield memungkinkan operator memasukkan sendiri:
 
-✓ Forecast Oct tidak masuk MPS Aug
-✓ Pull SO kedua kali tidak duplicate
-✓ Edit Confirmed MPS rejected
-✓ Generate PR kedua rejected
-✓ Generate WO kedua rejected
-✓ WO tanpa line mapping rejected
-✓ Failed PR item creation rollback header
+qc_status = pending / passed / failed
 
-Kalau ada satu assertion gagal:
+Padahal Quality module sudah punya mechanism yang benar: FPA yang selesai otomatis update linked wo_qc_checkpoint menjadi passed/failed.
 
-PPIC Integration Smoke ❌
+Jadi Production user tidak boleh menjadi source of truth QC.
 
-GitHub commit otomatis merah.
+qc_status seharusnya derived dari Quality/QC.
 
-6. Tambahkan lockfile
+Lebih serius lagi, backend FG Receipt sekarang hanya mengecek WO status in_progress/completed. Dia tidak memvalidasi bahwa Quality passed dan tidak membatasi receipt terhadap actual output.
 
-Ini juga gue sarankan.
+Limit sekarang:
 
-Saat ini gue cek:
+alreadyReceived + quantity <= wo.quantity \* 1.1
 
-backend/package-lock.json → tidak ada
-frontend/package-lock.json → tidak ada
+Padahal yang benar mestinya:
 
-Jadi dependency yang ter-install bisa bergeser antar hari.
+Maximum FG receipt = actual accepted output dari wo_results
 
-Di developer machine:
+Contoh:
 
-cd backend
-npm install
+Planned = 1,000
+Actual output = 820
+Scrap = 180
 
-cd ../frontend
-npm install
+inventory tidak boleh menerima 1,000 atau 1,100.
 
-Commit:
+Yang boleh diterima maksimal:
 
-backend/package-lock.json
-frontend/package-lock.json
+820 FG
 
-Setelah itu CI ubah:
+dan hanya setelah QC gate yang sesuai.
 
-npm install
+Frontend memang menyembunyikan tombol Receive sampai qc_status === passed, tapi itu UI-only. Backend tetap harus enforce.
 
-menjadi:
+FG receipt juga sudah punya konsep idempotency_key, tetapi frontend belum mengirimnya. Jadi protection tersebut belum efektif end-to-end.
 
-npm ci
+Production MRP sekarang broken secara model data
 
-Ini bikin environment dev, CI, dan production jauh lebih deterministic. GitHub Node.js workflow guidance juga menggunakan npm ci ketika lockfile tersedia.
+Frontend Production MRP ternyata memanggil:
 
-7. Setelah CI pertama sukses, protect main
+GET /production/mrp/dashboard
 
-Setelah job tersebut pernah jalan sukses, masuk:
+Endpoint itu masih query model legacy seperti:
 
-GitHub Repo → Settings → Branches / Rules → main
+boms
+bom_items
+inventory_transactions
+wo.qty
 
-lalu aktifkan:
+Sedangkan canonical schema sekarang:
 
-Require status checks to pass before merging
+bom_headers
+bom_details
+inventory_stocks
+work_orders.quantity
 
-dan pilih:
+Jadi Production MRP / Material Readiness harus diganti ke canonical schema.
 
-Backend Build
-Frontend Build
-PPIC Integration Smoke
+Menurut gue jangan bikin MRP kedua yang bersaing dengan PPIC. Di Production fungsi layar ini sebaiknya menjadi:
 
-GitHub branch protection memang bisa mewajibkan status checks lolos sebelum perubahan boleh masuk ke protected branch.
+WO Material Readiness
 
-Jadi developer tidak bisa lagi:
+bukan planning MRP baru.
 
-push code rusak
-↓
-merge
-↓
-production error
+PPIC tetap owner MRP.
 
-Flow berubah menjadi:
+Production hanya menjawab:
 
-Developer Revision
-↓
-Pull Request
-↓
-Backend Build ──────┐
-Frontend Build ─────┤
-PPIC Smoke ─────────┤
-↓
-ALL GREEN
-↓
-MERGE
-↓
-main
-Untuk ERP lo, target akhirnya begini
-GitHub Push / PR
-│
-┌──────────────┼──────────────┐
-▼ ▼ ▼
-Backend Build Frontend Build PPIC Smoke
-│ │ │
-PASS PASS PASS
-└──────────────┼──────────────┘
-▼
-CI GREEN
-│
-▼
-Eligible to Merge
-│
-▼
-MAIN
+“Untuk WO yang sudah Release, material yang dibutuhkan berapa, sudah issue berapa, stock tersedia berapa, shortage berapa?”
 
-Nah, kalau PPIC Integration Smoke green pada SHA terbaru, baru gue punya evidence yang jauh lebih kuat untuk bilang:
+Production Planning juga perlu dirapikan
 
-PPIC MODULE = FIRM / FREEZE ✅
+Planning UI sebenarnya sudah cukup keren: dia auto-spread WO quantity ke hari kerja berdasarkan machine capacity.
 
-Bukan berdasarkan commit message atau code inspection saja, tapi GitHub sendiri punya repeatable automated evidence bahwa build + business integration flow lolos.
+Tapi angka Planned / Actual dapat diedit langsung oleh user dan tidak ada save endpoint.
 
-Menurut gue urutan implementasinya: buat ci.yml → commit lockfiles → buat portable ppic-smoke.ts → tambahkan MySQL integration job → protect main. Jangan bikin deployment CI/CD dulu; kita bereskan CI quality gate lebih dulu.
+Auto-extended scheduled_end juga hanya mengubah object frontend.
+
+Refresh page → perhitungan ulang.
+
+Jadi kita harus memilih semantic yang jelas:
+
+kalau read-only simulation → input jangan editable.
+
+Atau:
+
+kalau operational schedule → simpan daily schedule ke backend.
+
+Untuk ERP production, gue lebih condong operational schedule harus persistent.
+
+WorkOrders UI harus ikut canonical state
+
+UI Work Orders masih memakai:
+
+DRAFT
+Planned
+In Production
+On Hold
+Completed
+
+Backend state machine memakai:
+
+DRAFT
+APPROVED
+RELEASED
+IN_PROGRESS
+ON_HOLD
+COMPLETED
+CLOSED
+CANCELLED
+
+Kita harus pilih satu canonical state set, dan menurut gue backend state machine yang sekarang sudah benar.
+
+Jangan pertahankan Planned / In Production sebagai state baru. Kalau mau label UI manusiawi, boleh tampilkan:
+
+IN_PROGRESS → "In Production"
+
+tapi value backend tetap IN_PROGRESS.
+
+Target Production flow yang gue mau kita lock
+
+PPIC Confirmed MPS
+→ Generate DRAFT WO
+→ APPROVED
+→ RELEASED
+→ bind exact BOM + Line
+→ Generate WO Materials
+→ Issue Materials
+→ IN_PROGRESS
+→ Process Logs
+→ In-Process / Final QC
+→ Record actual Yield + Scrap
+→ Mandatory QC Passed
+→ COMPLETED
+→ FG Receipt = actual accepted output
+→ Inventory + Batch traceability
+→ CLOSED
+
+Dan negative flow nanti wajib mencakup:
+
+Draft → Start = rejected
+Approved → Start = rejected
+Released without line = rejected
+Issue material from wrong warehouse = impossible
+Over-issue material = rejected
+Insufficient stock = rollback
+Complete with mandatory QC pending = rejected
+Production cannot self-set QC passed
+FG receipt before QC = rejected
+FG receipt > actual output = rejected
+Duplicate receipt = rejected
+Closed WO mutation = rejected
+
+Jadi kalau kita lock baseline ini, fokus dev Production nanti bukan redesign UI. UI existing sudah cukup bagus. Fokusnya menyatukan lifecycle, BOM source, inventory transactions, QC, yield, dan FG receipt.
