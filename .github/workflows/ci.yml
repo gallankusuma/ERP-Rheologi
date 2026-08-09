@@ -136,8 +136,22 @@ jobs:
 
       - name: PPIC smoke test
         working-directory: backend
-        run: npx tsx tests/ppic-smoke.ts
+        run: npx tsx tests/ppic-smoke.ts 2>&1 | tee /tmp/smoke-test.log
 
-      - name: Show backend logs on failure
+      - name: Show logs on failure
         if: failure()
-        run: cat /tmp/backend.log || true
+        run: |
+          echo "=== SMOKE TEST OUTPUT ==="
+          cat /tmp/smoke-test.log || echo "No smoke test log"
+          echo ""
+          echo "=== BACKEND LOG (last 80 lines) ==="
+          tail -80 /tmp/backend.log || echo "No backend log"
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-logs
+          path: |
+            /tmp/smoke-test.log
+            /tmp/backend.log
