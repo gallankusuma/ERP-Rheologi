@@ -84,7 +84,7 @@
         <div v-if="!materials.length && !workOrders.length" class="bg-white rounded-xl shadow-sm border border-gray-100 p-16 text-center">
           <div class="text-6xl mb-4">📭</div>
           <h3 class="text-lg font-semibold text-gray-700">Tidak ada WO aktif</h3>
-          <p class="text-sm text-gray-400 mt-2">WO dengan status Planned atau In Production akan ditampilkan di sini</p>
+          <p class="text-sm text-gray-400 mt-2">WO yang sudah Released, In Production atau On Hold akan ditampilkan di sini</p>
           <p class="text-xs text-gray-400 mt-1">Pastikan BOM produk sudah di-approve</p>
         </div>
 
@@ -168,7 +168,7 @@
                   <div class="flex flex-wrap gap-1.5">
                     <span v-for="wo in mat.wos" :key="wo.wo_id"
                       class="px-2 py-0.5 text-xs rounded font-mono font-semibold"
-                      :class="wo.status === 'In Production' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'">
+                      :class="woStatusBadge(wo.status)">
                       {{ wo.wo_number }} (W{{ wo.week_number }})
                     </span>
                   </div>
@@ -199,9 +199,8 @@
                   </div>
                   <div>
                     <span class="px-2 py-1 text-xs font-bold rounded-lg"
-                      :class="wo.status === 'In Production' ? 'bg-green-600 text-white' :
-                              wo.status === 'Planned' ? 'bg-blue-600 text-white' : 'bg-gray-400 text-white'">
-                      {{ wo.status }}
+                      :class="woStatusBadge(wo.status)">
+                      {{ woStatusLabel(wo.status) }}
                     </span>
                   </div>
                 </div>
@@ -252,6 +251,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '../lib/api';
+import { woStatusLabel, woStatusBadge } from '../utils/woStatus';
 
 const now = new Date();
 const selectedYear = ref(now.getFullYear());

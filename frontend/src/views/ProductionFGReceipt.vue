@@ -112,7 +112,7 @@ const store = useProductionStore();
 const showModal = ref(false);
 const receiving = ref(false);
 const selectedReceipt = ref<FGReceipt | null>(null);
-const receiveForm = ref({ warehouse_id: '' as string | number, quantity: 0, batch_number: '' });
+const receiveForm = ref({ warehouse_id: '' as string | number, quantity: 0, batch_number: '', idempotency_key: '' });
 const warehouses = ref<any[]>([]);
 
 onMounted(async () => {
@@ -125,12 +125,27 @@ onMounted(async () => {
 
 const pendingQty = (r: FGReceipt) => (r.output_quantity || 0) - (r.received_into_stock || 0);
 
+// One key per opened modal, not per submit.
+//
+// The backend has had an idempotency_key check on /fg-receipt all along and the
+// frontend never sent one, so the protection existed on paper and did nothing:
+// a double-click, or a retry after a slow response, could book the same finished
+// goods into stock twice. `receiving` guards the synchronous double-click only —
+// it cannot help when the first request succeeded server-side but the response
+// was lost, which is exactly when a duplicate receipt happens.
+//
+// Generated when the modal opens so every attempt at THIS receipt carries the
+// same key, while a genuinely new receipt gets a new one.
+const newIdempotencyKey = () =>
+  (globalThis.crypto?.randomUUID?.() ?? `fg-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
 const openReceiveModal = (r: FGReceipt) => {
   selectedReceipt.value = r;
   receiveForm.value = {
     warehouse_id: '',
     quantity: pendingQty(r),
     batch_number: r.batch_number || '',
+    idempotency_key: newIdempotencyKey(),
   };
   showModal.value = true;
 };
@@ -144,6 +159,7 @@ const doReceive = async () => {
       warehouse_id: Number(receiveForm.value.warehouse_id),
       quantity: receiveForm.value.quantity,
       batch_number: receiveForm.value.batch_number || undefined,
+      idempotency_key: receiveForm.value.idempotency_key,
     });
     showModal.value = false;
     await store.fetchFGReceipts();

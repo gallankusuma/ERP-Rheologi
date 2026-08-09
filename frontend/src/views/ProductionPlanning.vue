@@ -31,6 +31,12 @@
             :class="utilZoomed ? 'bg-white text-indigo-700 border-white' : 'bg-white/10 text-white border-white/30 hover:bg-white/20'">
             {{ utilZoomed ? '🔍−' : '🔍+' }}
           </button>
+          <div class="h-4 w-px bg-white/30"></div>
+          <button @click="saveSchedule" :disabled="saving || !dirtyWoIds.length"
+            class="px-3 py-1 text-xs font-bold rounded border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            :class="dirtyWoIds.length ? 'bg-white text-indigo-700 border-white hover:bg-indigo-50' : 'bg-white/10 text-white border-white/30'">
+            {{ saving ? 'Menyimpan…' : (dirtyWoIds.length ? `Simpan (${dirtyWoIds.length})` : 'Tersimpan') }}
+          </button>
           <div class="flex items-center gap-2 text-[10px] text-indigo-200">
             <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-emerald-400 inline-block"></span>&lt;70%</span>
             <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-amber-400 inline-block"></span>70–90%</span>
@@ -174,6 +180,7 @@
                         class="px-0 py-0.5 text-center border-r"
                         :class="dc.isWeekend ? 'bg-gray-50' : ''">
                         <input v-model.number="getDayData(wo, dc.day).planned" type="number" min="0"
+                          @change="markDirty(wo)"
                           class="w-full border-0 text-center text-[10px] font-medium py-1.5 focus:ring-1 focus:ring-blue-300"
                           :class="dc.isWeekend ? 'bg-gray-50 text-gray-400' : 'bg-blue-50 text-blue-800 focus:bg-blue-100'" />
                       </td>
@@ -202,6 +209,7 @@
                         class="px-0 py-0.5 text-center border-r"
                         :class="dc.isWeekend ? 'bg-gray-50' : ''">
                         <input v-model.number="getDayData(wo, dc.day).actual" type="number" min="0"
+                          @change="markDirty(wo)"
                           class="w-full border-0 text-center text-[10px] font-medium py-1.5 focus:ring-1 focus:ring-green-300"
                           :class="dc.isWeekend ? 'bg-gray-50 text-gray-400' : 'bg-green-50 text-green-800 focus:bg-green-100'" />
                       </td>
@@ -307,6 +315,55 @@ const utilZoomed = ref(false);
 
 // Day data map for editable cells
 const dayDataMap = reactive<Record<string, any>>({});
+
+// WOs edited since the last save.
+//
+// Before this, the grid had editable inputs and no save endpoint at all: the
+// numbers lived in dayDataMap until loadData() ran again and recomputed them
+// from capacity. Tracking WHICH rows changed keeps the save to the rows the
+// operator actually touched, instead of writing every visible WO back and
+// turning a suggested spread into a committed schedule nobody asked for.
+const dirtyWoIds = ref<number[]>([]);
+const saving = ref(false);
+
+const markDirty = (wo: any) => {
+  if (!dirtyWoIds.value.includes(wo.id)) dirtyWoIds.value.push(wo.id);
+};
+
+const saveSchedule = async () => {
+  if (!dirtyWoIds.value.length || saving.value) return;
+  saving.value = true;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const failed: string[] = [];
+  try {
+    for (const woId of [...dirtyWoIds.value]) {
+      const wo = workOrders.value.find((w: any) => w.id === woId);
+      if (!wo) continue;
+      const days = dayColumns.value.map((dc: any) => {
+        const cell = getDayData(wo, dc.day);
+        return {
+          date: `${selectedYear.value}-${pad(selectedMonth.value)}-${pad(dc.day)}`,
+          planned: Number(cell.planned) || 0,
+          actual: Number(cell.actual) > 0 ? Number(cell.actual) : null,
+        };
+      });
+      try {
+        await api.put(`/production/planning/daily/${woId}`, { days });
+        wo.has_saved_schedule = true;
+        dirtyWoIds.value = dirtyWoIds.value.filter(id => id !== woId);
+      } catch (e: any) {
+        // Keep this WO dirty so a partial failure stays visible and retryable,
+        // rather than the button going green while one row never landed.
+        failed.push(wo.wo_number || `WO#${woId}`);
+      }
+    }
+    if (failed.length) {
+      alert(`Gagal menyimpan ${failed.length} work order: ${failed.join(', ')}. Perubahannya masih tersimpan di layar — coba Simpan lagi.`);
+    }
+  } finally {
+    saving.value = false;
+  }
+};
 
 const formatN = (n: any) => {
   const num = Number(n);
@@ -422,6 +479,10 @@ const loadData = async () => {
   loading.value = true;
   generateDayColumns();
   Object.keys(dayDataMap).forEach(k => delete dayDataMap[k]);
+  // The cells these ids referred to have just been discarded. Keeping them
+  // would let a later Save write the NEW month's numbers under an old month's
+  // edit flag.
+  dirtyWoIds.value = [];
   try {
     const res = await api.get('/production/planning/weekly', {
       params: { year: selectedYear.value, month: selectedMonth.value }
@@ -434,6 +495,26 @@ const loadData = async () => {
       wo._capacity_unit = wo.capacity_unit_name || '';
       wo._working_hours_per_week = wo.working_hours_per_week || null;
       wo._uom = wo.capacity_unit_name || 'Kgs';
+
+      // A SAVED schedule is the operator's decision and outranks the spread.
+      //
+      // The auto-spread below is a SEED, not a source of truth: it is what the
+      // screen suggests for a WO nobody has scheduled by hand yet. Running it
+      // over saved rows is exactly the behaviour the review called out — every
+      // edit silently recomputed away on refresh.
+      if (wo.has_saved_schedule && wo.daily_schedule) {
+        for (const dc of dayColumns.value) {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const key = `${selectedYear.value}-${pad(selectedMonth.value)}-${pad(dc.day)}`;
+          const saved = wo.daily_schedule[key];
+          if (saved) {
+            const cell = getDayData(wo, dc.day);
+            cell.planned = Number(saved.planned) || 0;
+            cell.actual = saved.actual === null ? 0 : Number(saved.actual) || 0;
+          }
+        }
+        continue;
+      }
 
       // Pre-fill: auto-spread WO qty across work days based on machine daily capacity
       // If qty exceeds the scheduled window, auto-extend to next available work days

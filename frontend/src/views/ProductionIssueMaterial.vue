@@ -40,8 +40,8 @@
                 <div class="text-xs text-gray-500 mt-1">Qty: {{ formatN(wo.quantity) }} • Minggu {{ wo.week_number || '-' }}</div>
               </div>
               <span class="text-xs px-2 py-0.5 rounded-full font-semibold ml-2"
-                :class="wo.status === 'In Production' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'">
-                {{ wo.status }}
+                :class="woStatusBadge(wo.status)">
+                {{ woStatusLabel(wo.status) }}
               </span>
             </div>
             <!-- Material readiness indicator -->
@@ -251,6 +251,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { api } from '../lib/api';
+import { woStatusLabel, woStatusBadge, ISSUABLE_WO_STATUSES, normalizeWoStatus } from '../utils/woStatus';
 
 // State
 const loading = ref(false);
@@ -288,10 +289,21 @@ const loadData = async () => {
       api.get('/workorders'),
       api.get('/warehouses')
     ]);
-    // Filter only active WOs
+    // Only WOs the backend will actually accept an issue for.
+    //
+    // This list used to mix DISPLAY LABELS into a VALUE test — 'Planned' and
+    // 'In Production' are what the UI renders, never what the column holds, so
+    // those two entries could not match anything and were pure noise. Worse, the
+    // values it did match ('pending', 'planned') are statuses the backend now
+    // REFUSES to issue against, so the screen offered WOs that could only fail,
+    // while RELEASED — the one status issuing is actually for — was missing.
+    //
+    // Mirrors ISSUABLE_STATUSES in backend/src/utils/wo-transitions.ts.
+    // normalizeWoStatus folds the legacy 'in-progress' spelling onto the
+    // canonical one, so both match without listing each variant here.
     const allWOs = woRes.data.data || woRes.data || [];
     workOrders.value = allWOs.filter((w: any) =>
-      ['Planned', 'planned', 'In Production', 'in_progress', 'in-progress', 'pending'].includes(w.status)
+      ISSUABLE_WO_STATUSES.includes(normalizeWoStatus(w.status))
     );
     warehouses.value = whRes.data.data || whRes.data || [];
   } catch (err) {

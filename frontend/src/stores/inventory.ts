@@ -9,6 +9,11 @@ interface Inventory {
   quantity_on_hand: number;
   quantity_reserved: number;
   quantity_available: number;
+  // Selected by GET /inventory (inventory.routes.ts) and read by Inventory.vue's
+  // low-stock filter, but never declared here — which failed vue-tsc and so
+  // broke `npm run build` for the ENTIRE frontend, not just that screen.
+  // Optional because older rows may not carry a reorder point.
+  reorder_point?: number;
   location?: string;
   created_at: string;
 }

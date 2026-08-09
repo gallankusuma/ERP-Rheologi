@@ -28,6 +28,23 @@ export const EXECUTION_STATUSES = ['released', 'in_progress', 'on_hold'];
 export const ISSUABLE_STATUSES = ['released', 'in_progress', 'on_hold'];
 
 /**
+ * Statuses whose material demand is still OPEN, for MRP and shortage.
+ *
+ * Includes the legacy aliases on purpose: unlike the execution list, this is a
+ * REPORT. Omitting a legacy-status WO understates demand, and understated
+ * demand is a stockout — where showing one extra row costs a glance. The
+ * execution list can afford to be strict because acting on the wrong WO is
+ * worse than not seeing it; a requirements report cannot.
+ *
+ * 'released' was missing from both MRP queries entirely, so the WOs closest to
+ * actually consuming material were the ones excluded from the shortage view.
+ */
+export const MRP_OPEN_STATUSES = [
+  'released', 'in_progress', 'in-progress', 'on_hold',
+  'approved', 'draft', 'pending', 'planned',
+];
+
+/**
  * Validate a WO status transition.
  * Returns { valid, error }.
  */

@@ -2,7 +2,12 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
-import { validateTransition, EXECUTION_STATUSES, ISSUABLE_STATUSES } from '../utils/wo-transitions';
+import { validateTransition, EXECUTION_STATUSES, ISSUABLE_STATUSES, MRP_OPEN_STATUSES } from '../utils/wo-transitions';
+
+// Bound once so /mrp and /mrp/shortage cannot drift apart the way they drifted
+// from /mrp/dashboard.
+const MRP_WO_STATUSES = MRP_OPEN_STATUSES;
+const MRP_STATUS_PLACEHOLDERS = MRP_OPEN_STATUSES.map(() => '?').join(',');
 
 const router = Router();
 
@@ -120,7 +125,7 @@ router.put('/tasks/:id/status', authMiddleware, requirePermission('production.pl
 // ============================================================
 // Production Planning — schedule & capacity
 // ============================================================
-router.get('/planning', authMiddleware, requirePermission('production.production-planning', 'view'), async (_req: Request, res: Response) => {
+router.get('/planning', authMiddleware, requirePermission('production.planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const workOrders = await dbAll(
       `SELECT w.id, w.wo_number, w.quantity, w.status, w.scheduled_start, w.scheduled_end,
@@ -139,7 +144,7 @@ router.get('/planning', authMiddleware, requirePermission('production.production
   }
 });
 
-router.get('/planning/summary', authMiddleware, requirePermission('production.production-planning', 'view'), async (_req: Request, res: Response) => {
+router.get('/planning/summary', authMiddleware, requirePermission('production.planning', 'view'), async (_req: Request, res: Response) => {
   try {
     const summary = await dbAll(
       `SELECT status, COUNT(*) as count, SUM(quantity) as total_qty
@@ -159,7 +164,7 @@ router.get('/planning/summary', authMiddleware, requirePermission('production.pr
 });
 
 // GET /planning/weekly — MPS-style weekly grid data
-router.get('/planning/weekly', authMiddleware, requirePermission('production.production-planning', 'view'), async (req: Request, res: Response) => {
+router.get('/planning/weekly', authMiddleware, requirePermission('production.planning', 'view'), async (req: Request, res: Response) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const month = Number(req.query.month) || (new Date().getMonth() + 1);
@@ -253,6 +258,22 @@ router.get('/planning/weekly', authMiddleware, requirePermission('production.pro
         [wo.id]
       );
 
+      // The SAVED daily schedule, if this WO has one. The frontend's capacity
+      // auto-spread is a seed for WOs that have never been scheduled by hand;
+      // when these rows exist they win, which is the whole point of persisting
+      // them. Sent as a plain date->{planned,actual} map so the grid can look up
+      // a day without scanning an array.
+      const savedDays = await dbAll(
+        `SELECT DATE_FORMAT(schedule_date, '%Y-%m-%d') AS d, planned_qty, actual_qty
+         FROM wo_daily_schedule WHERE wo_id = ? ORDER BY schedule_date`,
+        [wo.id]
+      ) as any[];
+      wo.daily_schedule = savedDays.reduce((acc: any, r: any) => {
+        acc[r.d] = { planned: Number(r.planned_qty), actual: r.actual_qty === null ? null : Number(r.actual_qty) };
+        return acc;
+      }, {});
+      wo.has_saved_schedule = savedDays.length > 0;
+
       // Distribute planned qty across weeks based on scheduled dates
       wo.planned_weeks = {};
       wo.actual_weeks = {};
@@ -334,12 +355,115 @@ router.get('/planning/weekly', authMiddleware, requirePermission('production.pro
   }
 });
 
+/**
+ * PUT /planning/daily — persist the daily schedule for one WO.
+ *
+ * The missing half of the Planning screen. The grid computed a spread, let the
+ * user edit it, and dropped the edit on the next refresh because there was
+ * nowhere to send it. The review made the call: this is an operational
+ * schedule, so it persists.
+ *
+ * Whole-WO replace rather than per-cell patch, because the grid edits a row at
+ * a time and a partial write would leave the WO's days disagreeing with each
+ * other. Days sent with planned 0 and no actual are DELETED rather than stored,
+ * so clearing a cell removes the commitment instead of recording a promise of
+ * nothing.
+ */
+router.put('/planning/daily/:woId', authMiddleware, requirePermission('production.planning', 'update'), async (req: Request, res: Response) => {
+  try {
+    const woId = Number(req.params.woId);
+    const { days } = req.body as { days?: Array<{ date: string; planned?: number; actual?: number | null; notes?: string }> };
+    if (!Number.isFinite(woId)) return res.status(400).json({ error: 'Invalid work order id' });
+    if (!Array.isArray(days)) return res.status(400).json({ error: 'days[] is required' });
+
+    const wo = await dbGet('SELECT id, status FROM work_orders WHERE id = ?', [woId]) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+    // A closed or cancelled WO is a record, not a plan. Editing its schedule
+    // would rewrite history that inventory and QC have already acted on.
+    const locked = ['closed', 'cancelled'];
+    if (locked.includes(String(wo.status || '').toLowerCase())) {
+      return res.status(400).json({ error: `Cannot edit the schedule of a ${wo.status} work order.` });
+    }
+
+    const userId = (req as any).user?.userId ?? null;
+    const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+
+    for (const d of days) {
+      if (!d || !isoDate.test(String(d.date))) {
+        return res.status(400).json({ error: `Invalid date '${d?.date}'. Expected YYYY-MM-DD.` });
+      }
+      const planned = Number(d.planned ?? 0);
+      const actual = d.actual === null || d.actual === undefined || d.actual === ('' as any) ? null : Number(d.actual);
+      if (!Number.isFinite(planned) || planned < 0) {
+        return res.status(400).json({ error: `Planned quantity for ${d.date} must be a number >= 0.` });
+      }
+      if (actual !== null && (!Number.isFinite(actual) || actual < 0)) {
+        return res.status(400).json({ error: `Actual quantity for ${d.date} must be a number >= 0.` });
+      }
+    }
+
+    await dbTransaction(async (conn) => {
+      for (const d of days) {
+        const planned = Number(d.planned ?? 0);
+        const actual = d.actual === null || d.actual === undefined || d.actual === ('' as any) ? null : Number(d.actual);
+
+        if (planned === 0 && actual === null) {
+          await conn.execute('DELETE FROM wo_daily_schedule WHERE wo_id = ? AND schedule_date = ?', [woId, d.date]);
+          continue;
+        }
+        await conn.execute(
+          `INSERT INTO wo_daily_schedule (wo_id, schedule_date, planned_qty, actual_qty, notes, updated_by)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE planned_qty = VALUES(planned_qty), actual_qty = VALUES(actual_qty),
+                                   notes = VALUES(notes), updated_by = VALUES(updated_by)`,
+          [woId, d.date, planned, actual, d.notes || null, userId]
+        );
+      }
+    });
+
+    const saved = await dbAll(
+      `SELECT DATE_FORMAT(schedule_date, '%Y-%m-%d') AS d, planned_qty, actual_qty
+       FROM wo_daily_schedule WHERE wo_id = ? ORDER BY schedule_date`,
+      [woId]
+    );
+    res.json({ success: true, message: 'Daily schedule saved', data: saved });
+  } catch (error) {
+    console.error('Error saving daily schedule:', error);
+    res.status(500).json({ error: 'Failed to save daily schedule' });
+  }
+});
+
+/** GET /planning/daily/:woId — the saved schedule for one WO. */
+router.get('/planning/daily/:woId', authMiddleware, requirePermission('production.planning', 'view'), async (req: Request, res: Response) => {
+  try {
+    const rows = await dbAll(
+      `SELECT DATE_FORMAT(schedule_date, '%Y-%m-%d') AS date, planned_qty AS planned, actual_qty AS actual, notes
+       FROM wo_daily_schedule WHERE wo_id = ? ORDER BY schedule_date`,
+      [Number(req.params.woId)]
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch daily schedule' });
+  }
+});
+
 // ============================================================
 // MRP — Material Requirement Planning
 // ============================================================
 router.get('/mrp', authMiddleware, requirePermission('production.mrp', 'view'), async (_req: Request, res: Response) => {
   try {
-    // Get all pending/planned WOs and explode BOM to find material requirements
+    // BOM RESOLUTION: the WO's own pinned recipe first.
+    //
+    // This endpoint was left behind by the BOM-integrity fix, which corrected
+    // Generate WO Materials and /mrp/dashboard but not /mrp or /mrp/shortage.
+    // Two defects lived here: it matched `bh.status = 'approved'` when canonical
+    // BOM status is 'ACTIVE' (so every row silently dropped out and the screen
+    // read "no requirements" rather than "no BOM"), and it re-looked-up the
+    // recipe by product instead of using work_orders.bom_id — meaning a BOM
+    // revised after the WO was cut would quietly restate that WO's requirements
+    // against a recipe it was never planned on.
+    //
+    // Same COALESCE shape as /mrp/dashboard so all three agree.
     const requirements = await dbAll(
       `SELECT w.id AS wo_id, w.wo_number, w.quantity AS wo_qty, w.status AS wo_status,
               w.scheduled_start,
@@ -351,12 +475,14 @@ router.get('/mrp', authMiddleware, requirePermission('production.mrp', 'view'), 
               GREATEST((bd.quantity * w.quantity) - COALESCE(inv.quantity, 0), 0) AS shortage
        FROM work_orders w
        JOIN products p ON w.product_id = p.id
-       JOIN bom_headers bh ON bh.product_id = p.id AND bh.status = 'approved'
-       JOIN bom_details bd ON bd.bom_header_id = bh.id
+       LEFT JOIN bom_headers bh ON bh.id = w.bom_id
+       JOIN bom_details bd ON bd.bom_header_id = COALESCE(bh.id,
+            (SELECT id FROM bom_headers WHERE product_id = w.product_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1))
        JOIN products rm ON rm.id = bd.raw_material_id
        LEFT JOIN inventory_stocks inv ON inv.product_id = bd.raw_material_id
-       WHERE w.status IN ('pending', 'planned', 'in_progress', 'in-progress')
-       ORDER BY w.scheduled_start ASC, rm.name ASC`
+       WHERE LOWER(w.status) IN (${MRP_STATUS_PLACEHOLDERS})
+       ORDER BY w.scheduled_start ASC, rm.name ASC`,
+      MRP_WO_STATUSES
     );
     res.json({ success: true, data: requirements });
   } catch (error) {
@@ -367,20 +493,24 @@ router.get('/mrp', authMiddleware, requirePermission('production.mrp', 'view'), 
 
 router.get('/mrp/shortage', authMiddleware, requirePermission('production.mrp', 'view'), async (_req: Request, res: Response) => {
   try {
+    // Same two corrections as /mrp above: pinned BOM, canonical 'ACTIVE' status,
+    // and a WO status list that includes RELEASED.
     const shortages = await dbAll(
       `SELECT rm.id AS product_id, rm.name AS material_name, rm.sku AS material_sku,
               SUM(bd.quantity * w.quantity) AS total_required,
               COALESCE(MAX(inv.quantity), 0) AS stock_available,
               GREATEST(SUM(bd.quantity * w.quantity) - COALESCE(MAX(inv.quantity), 0), 0) AS shortage
        FROM work_orders w
-       JOIN bom_headers bh ON bh.product_id = w.product_id AND bh.status = 'approved'
-       JOIN bom_details bd ON bd.bom_header_id = bh.id
+       LEFT JOIN bom_headers bh ON bh.id = w.bom_id
+       JOIN bom_details bd ON bd.bom_header_id = COALESCE(bh.id,
+            (SELECT id FROM bom_headers WHERE product_id = w.product_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1))
        JOIN products rm ON rm.id = bd.raw_material_id
        LEFT JOIN inventory_stocks inv ON inv.product_id = bd.raw_material_id
-       WHERE w.status IN ('pending', 'planned', 'in_progress', 'in-progress')
+       WHERE LOWER(w.status) IN (${MRP_STATUS_PLACEHOLDERS})
        GROUP BY rm.id, rm.name, rm.sku
        HAVING shortage > 0
-       ORDER BY shortage DESC`
+       ORDER BY shortage DESC`,
+      MRP_WO_STATUSES
     );
     res.json({ success: true, data: shortages });
   } catch (error) {
@@ -391,7 +521,7 @@ router.get('/mrp/shortage', authMiddleware, requirePermission('production.mrp', 
 // ============================================================
 // Issue Material — pick materials from warehouse for WO
 // ============================================================
-router.get('/issue-material', authMiddleware, requirePermission('production.issue-material', 'view'), async (_req: Request, res: Response) => {
+router.get('/issue-material', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT wm.id, wm.wo_id, w.wo_number,
@@ -416,7 +546,7 @@ router.get('/issue-material', authMiddleware, requirePermission('production.issu
   }
 });
 
-router.get('/issue-material/wo/:woId', authMiddleware, requirePermission('production.issue-material', 'view'), async (req: Request, res: Response) => {
+router.get('/issue-material/wo/:woId', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {
     const materials = await dbAll(
       `SELECT wm.id, wm.product_id, p.name AS material_name, p.sku AS material_sku,
@@ -517,16 +647,11 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
     const wo = await dbGet('SELECT * FROM work_orders WHERE id = ?', [req.params.woId]);
     if (!wo) return res.status(404).json({ error: 'Work order not found' });
 
-    // prefer exact bom_id from WO (set by PPIC), fallback to product lookup
-    let bomId = wo.bom_id;
+    // strict: use only the pinned bom_id (auto-set at WO creation or by PPIC)
+    const bomId = wo.bom_id;
     if (!bomId) {
-      const bom = await dbGet(
-        `SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1`,
-        [wo.product_id]
-      );
-      bomId = bom?.id;
+      return res.status(400).json({ error: 'Work Order has no BOM assigned. Assign a BOM before generating materials.' });
     }
-    if (!bomId) return res.status(404).json({ error: 'No active BOM found for this product' });
 
     const bomDetails = await dbAll('SELECT * FROM bom_details WHERE bom_header_id = ?', [bomId]);
 
@@ -550,7 +675,7 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
 // ============================================================
 // Production Execution — real-time WO tracking & process logging
 // ============================================================
-router.get('/execution', authMiddleware, requirePermission('production.production-execution', 'view'), async (_req: Request, res: Response) => {
+router.get('/execution', authMiddleware, requirePermission('production.execution', 'view'), async (_req: Request, res: Response) => {
   try {
     // include RELEASED (startable), IN_PROGRESS (active), ON_HOLD (paused)
     const statusPlaceholders = EXECUTION_STATUSES.map(() => '?').join(',');
@@ -670,7 +795,7 @@ router.post('/execution/:woId/complete', authMiddleware, requirePermission('prod
 });
 
 // Process logs for a WO
-router.get('/execution/:woId/logs', authMiddleware, requirePermission('production.production-execution', 'view'), async (req: Request, res: Response) => {
+router.get('/execution/:woId/logs', authMiddleware, requirePermission('production.execution', 'view'), async (req: Request, res: Response) => {
   try {
     const logs = await dbAll(
       `SELECT wpl.*, COALESCE(u.full_name, u.username) AS recorded_by_name
@@ -992,13 +1117,24 @@ router.post('/yield', authMiddleware, requirePermission('production.yield-scrap'
 
 router.put('/yield/:id', authMiddleware, requirePermission('production.yield-scrap', 'update'), async (req: Request, res: Response) => {
   try {
-    const { output_quantity, loss_quantity, batch_number, qc_status, notes } = req.body;
+    // qc_status is DELIBERATELY NOT READ FROM THE BODY.
+    //
+    // The create path was hardened to always insert 'pending', but this update
+    // path still took qc_status straight from the request — so Production could
+    // still mark its own output QC-passed, just by editing instead of creating.
+    // Closing one of two doors into the same field leaves the field open.
+    //
+    // QC is owned by the Quality module: qc.routes.ts resolves an FPA and writes
+    // wo_qc_checkpoints.status = passed/failed. Production records HOW MUCH was
+    // produced; Quality decides whether it is acceptable. Those are different
+    // authorities and this endpoint only carries the first.
+    const { output_quantity, loss_quantity, batch_number, notes } = req.body;
     const totalOutput = Number(output_quantity) + Number(loss_quantity || 0);
     const lossPct = totalOutput > 0 ? ((Number(loss_quantity || 0) / totalOutput) * 100).toFixed(2) : '0.00';
 
     await dbRun(
-      `UPDATE wo_results SET output_quantity=?, loss_quantity=?, loss_percentage=?, batch_number=?, qc_status=?, notes=? WHERE id=?`,
-      [output_quantity, loss_quantity || 0, lossPct, batch_number || null, qc_status || 'pending', notes || null, req.params.id]
+      `UPDATE wo_results SET output_quantity=?, loss_quantity=?, loss_percentage=?, batch_number=?, notes=? WHERE id=?`,
+      [output_quantity, loss_quantity || 0, lossPct, batch_number || null, notes || null, req.params.id]
     );
     res.json({ success: true, message: 'Yield updated' });
   } catch (error) {
@@ -1069,15 +1205,48 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
         }
       }
 
-      // 3. Validate QC passed and total receipt does not exceed actual output
+      // 3. QC GATE — asked of the module that actually owns the answer.
+      //
+      // This used to read `wo_results.qc_status = 'passed'`, and that column is
+      // written by nothing except the Production yield endpoints. So the gate
+      // was asking Production whether Production's own output had passed QC.
+      // Once that field was correctly locked (see PUT /yield/:id), NOTHING in
+      // the system could ever set it to 'passed' — the gate would have been
+      // unsatisfiable and FG receipt permanently impossible. Locking the field
+      // and keeping this query would have deadlocked the plant.
+      //
+      // wo_qc_checkpoints is the real record: qc.routes.ts resolves an FPA and
+      // writes passed/failed there. Same predicate the `complete` endpoint
+      // already enforces, so the two gates cannot drift apart.
+      const [qcRows] = await conn.execute(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN is_mandatory = 1 AND status NOT IN ('passed') THEN 1 ELSE 0 END) AS pending_mandatory
+         FROM wo_qc_checkpoints WHERE wo_id = ?`,
+        [wo_id]
+      );
+      const qcTotal = Number(qcRows[0]?.total || 0);
+      const qcPendingMandatory = Number(qcRows[0]?.pending_mandatory || 0);
+      // No checkpoint at all is not "QC clean", it is "QC never happened".
+      // Receiving finished goods on that basis is precisely the negative flow
+      // the review requires rejected, and refusing keeps this gate at least as
+      // strict as the one it replaces rather than quietly loosening it.
+      if (qcTotal === 0) {
+        throw new Error('Cannot receive FG: this WO has no QC checkpoints. Generate QC checkpoints and complete inspection first.');
+      }
+      if (qcPendingMandatory > 0) {
+        throw new Error(`Cannot receive FG: ${qcPendingMandatory} mandatory QC checkpoint(s) not passed. Complete QC inspection first.`);
+      }
+
+      // Actual output, from wo_results. Planned quantity is NOT the ceiling —
+      // a WO planned at 1,000 that yielded 820 with 180 scrap may receive 820,
+      // never 1,000 and never the old `planned * 1.1`.
       const [yieldRows] = await conn.execute(
-        `SELECT COALESCE(SUM(output_quantity), 0) as total_output
-         FROM wo_results WHERE wo_id = ? AND qc_status = 'passed'`,
+        `SELECT COALESCE(SUM(output_quantity), 0) as total_output FROM wo_results WHERE wo_id = ?`,
         [wo_id]
       );
       const maxReceivable = Number(yieldRows[0]?.total_output || 0);
       if (maxReceivable === 0) {
-        throw new Error('Cannot receive FG: no QC-passed yield records found. Complete QC inspection first.');
+        throw new Error('Cannot receive FG: no yield recorded for this WO. Record actual output first.');
       }
 
       const [existingReceipts] = await conn.execute(
@@ -1087,7 +1256,7 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
       );
       const alreadyReceived = Number(existingReceipts[0]?.total_received || 0);
       if (alreadyReceived + quantity > maxReceivable) {
-        throw new Error(`Total receipt (${alreadyReceived + quantity}) exceeds QC-accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
+        throw new Error(`Total receipt (${alreadyReceived + quantity}) exceeds actual accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
       }
 
       // 4. Update inventory stock (with row lock)
@@ -1146,7 +1315,7 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
 // ============================================================
 // Production History — all WOs with full detail
 // ============================================================
-router.get('/history', authMiddleware, requirePermission('production.production-history', 'view'), async (req: Request, res: Response) => {
+router.get('/history', authMiddleware, requirePermission('production.history', 'view'), async (req: Request, res: Response) => {
   try {
     const { status, from_date, to_date, search } = req.query;
     let sql = `SELECT w.id, w.wo_number, w.quantity, w.status,
@@ -1188,7 +1357,7 @@ router.get('/history', authMiddleware, requirePermission('production.production-
   }
 });
 
-router.get('/history/stats', authMiddleware, requirePermission('production.production-history', 'view'), async (_req: Request, res: Response) => {
+router.get('/history/stats', authMiddleware, requirePermission('production.history', 'view'), async (_req: Request, res: Response) => {
   try {
     const stats = await dbGet(
       `SELECT
@@ -1207,7 +1376,7 @@ router.get('/history/stats', authMiddleware, requirePermission('production.produ
   }
 });
 
-// GET /mrp/dashboard - WO Material Readiness dashboard (canonical schema)
+// GET /mrp/dashboard - WO Material Readiness dashboard
 router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp', 'view'), async (req: Request, res: Response) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
@@ -1217,39 +1386,57 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
       [year]
     ) as any;
 
-    const woWithShortage = await dbGet(`
-      SELECT COUNT(DISTINCT wo.id) as count
-      FROM work_orders wo
-      LEFT JOIN bom_headers bh ON bh.id = wo.bom_id
-      JOIN bom_details bd ON bd.bom_header_id = COALESCE(bh.id, (SELECT id FROM bom_headers WHERE product_id = wo.product_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1))
-      LEFT JOIN inventory_stocks inv ON inv.product_id = bd.raw_material_id
-      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
-      AND (COALESCE(inv.quantity, 0) < bd.quantity * wo.quantity)
-    `, [year]) as any;
-
+    // material-level aggregation: per raw material, total required across all active WOs
     const materials = await dbAll(`
-      SELECT p.id, p.name, p.sku,
-             COALESCE(inv.quantity, 0) as current_stock,
-             COALESCE(req.required, 0) as required_qty,
-             COALESCE(inv.quantity, 0) - COALESCE(req.required, 0) as gap
+      SELECT p.id AS material_id, p.name AS material_name, p.sku AS material_sku,
+             COALESCE(u.name, 'pcs') AS uom_name,
+             COALESCE(inv.total_qty, 0) AS stock_available,
+             COALESCE(req.total_required, 0) AS total_required,
+             GREATEST(COALESCE(req.total_required, 0) - COALESCE(inv.total_qty, 0), 0) AS total_shortage
       FROM products p
-      LEFT JOIN (SELECT product_id, SUM(quantity) as quantity FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = p.id
-      LEFT JOIN (
-        SELECT bd.raw_material_id as product_id, SUM(bd.quantity * wo.quantity) as required
+      LEFT JOIN uom u ON p.uom_id = u.id
+      LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = p.id
+      JOIN (
+        SELECT bd.raw_material_id AS product_id, SUM(bd.quantity * wo.quantity) AS total_required
         FROM work_orders wo
-        LEFT JOIN bom_headers bh ON bh.id = wo.bom_id
-        JOIN bom_details bd ON bd.bom_header_id = COALESCE(bh.id, (SELECT id FROM bom_headers WHERE product_id = wo.product_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1))
+        JOIN bom_details bd ON bd.bom_header_id = wo.bom_id
         WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
+          AND wo.bom_id IS NOT NULL
         GROUP BY bd.raw_material_id
       ) req ON req.product_id = p.id
-      WHERE req.required > 0
-      ORDER BY gap ASC
+      ORDER BY total_shortage DESC, total_required DESC
       LIMIT 50
     `, [year]) as any[];
 
+    // per-material WO breakdown: which WOs need each material
+    const matWoLinks = await dbAll(`
+      SELECT bd.raw_material_id AS material_id, wo.id AS wo_id, wo.wo_number, wo.status,
+             WEEK(wo.scheduled_start, 1) AS week_number
+      FROM work_orders wo
+      JOIN bom_details bd ON bd.bom_header_id = wo.bom_id
+      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
+        AND wo.bom_id IS NOT NULL
+      ORDER BY wo.scheduled_start
+    `, [year]) as any[];
+
+    // attach wos[] to each material
+    const wosByMaterial: Record<number, any[]> = {};
+    for (const link of matWoLinks) {
+      if (!wosByMaterial[link.material_id]) wosByMaterial[link.material_id] = [];
+      wosByMaterial[link.material_id].push({
+        wo_id: link.wo_id, wo_number: link.wo_number, status: link.status, week_number: link.week_number
+      });
+    }
+    for (const mat of materials) {
+      (mat as any).wos = wosByMaterial[mat.material_id] || [];
+    }
+
+    // per-WO view with material checklist
     const workOrders = await dbAll(`
-      SELECT wo.id, wo.wo_number, wo.status, wo.quantity, wo.scheduled_start, wo.scheduled_end,
-             p.name as product_name, p.sku
+      SELECT wo.id AS wo_id, wo.wo_number, wo.status, wo.quantity AS wo_qty,
+             wo.scheduled_start, wo.scheduled_end,
+             p.name AS product_name, p.sku,
+             WEEK(wo.scheduled_start, 1) AS week_number
       FROM work_orders wo
       JOIN products p ON wo.product_id = p.id
       WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
@@ -1257,13 +1444,44 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
       LIMIT 50
     `, [year]) as any[];
 
+    // per-WO material breakdown
+    const woMaterials = await dbAll(`
+      SELECT wo.id AS wo_id, bd.raw_material_id AS material_id,
+             p.name AS material_name,
+             bd.quantity * wo.quantity AS required,
+             COALESCE(inv.total_qty, 0) AS available,
+             GREATEST(bd.quantity * wo.quantity - COALESCE(inv.total_qty, 0), 0) AS shortage
+      FROM work_orders wo
+      JOIN bom_details bd ON bd.bom_header_id = wo.bom_id
+      JOIN products p ON p.id = bd.raw_material_id
+      LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = bd.raw_material_id
+      WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
+        AND wo.bom_id IS NOT NULL
+      ORDER BY shortage DESC
+    `, [year]) as any[];
+
+    const matsByWo: Record<number, any[]> = {};
+    for (const wm of woMaterials) {
+      if (!matsByWo[wm.wo_id]) matsByWo[wm.wo_id] = [];
+      matsByWo[wm.wo_id].push({
+        material_id: wm.material_id, material_name: wm.material_name,
+        required: wm.required, available: wm.available, shortage: wm.shortage
+      });
+    }
+    for (const wo of workOrders) {
+      (wo as any).materials = matsByWo[wo.wo_id] || [];
+      (wo as any).has_shortage = (wo as any).materials.some((m: any) => m.shortage > 0);
+    }
+
+    const woWithShortage = workOrders.filter((wo: any) => wo.has_shortage).length;
+
     res.json({
       data: {
         summary: {
           totalWOs: totalWOs?.count || 0,
-          woWithShortage: woWithShortage?.count || 0,
+          woWithShortage,
           totalMaterials: materials.length,
-          shortMaterials: materials.filter((m: any) => m.gap < 0).length,
+          shortMaterials: materials.filter((m: any) => m.total_shortage > 0).length,
         },
         materials,
         workOrders,

@@ -306,7 +306,7 @@ export const useProductionStore = defineStore('production', {
         this.loading = false;
       }
     },
-    async receiveFG(data: { wo_id: number; warehouse_id: number; quantity: number; batch_number?: string }) {
+    async receiveFG(data: { wo_id: number; warehouse_id: number; quantity: number; batch_number?: string; idempotency_key?: string }) {
       const res = await api.post('/production/fg-receipt', data);
       return res.data;
     },

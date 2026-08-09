@@ -1,289 +1,280 @@
-Feature-nya sebenarnya sudah lumayan lengkap:
+Secara overall, revisi ini maju jauh. State machine Production sudah mulai konsisten, warehouse guard sudah benar, dan FG receipt sekarang memakai actual output. Tapi setelah gue trace end-to-end, belum bisa FIRM/FREEZE karena masih ada beberapa residual yang langsung berkaitan dengan blocker kita sebelumnya.
 
-Production Planning → Material Readiness/MRP → Issue Material → Production Execution → QC → Yield/Scrap → FG Receipt → History
+Scope Verdict
+Shared WO state machine ✅ CLOSED
+Execution RELEASED → IN_PROGRESS → ON_HOLD ✅ CLOSED
+Execution list canonical statuses ✅ CLOSED
+Warehouse wajib explicit ✅ CLOSED
+Issue backend status guard ✅ CLOSED
+WorkOrders UI canonical status ✅ CLOSED
+FG receipt ≤ actual output ✅ CLOSED
+Yield POST tidak bisa self-QC ✅ CLOSED
+Exact/pinned approved BOM 🔴 P0 residual
+QC completion bypass 🔴 P0 residual
+Yield/QC source-of-truth 🔴 P0 residual
+Issue Material UI state contract 🔴 P0 residual
+FG Receipt idempotency E2E 🔴 P0 residual
+MRP dashboard frontend contract 🟠 P1 residual
+Production Planning persistence 🟠 P1 open
+Production permissions 🟠 P1 open
+🔴 P0 — QC masih bisa dibypass lewat Work Orders
 
-Tapi business lifecycle-nya belum konsisten. Ada beberapa blocker yang menurut gue memang harus dibereskan sebelum kita bicara Production firm.
+Endpoint Production Execution /complete sekarang sudah bagus: dia validasi transition dan mandatory QC checkpoint.
 
-Priority Blocker Status
-🔴 P0 WO state machine bisa dibypass dari Production Execution OPEN
-🔴 P0 PPIC WO DRAFT/APPROVED/RELEASED tidak nyambung ke Execution UI OPEN
-🔴 P0 BOM Production tidak pakai exact work_orders.bom_id OPEN
-🔴 P0 BOM status ACTIVE vs query Production approved mismatch OPEN
-🔴 P0 Issue Material bisa potong default warehouse 1 OPEN
-🔴 P0 FG Receipt belum backend-enforce actual yield/QC OPEN
-🔴 P0 Yield bisa mengisi qc_status='passed' manual OPEN
-🟠 P1 Production MRP dashboard masih query legacy schema OPEN
-🟠 P1 Planning daily Planned/Actual tidak persistent OPEN
-🟠 P1 WorkOrders UI masih status legacy OPEN
-🟠 P1 Production permission resources tidak konsisten OPEN
-P0 paling fundamental: satu WO punya dua state machine
+Tapi generic:
 
-Backend /api/workorders sebenarnya sudah bagus dan punya canonical transition:
+PUT /api/workorders/:id
 
-DRAFT → APPROVED → RELEASED → IN_PROGRESS → ON_HOLD / COMPLETED → CLOSED
+masih mengizinkan:
 
-dengan validation transition dan line-process prerequisite.
+IN_PROGRESS → COMPLETED
 
-Tapi /api/production/execution/:woId/start sekarang langsung melakukan:
+hanya berdasarkan validateTransition(), tanpa mandatory QC validation.
 
-UPDATE work_orders SET status='in_progress'
+Dan WorkOrders UI memang masih menyediakan option Completed.
 
-tanpa melewati state machine itu. Pause/resume/complete juga direct UPDATE.
+Jadi flow ini masih mungkin:
 
-Frontend bahkan menganggap DRAFT, pending, dan planned sebagai WO yang boleh langsung Start Production.
+IN_PROGRESS
+→ Work Orders dropdown
+→ COMPLETED
+→ QC pending terlewati
 
-Artinya secara API saat ini potensial:
+Ini P0.
 
-DRAFT → IN_PROGRESS
+Minimal fix: prerequisite COMPLETED harus sama di semua entry point, bukan cuma /production/execution/:woId/complete.
 
-langsung.
+🔴 P0 — Yield/QC source-of-truth belum selesai
 
-Itu harus ditutup.
+POST Yield sekarang sudah benar. qc_status dipaksa menjadi pending; Production operator tidak menentukan hasil QC.
 
-Semua perubahan status Production harus memakai satu transition service/business rule yang sama dengan workorder.routes.ts.
+Tapi PUT Yield masih menerima qc_status dari request dan menulisnya langsung:
 
-PPIC → Production sekarang juga belum nyambung sempurna
+UPDATE wo_results ... qc_status=?
 
-PPIC menghasilkan WO sebagai:
+Artinya API masih bisa:
 
-DRAFT
+PUT /production/yield/123
+→ { qc_status: "passed" }
 
-dan flow yang kita sepakati adalah:
+Ini harus ditutup.
 
-DRAFT → APPROVED → RELEASED → IN_PROGRESS
+Lebih fundamental lagi, gue cek current QC route dan tidak menemukan Quality melakukan update ke wo_results.qc_status; Quality saat ini menyelesaikan wo_qc_checkpoints, bukan yield record. Sementara FG Receipt sekarang justru mencari:
 
-Tetapi endpoint /production/execution hanya mengambil:
+wo_results WHERE qc_status='passed'
 
+Jadi ada kontradiksi:
+
+Production tidak boleh set QC passed
+tetapi
+Quality belum mengubah Yield menjadi passed.
+
+Akhirnya legitimate FG Receipt bisa mentok.
+
+Canonical flow harus menjadi:
+
+QC/FPA result
+→ update linked checkpoint
+→ derive overall WO QC
+→ update/derive wo_results.qc_status
+→ FG Receipt allowed.
+
+Production Yield POST/PUT tidak boleh menerima qc_status.
+
+🔴 P0 — Exact BOM masih belum 100%
+
+Fix-nya sudah benar untuk PPIC-generated WO: Generate Materials sekarang prioritaskan wo.bom_id.
+
+Tapi kalau bom_id null, backend masih fallback ke:
+
+latest ACTIVE BOM by product.
+
+Masalahnya manual WO sekarang tidak menyimpan bom_id sama sekali saat dibuat.
+
+Jadi:
+
+Manual WO Product A
+→ BOM v1 saat WO dibuat
+→ kemudian BOM v2 dibuat
+→ Generate Material
+→ bisa mengambil v2.
+
+Recipe WO berubah setelah WO dibuat.
+
+Selain itu ACTIVE bukan berarti approved; BOM sendiri punya approval_status.
+
+Menurut gue closure P0-nya:
+
+setiap WO wajib pin satu exact bom_id sebelum Release.
+
+Generate Material harus membaca hanya work_orders.bom_id.
+
+Kalau tidak ada:
+
+400 — Work Order has no approved BOM assigned
+
+Jangan fallback diam-diam.
+
+Dan BOM tersebut harus:
+
+status = ACTIVE
+
+- approval_status = fully approved.
+
+🔴 P0 — Issue Material UI belum mengikuti state machine baru
+
+Backend sekarang benar:
+
+material issue hanya untuk:
+
+RELEASED / IN_PROGRESS / ON_HOLD
+
+dan warehouse_id wajib dikirim.
+
+Tapi UI Issue Material masih filter:
+
+Planned
+planned
+In Production
 in_progress
 in-progress
 pending
-planned
 
-Jadi WO RELEASED justru tidak muncul untuk di-Start.
+RELEASED tidak ada.
 
-ON_HOLD juga tidak masuk query tersebut, padahal UI punya tombol Resume. Akibatnya setelah Pause, WO bisa menghilang dari halaman Execution.
+Padahal flow resmi kita:
 
-Target Execution harus minimal melihat:
+APPROVED
+→ RELEASED
+→ Issue Material
+→ IN_PROGRESS
 
-RELEASED / IN_PROGRESS / ON_HOLD
+Jadi WO yang seharusnya siap issue justru tidak terlihat.
 
-dan Start hanya dari RELEASED.
+Ubah UI filter menjadi minimal:
 
-P0 BOM / recipe integrity
+released
+in_progress
+on_hold
 
-Ini lebih serius dari sekadar status.
+case-normalized.
 
-WO dari PPIC sudah menyimpan exact bom_id.
+🔴 P0 — FG Receipt idempotency belum end-to-end
 
-Tetapi Generate Material Production sekarang mengabaikan wo.bom_id dan mencari lagi BOM berdasarkan product:
+Backend sebenarnya sudah punya support:
 
-WHERE bh.product_id = ? AND bh.status = 'approved'
+idempotency_key
 
-Padahal canonical BOM saat create diberi:
+dan duplicate key akan ditolak.
 
-status = 'ACTIVE'
+Tapi frontend FG Receipt tidak pernah mengirim idempotency_key.
 
-dan approval memakai field terpisah approval_status.
+Untuk full receipt, quantity cap sering menyelamatkan double-click. Tetapi untuk partial receipt, misalnya actual output 1,000 dan user receipt 200, double-submit 200 masih bisa dianggap dua receipt sah karena total baru 400.
 
-Jadi ada dua risiko sekaligus.
+Untuk inventory transaction, ini harus deterministic.
 
-Pertama, WO bisa bilang “No approved BOM” padahal BOM valid sebenarnya ACTIVE.
+Frontend generate satu UUID/token ketika modal Receive dibuka lalu kirim key yang sama untuk retry/double-click transaction yang sama.
 
-Kedua, yang jauh lebih berbahaya: kalau BOM Product A berubah setelah WO dibuat, Production bisa mengambil BOM terbaru, bukan BOM yang sebenarnya melekat ke WO.
+🟠 P1 — Production MRP schema sudah benar, DTO belum
 
-Untuk manufacturing ERP, ini nggak boleh.
-
-Canonical harus:
-
-WO → work_orders.bom_id → exact BOM details
-
-Jangan lookup recipe lagi berdasarkan product.
-
-Manual WO juga sebaiknya saat dibuat harus memilih/resolve BOM tertentu dan menyimpan bom_id.
-
-P0 Issue Material
-
-Transaksi issue material sudah lumayan bagus karena menggunakan transaction + FOR UPDATE dan mencegah negative stock.
-
-Tapi ada satu masalah besar:
-
-backend menentukan:
-
-warehouse_id || mat.warehouse_id || 1
-
-Artinya kalau warehouse tidak dikirim, Warehouse ID 1 dipakai diam-diam.
-
-Frontend tombol Issue Semua memang bisa mengirim warehouse undefined.
-
-Jadi satu click bisa memotong gudang yang salah.
-
-Target:
-
-warehouse wajib explicit.
-
-Tidak boleh fallback default warehouse untuk stock transaction.
-
-Selain itu Issue Material backend harus cek status WO. Idealnya material issue hanya boleh untuk:
-
-RELEASED / IN_PROGRESS / ON_HOLD
-
-bukan Draft/Closed/Cancelled.
-
-P0 Yield → QC → Finished Goods
-
-Saat ini halaman Yield memungkinkan operator memasukkan sendiri:
-
-qc_status = pending / passed / failed
-
-Padahal Quality module sudah punya mechanism yang benar: FPA yang selesai otomatis update linked wo_qc_checkpoint menjadi passed/failed.
-
-Jadi Production user tidak boleh menjadi source of truth QC.
-
-qc_status seharusnya derived dari Quality/QC.
-
-Lebih serius lagi, backend FG Receipt sekarang hanya mengecek WO status in_progress/completed. Dia tidak memvalidasi bahwa Quality passed dan tidak membatasi receipt terhadap actual output.
-
-Limit sekarang:
-
-alreadyReceived + quantity <= wo.quantity \* 1.1
-
-Padahal yang benar mestinya:
-
-Maximum FG receipt = actual accepted output dari wo_results
-
-Contoh:
-
-Planned = 1,000
-Actual output = 820
-Scrap = 180
-
-inventory tidak boleh menerima 1,000 atau 1,100.
-
-Yang boleh diterima maksimal:
-
-820 FG
-
-dan hanya setelah QC gate yang sesuai.
-
-Frontend memang menyembunyikan tombol Receive sampai qc_status === passed, tapi itu UI-only. Backend tetap harus enforce.
-
-FG receipt juga sudah punya konsep idempotency_key, tetapi frontend belum mengirimnya. Jadi protection tersebut belum efektif end-to-end.
-
-Production MRP sekarang broken secara model data
-
-Frontend Production MRP ternyata memanggil:
-
-GET /production/mrp/dashboard
-
-Endpoint itu masih query model legacy seperti:
-
-boms
-bom_items
-inventory_transactions
-wo.qty
-
-Sedangkan canonical schema sekarang:
+Developer sudah mengganti query legacy ke canonical:
 
 bom_headers
 bom_details
 inventory_stocks
 work_orders.quantity
 
-Jadi Production MRP / Material Readiness harus diganti ke canonical schema.
+Bagus.
 
-Menurut gue jangan bikin MRP kedua yang bersaing dengan PPIC. Di Production fungsi layar ini sebaiknya menjadi:
+Tapi backend sekarang mengembalikan material seperti:
 
-WO Material Readiness
+id
+name
+sku
+current_stock
+required_qty
+gap
 
-bukan planning MRP baru.
+dan Work Orders basic fields.
 
-PPIC tetap owner MRP.
+Sedangkan ProductionMRP.vue masih membaca:
 
-Production hanya menjawab:
+material_id
+material_name
+material_sku
+total_required
+stock_available
+total_shortage
+uom_name
+wos[]
 
-“Untuk WO yang sudah Release, material yang dibutuhkan berapa, sudah issue berapa, stock tersedia berapa, shortage berapa?”
+serta:
 
-Production Planning juga perlu dirapikan
+wo_id
+wo_qty
+materials[]
+has_shortage
 
-Planning UI sebenarnya sudah cukup keren: dia auto-spread WO quantity ke hari kerja berdasarkan machine capacity.
+Jadi database query mungkin tidak error lagi, tetapi halaman Material Readiness belum punya contract yang benar.
 
-Tapi angka Planned / Actual dapat diedit langsung oleh user dan tidak ada save endpoint.
+Karena kita tidak mau redesign UI, backend saja yang adapt DTO ke UI existing.
 
-Auto-extended scheduled_end juga hanya mengubah object frontend.
+🟠 P1 — Production Planning masih tidak persistent
 
-Refresh page → perhitungan ulang.
+Ini belum disentuh di commit.
 
-Jadi kita harus memilih semantic yang jelas:
+Daily grid Planned dan Actual masih editable di frontend, sementara load-nya hanya:
 
-kalau read-only simulation → input jangan editable.
+GET /production/planning/weekly
 
-Atau:
+Tidak ada save contract untuk perubahan daily schedule.
 
-kalau operational schedule → simpan daily schedule ke backend.
+Jadi angka user bisa berubah di screen lalu hilang saat refresh.
 
-Untuk ERP production, gue lebih condong operational schedule harus persistent.
+Untuk closure paling sempit: kalau grid memang calculated view, jadikan cell read-only. Kalau memang schedule operasional, baru persist daily schedule. Yang tidak boleh adalah editable tapi tidak tersimpan.
 
-WorkOrders UI harus ikut canonical state
+🟠 P1 — Permission Production masih mismatch
 
-UI Work Orders masih memakai:
+Canonical permission yang di-seed adalah:
 
-DRAFT
-Planned
-In Production
-On Hold
-Completed
+production.planning
+production.execution
+production.workorders
 
-Backend state machine memakai:
+Frontend menu juga memakai resource tersebut.
 
-DRAFT
-APPROVED
-RELEASED
-IN_PROGRESS
-ON_HOLD
-COMPLETED
-CLOSED
-CANCELLED
+Tapi backend masih punya:
 
-Kita harus pilih satu canonical state set, dan menurut gue backend state machine yang sekarang sudah benar.
+production.production-planning
 
-Jangan pertahankan Planned / In Production sebagai state baru. Kalau mau label UI manusiawi, boleh tampilkan:
+untuk Planning,
 
-IN_PROGRESS → "In Production"
+production.production-execution
 
-tapi value backend tetap IN_PROGRESS.
+untuk Execution reads,
 
-Target Production flow yang gue mau kita lock
+dan bahkan:
 
-PPIC Confirmed MPS
-→ Generate DRAFT WO
-→ APPROVED
-→ RELEASED
-→ bind exact BOM + Line
-→ Generate WO Materials
-→ Issue Materials
-→ IN_PROGRESS
-→ Process Logs
-→ In-Process / Final QC
-→ Record actual Yield + Scrap
-→ Mandatory QC Passed
-→ COMPLETED
-→ FG Receipt = actual accepted output
-→ Inventory + Batch traceability
-→ CLOSED
+production.issue-material
 
-Dan negative flow nanti wajib mencakup:
+untuk Issue Material GET.
 
-Draft → Start = rejected
-Approved → Start = rejected
-Released without line = rejected
-Issue material from wrong warehouse = impossible
-Over-issue material = rejected
-Insufficient stock = rollback
-Complete with mandatory QC pending = rejected
-Production cannot self-set QC passed
-FG receipt before QC = rejected
-FG receipt > actual output = rejected
-Duplicate receipt = rejected
-Closed WO mutation = rejected
+Padahal resource-resource itu bukan canonical permission set.
 
-Jadi kalau kita lock baseline ini, fokus dev Production nanti bukan redesign UI. UI existing sudah cukup bagus. Fokusnya menyatukan lifecycle, BOM source, inventory transactions, QC, yield, dan FG receipt.
+Master Admin mungkin tidak terasa karena bypass/permission luas, tetapi regular Production role bisa melihat menu lalu API 403.
+
+Jangan bikin permission baru. Backend tinggal mengikuti canonical existing resources.
+
+Jadi verdict gue
+
+Revision 626d95d = improvement besar, tapi belum clean.
+
+Yang sudah benar jangan disentuh lagi: shared state transitions, Execution status list, mandatory warehouse backend guard, issue inventory transaction/lock, canonical WorkOrders status, actual-output FG cap, dan canonical DB schema MRP.
+
+Sisa target dev cukup 5 P0 + 3 P1 di atas. Tidak perlu screening ulang arsitektur lain setelah itu.
+
+Setelah revision berikutnya masuk, gue akan re-review hanya residual ini, lalu smoke Production kita:
+
+PPIC WO → APPROVED → RELEASED → pinned BOM → Issue Material → IN_PROGRESS → process/QC → Yield → QC passed → COMPLETED → FG Receipt → Inventory
+
+dengan negative gate: Draft cannot start, QC pending cannot complete dari endpoint mana pun, Production cannot self-pass QC, wrong/missing warehouse rejected, receipt > actual rejected, duplicate receipt rejected.

@@ -71,15 +71,22 @@ router.post('/', authMiddleware, requirePermission('production.workorders', 'cre
     const seq = String((existing?.cnt || 0) + 1).padStart(3, '0');
     const woNumber = `WO-${dateStr}-${seq}`;
 
+    // auto-pin BOM at creation — locks the recipe so later BOM changes don't affect this WO
+    const bom = await dbGet(
+      `SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1`,
+      [product_id]
+    ) as any;
+    const bomId = bom?.id || null;
+
     const result = await dbRun(
-      `INSERT INTO work_orders(wo_number, product_id, quantity, status, priority, scheduled_start, scheduled_end, line_process_id) 
-       VALUES(?, ?, ?, 'draft', ?, ?, ?, ?)`,
-      [woNumber, product_id, quantity, priority || 'normal', scheduled_start || null, scheduled_end || null, line_process_id || null]
+      `INSERT INTO work_orders(wo_number, product_id, bom_id, quantity, status, priority, scheduled_start, scheduled_end, line_process_id) 
+       VALUES(?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
+      [woNumber, product_id, bomId, quantity, priority || 'normal', scheduled_start || null, scheduled_end || null, line_process_id || null]
     );
 
     res.status(201).json({
       message: 'Work order created successfully',
-      data: { id: result.insertId, wo_number: woNumber, product_id, quantity, status: 'draft', priority },
+      data: { id: result.insertId, wo_number: woNumber, product_id, bom_id: bomId, quantity, status: 'draft', priority },
     });
   } catch (error) {
     console.error('Error creating work order:', error);
@@ -132,6 +139,23 @@ router.put('/:id', authMiddleware, requirePermission('production.workorders', 'u
         // Log warning but don't block — per our review response
         if (unavailable.length > 0) {
           console.warn(`WO ${woId} starting with insufficient materials:`, unavailable);
+        }
+      }
+
+      // mandatory QC gate — same check as /production/execution/:woId/complete
+      if (status === 'completed') {
+        const pendingQC = await dbAll(
+          `SELECT id, process_stage, status FROM wo_qc_checkpoints
+           WHERE wo_id = ? AND is_mandatory = 1 AND status NOT IN ('passed')`,
+          [woId]
+        ) as any[];
+        if (pendingQC.length > 0) {
+          const stages = pendingQC.map((c: any) => `${c.process_stage} (${c.status})`).join(', ');
+          return res.status(400).json({
+            error: `Cannot complete WO: ${pendingQC.length} mandatory QC checkpoint(s) not passed`,
+            pending_checkpoints: pendingQC,
+            detail: `Pending stages: ${stages}`
+          });
         }
       }
     }

@@ -78,6 +78,32 @@ const ensureProcurementPaymentSchema = async (connection: any) => {
     `ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NULL DEFAULT 'IDR'`,
     `ALTER TABLE accounts_payable ADD COLUMN IF NOT EXISTS po_schedule_id INT NULL`,
     `ALTER TABLE accounts_payable ADD COLUMN IF NOT EXISTS invoice_date DATE NULL`,
+    // Persistent daily production schedule.
+    //
+    // The Planning grid auto-spread WO quantity across work days from machine
+    // capacity, let the user edit Planned/Actual, and had nowhere to put the
+    // result — no save endpoint existed, so every edit lived in a frontend
+    // object until the next refresh recomputed it away. The review's choice was
+    // explicit: an operational schedule, not a read-only simulation, so it has
+    // to survive a reload.
+    //
+    // One row per (WO, day). The capacity auto-spread remains the SEED for a WO
+    // that has no saved rows; once a row exists it is the operator's number and
+    // is never silently recomputed over.
+    `CREATE TABLE IF NOT EXISTS wo_daily_schedule (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      wo_id INT NOT NULL,
+      schedule_date DATE NOT NULL,
+      planned_qty DECIMAL(15,2) NOT NULL DEFAULT 0,
+      actual_qty DECIMAL(15,2) NULL,
+      notes VARCHAR(255) NULL,
+      updated_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_wo_day (wo_id, schedule_date),
+      KEY idx_schedule_date (schedule_date),
+      CONSTRAINT fk_wo_daily_schedule_wo FOREIGN KEY (wo_id) REFERENCES work_orders(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     `CREATE TABLE IF NOT EXISTS client_projects (
       id INT PRIMARY KEY AUTO_INCREMENT,
       project_number VARCHAR(100) NULL,
