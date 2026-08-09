@@ -1167,7 +1167,7 @@ router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-recei
               COALESCE(sm.received, 0) AS received_into_stock,
               COALESCE(qc.qc_total, 0) AS qc_total,
               COALESCE(qc.mandatory_not_passed, 0) AS qc_mandatory_pending,
-              COALESCE(qc.any_failed, 0) AS qc_any_failed
+              COALESCE(qc.mandatory_failed, 0) AS qc_mandatory_failed
        FROM work_orders w
        JOIN products p ON p.id = w.product_id
        LEFT JOIN wo_results wr ON wr.wo_id = w.id
@@ -1181,7 +1181,7 @@ router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-recei
          SELECT wo_id,
                 COUNT(*) AS qc_total,
                 SUM(CASE WHEN is_mandatory = 1 AND status NOT IN ('passed') THEN 1 ELSE 0 END) AS mandatory_not_passed,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS any_failed
+                SUM(CASE WHEN is_mandatory = 1 AND status = 'failed' THEN 1 ELSE 0 END) AS mandatory_failed
          FROM wo_qc_checkpoints
          GROUP BY wo_id
        ) qc ON qc.wo_id = w.id
@@ -1189,13 +1189,17 @@ router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-recei
        ORDER BY wr.completed_at DESC`
     );
 
-    // derive qc_status from checkpoint data — same logic as POST /fg-receipt gate
+    // derive qc_status from mandatory checkpoints only — exact same rule as POST /fg-receipt gate
     const enriched = (receipts as any[]).map(r => {
       let qc_status = 'pending';
-      if (r.qc_total > 0 && r.qc_mandatory_pending === 0 && r.qc_any_failed === 0) {
-        qc_status = 'passed';
-      } else if (r.qc_any_failed > 0) {
+      if (r.qc_total === 0) {
+        qc_status = 'pending';
+      } else if (r.qc_mandatory_failed > 0) {
         qc_status = 'failed';
+      } else if (r.qc_mandatory_pending > 0) {
+        qc_status = 'pending';
+      } else {
+        qc_status = 'passed';
       }
       return { ...r, qc_status };
     });
