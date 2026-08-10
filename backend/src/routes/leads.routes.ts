@@ -170,6 +170,53 @@ const ensureLeadStagesTable = async () => {
 };
 ensureLeadStagesTable();
 
+// ensure lead_assignees junction table for multi-assign
+const ensureLeadAssigneesTable = async () => {
+  try {
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS lead_assignees (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        lead_id INT NOT NULL,
+        user_id INT NOT NULL,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        assigned_by INT,
+        UNIQUE KEY uq_lead_user (lead_id, user_id),
+        FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    // migrate existing assigned_to values into junction table
+    await dbRun(`
+      INSERT IGNORE INTO lead_assignees (lead_id, user_id, assigned_by)
+      SELECT id, assigned_to, created_by FROM leads WHERE assigned_to IS NOT NULL
+    `);
+  } catch (e: any) {
+    if (!e.message?.includes('already exists')) {
+      console.warn('Lead assignees table setup:', e.message?.substring(0, 120));
+    }
+  }
+};
+ensureLeadAssigneesTable();
+
+// reusable inbox notification helper
+const sendInboxNotif = async (
+  recipientId: number,
+  senderId: number | null,
+  title: string,
+  message: string,
+  link?: string,
+  refId?: number,
+  refType?: string
+) => {
+  try {
+    await dbRun(
+      `INSERT INTO inbox_notifications (user_id, type, title, message, link, ref_id, ref_type, created_by)
+       VALUES (?, 'assignment', ?, ?, ?, ?, ?, ?)`,
+      [recipientId, title, message, link || null, refId || null, refType || null, senderId || null]
+    );
+  } catch { /* inbox table may not exist yet */ }
+};
+
 // lead stages CRUD
 
 // GET /leads/stages — List all stages ordered
@@ -257,7 +304,7 @@ router.delete('/stages/:id', authMiddleware, requirePermission('crm.leads', 'upd
 
 // lead CRUD endpoints
 
-// GET /leads — List all leads (with label info)
+// GET /leads — List all leads (with label info + multi-assignees)
 router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
   try {
     const { stage, search, show_archived } = req.query;
@@ -285,10 +332,25 @@ router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (r
 
     const data = await dbAll(query, params) as any[];
 
-    // Batch-load labels for all leads
     if (data.length > 0) {
       const leadIds = data.map((l: any) => l.id);
       const placeholders = leadIds.map(() => '?').join(',');
+
+      // Batch-load assignees from junction table
+      const assigneeRows = await dbAll(`
+        SELECT la.lead_id, la.user_id, u.full_name
+        FROM lead_assignees la
+        JOIN users u ON la.user_id = u.id
+        WHERE la.lead_id IN (${placeholders})
+        ORDER BY la.assigned_at ASC
+      `, leadIds) as any[];
+      const assigneeMap: Record<number, any[]> = {};
+      for (const r of assigneeRows) {
+        if (!assigneeMap[r.lead_id]) assigneeMap[r.lead_id] = [];
+        assigneeMap[r.lead_id].push({ id: r.user_id, full_name: r.full_name });
+      }
+
+      // Batch-load labels
       const labelRows = await dbAll(`
         SELECT la.lead_id, ll.id, ll.name, ll.color
         FROM lead_label_assignments la
@@ -331,6 +393,7 @@ router.get('/', authMiddleware, requirePermission('crm.leads', 'view'), async (r
 
       for (const lead of data) {
         (lead as any).labels = labelMap[lead.id] || [];
+        (lead as any).assignees = assigneeMap[lead.id] || [];
         (lead as any).checklist_progress = checkMap[lead.id] || { total: 0, checked: 0 };
         (lead as any).comment_count = commentMap[lead.id] || 0;
         (lead as any).attachment_count = attachMap[lead.id] || 0;
@@ -388,7 +451,7 @@ router.delete('/labels/:labelId', authMiddleware, async (req: Request, res: Resp
   }
 });
 
-// GET /leads/:id — Get single lead with full detail
+// GET /leads/:id — Get single lead with full detail + multi-assignees
 router.get('/:id', authMiddleware, requirePermission('crm.leads', 'view'), async (req: Request, res: Response) => {
   try {
     const lead = await dbGet(
@@ -404,6 +467,14 @@ router.get('/:id', authMiddleware, requirePermission('crm.leads', 'view'), async
       JOIN lead_labels ll ON la.label_id = ll.id WHERE la.lead_id = ?
     `, [req.params.id]);
     lead.labels = labels || [];
+
+    // Multi-assignees
+    const assignees = await dbAll(`
+      SELECT la.user_id as id, u.full_name FROM lead_assignees la
+      JOIN users u ON la.user_id = u.id WHERE la.lead_id = ?
+      ORDER BY la.assigned_at ASC
+    `, [req.params.id]);
+    lead.assignees = assignees || [];
 
     res.json({ success: true, data: lead });
   } catch (error) {
@@ -536,18 +607,76 @@ router.patch('/:id/due-date', authMiddleware, async (req: Request, res: Response
   }
 });
 
-// PATCH /leads/:id/assign
+// PATCH /leads/:id/assign — multi-assign (accepts array or single value)
 router.patch('/:id/assign', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
-    const { assigned_to } = req.body;
-    await dbRun('UPDATE leads SET assigned_to=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [assigned_to || null, req.params.id]);
+    const leadId = req.params.id;
     const userId = (req as any).user?.userId || null;
-    if (assigned_to) {
-      const user = await dbGet('SELECT full_name FROM users WHERE id=?', [assigned_to]) as any;
-      await logActivity(req.params.id as string, userId, 'assigned', `Assigned to ${user?.full_name || 'user #' + assigned_to}`);
+    let { assigned_to } = req.body;
+
+    // normalize to array
+    if (!Array.isArray(assigned_to)) {
+      assigned_to = assigned_to ? [assigned_to] : [];
     }
-    res.json({ success: true });
+    const newIds: number[] = assigned_to.map((id: any) => Number(id)).filter((id: number) => id > 0);
+
+    // load current assignees to diff (only send notif to newly added)
+    const currentAssignees = await dbAll('SELECT user_id FROM lead_assignees WHERE lead_id = ?', [leadId]) as any[];
+    const currentIds = new Set(currentAssignees.map((r: any) => r.user_id));
+
+    // sync junction table
+    await dbRun('DELETE FROM lead_assignees WHERE lead_id = ?', [leadId]);
+    for (const uid of newIds) {
+      await dbRun(
+        'INSERT IGNORE INTO lead_assignees (lead_id, user_id, assigned_by) VALUES (?, ?, ?)',
+        [leadId, uid, userId]
+      );
+    }
+
+    // keep leads.assigned_to in sync (first assignee for backward compat)
+    const primaryAssignee = newIds.length > 0 ? newIds[0] : null;
+    await dbRun('UPDATE leads SET assigned_to=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [primaryAssignee, leadId]);
+
+    // log activity
+    if (newIds.length > 0) {
+      const assignedUsers = await dbAll(
+        `SELECT id, full_name FROM users WHERE id IN (${newIds.map(() => '?').join(',')})`,
+        newIds
+      ) as any[];
+      const nameList = assignedUsers.map((u: any) => u.full_name).join(', ');
+      await logActivity(leadId, userId, 'assigned', `Assigned to ${nameList}`);
+
+      // send inbox notification to newly added assignees
+      const lead = await dbGet('SELECT company FROM leads WHERE id = ?', [leadId]) as any;
+      const sender = await dbGet('SELECT full_name FROM users WHERE id = ?', [userId]) as any;
+      const senderName = sender?.full_name || 'Someone';
+      const leadName = lead?.company || 'a lead';
+
+      for (const uid of newIds) {
+        if (!currentIds.has(uid) && uid !== userId) {
+          await sendInboxNotif(
+            uid,
+            userId,
+            `Assigned to lead: ${leadName}`,
+            `${senderName} assigned you to lead "${leadName}"`,
+            `/leads`,
+            Number(leadId),
+            'lead'
+          );
+        }
+      }
+    }
+
+    // return updated assignees
+    const updatedAssignees = await dbAll(`
+      SELECT la.user_id as id, u.full_name FROM lead_assignees la
+      JOIN users u ON la.user_id = u.id WHERE la.lead_id = ?
+      ORDER BY la.assigned_at ASC
+    `, [leadId]);
+
+    res.json({ success: true, assignees: updatedAssignees });
   } catch (error) {
+    console.error('Multi-assign error:', error);
     res.status(500).json({ error: 'Failed to assign' });
   }
 });

@@ -240,7 +240,12 @@
                 <div class="flex items-center gap-2 text-[10px] text-gray-400">
                   <span v-if="lead.comment_count" title="Comments">💬 {{ lead.comment_count }}</span>
                   <span v-if="lead.attachment_count" title="Attachments">📎 {{ lead.attachment_count }}</span>
-                  <span v-if="lead.assigned_name" class="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[8px] font-bold flex items-center justify-center" :title="lead.assigned_name">{{ getInitials(lead.assigned_name) }}</span>
+                  <template v-if="lead.assignees?.length">
+                    <span v-for="a in lead.assignees.slice(0, 3)" :key="a.id"
+                      class="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[8px] font-bold flex items-center justify-center" :title="a.full_name">{{ getInitials(a.full_name) }}</span>
+                    <span v-if="lead.assignees.length > 3" class="text-[8px] text-gray-500 font-medium">+{{ lead.assignees.length - 3 }}</span>
+                  </template>
+                  <span v-else-if="lead.assigned_name" class="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[8px] font-bold flex items-center justify-center" :title="lead.assigned_name">{{ getInitials(lead.assigned_name) }}</span>
                 </div>
               </div>
 
@@ -482,6 +487,7 @@ interface Lead {
   updated_at?: string;
   assigned_to?: number;
   assigned_name?: string;
+  assignees?: { id: number; full_name: string }[];
   client_id?: number | null;
   client_name?: string;
   converted_at?: string;

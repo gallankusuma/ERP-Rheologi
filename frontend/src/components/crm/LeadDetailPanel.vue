@@ -80,15 +80,30 @@
             </div>
           </div>
 
-          <!-- Members -->
+          <!-- Members (multi-assign) -->
           <div class="bg-white rounded-lg p-4 border border-gray-200">
             <div class="flex justify-between items-center mb-3">
               <h3 class="text-sm font-bold text-gray-700">👥 Assigned To</h3>
+              <button @click="showAssignDropdown = !showAssignDropdown" class="text-xs text-blue-600 hover:text-blue-800 font-medium">{{ showAssignDropdown ? 'Done' : '+ Add' }}</button>
             </div>
-            <select v-model="assignedUserId" @change="saveAssignment" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
-              <option :value="null">— Unassigned —</option>
-              <option v-for="u in users" :key="u.id" :value="u.id">{{ u.full_name || u.name }}</option>
-            </select>
+            <!-- assigned user chips -->
+            <div class="flex flex-wrap gap-1.5 mb-2" v-if="assignedUserIds.length > 0">
+              <span v-for="uid in assignedUserIds" :key="uid"
+                class="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
+                {{ getUserName(uid) }}
+                <button @click="removeAssignee(uid)" class="text-blue-400 hover:text-red-500 ml-0.5">&times;</button>
+              </span>
+            </div>
+            <p v-else class="text-xs text-gray-400 mb-2">No one assigned</p>
+            <!-- dropdown for adding -->
+            <div v-if="showAssignDropdown" class="border border-gray-200 rounded-lg max-h-48 overflow-y-auto">
+              <label v-for="u in users" :key="u.id"
+                class="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm">
+                <input type="checkbox" :value="u.id" v-model="assignedUserIds" @change="saveAssignment"
+                  class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                {{ u.full_name || u.name }}
+              </label>
+            </div>
           </div>
 
           <!-- Description -->
@@ -268,7 +283,8 @@ const showDueDatePicker = ref(false);
 const editingDesc = ref(false);
 const descValue = ref('');
 const dueDateValue = ref('');
-const assignedUserId = ref<number | null>(null);
+const assignedUserIds = ref<number[]>([]);
+const showAssignDropdown = ref(false);
 const uploading = ref(false);
 const currentUserInitials = ref('ME');
 
@@ -308,7 +324,11 @@ watch(() => props.visible, async (v) => {
   if (v && props.lead) {
     descValue.value = props.lead.description || '';
     dueDateValue.value = props.lead.due_date || '';
-    assignedUserId.value = props.lead.assigned_to || null;
+    assignedUserIds.value = (props.lead.assignees || []).map((a: any) => a.id);
+    // fallback for leads without assignees array yet
+    if (!assignedUserIds.value.length && props.lead.assigned_to) {
+      assignedUserIds.value = [props.lead.assigned_to];
+    }
     assignedLabels.value = props.lead.labels || [];
     await loadAllData();
   }
@@ -428,15 +448,26 @@ const saveDescription = async () => {
   } catch (e) { console.error(e); }
 };
 
-// Assignment
+// Assignment (multi)
+const getUserName = (uid: number) => {
+  const u = users.value.find(u => u.id === uid);
+  return u?.full_name || u?.name || `User #${uid}`;
+};
+
 const saveAssignment = async () => {
   try {
-    await api.patch(`/leads/${props.lead.id}/assign`, { assigned_to: assignedUserId.value });
-    props.lead.assigned_to = assignedUserId.value;
-    const u = users.value.find(u => u.id === assignedUserId.value);
+    const res = await api.patch(`/leads/${props.lead.id}/assign`, { assigned_to: assignedUserIds.value });
+    props.lead.assignees = res.data.assignees || [];
+    props.lead.assigned_to = assignedUserIds.value.length > 0 ? assignedUserIds.value[0] : null;
+    const u = users.value.find(u => u.id === props.lead.assigned_to);
     props.lead.assigned_name = u?.full_name || u?.name || null;
     emit('updated');
   } catch (e) { console.error(e); }
+};
+
+const removeAssignee = async (uid: number) => {
+  assignedUserIds.value = assignedUserIds.value.filter(id => id !== uid);
+  await saveAssignment();
 };
 
 // Comments
