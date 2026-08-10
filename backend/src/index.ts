@@ -132,6 +132,11 @@ app.use('/api/gl', glRoutes);
 import docsRoutes from './routes/docs.routes';
 app.use('/api/docs', docsRoutes);
 
+import mailAccountRoutes from './routes/mail-account.routes';
+import mailRoutes from './routes/mail.routes';
+app.use('/api/mail', mailAccountRoutes);
+app.use('/api/mail', mailRoutes);
+
 // Error handling
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err.stack);

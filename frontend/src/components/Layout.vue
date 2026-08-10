@@ -493,6 +493,7 @@ const mainMenus: MenuItem[] = [
       { id: 'tasks', label: 'Tasks', route: '/project/tasks' },
       { id: 'notes', label: 'Notes', route: '/project/notes' },
       { id: 'messages', label: 'Messages', route: '/notifications' },
+      { id: 'mail', label: 'Mail', route: '/mail' },
       { id: 'crm-sales', label: '📈 Sales', route: '/crm/sales' },
     ]
   },

@@ -1120,6 +1120,7 @@ export async function initializeDatabase() {
     await ensureCrmSchema(connection);
     await ensurePpicSchema(connection);
     await ensureQcSchema(connection);
+    await ensureEmailSchema(connection);
     await ensureApprovalPermissions(connection);
     await ensureMenuPermissions(connection);
 
@@ -1307,3 +1308,31 @@ async function seedDatabase() {
 }
 
 export default pool;
+
+async function ensureEmailSchema(connection: any) {
+  try {
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS email_accounts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        email_address VARCHAR(255) NOT NULL,
+        display_name VARCHAR(255) DEFAULT NULL,
+        imap_host VARCHAR(255) DEFAULT 'imap.gmail.com',
+        imap_port INT DEFAULT 993,
+        smtp_host VARCHAR(255) DEFAULT 'smtp.gmail.com',
+        smtp_port INT DEFAULT 465,
+        password_encrypted TEXT NOT NULL,
+        is_active TINYINT(1) DEFAULT 1,
+        last_synced_at DATETIME DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_email_user (user_id)
+      )
+    `);
+    console.log('email_accounts table ensured');
+  } catch (err: any) {
+    if (!err.message?.includes('already exists')) {
+      console.warn('ensureEmailSchema warning:', err.message);
+    }
+  }
+}

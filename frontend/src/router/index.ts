@@ -141,6 +141,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Notes' },
   },
   {
+    path: '/mail',
+    name: 'Mail',
+    component: () => import('../views/Mail.vue'),
+    meta: { requiresAuth: true, title: 'Mail' },
+  },
+  {
     path: '/login',
     name: 'Login',
     component: Login,

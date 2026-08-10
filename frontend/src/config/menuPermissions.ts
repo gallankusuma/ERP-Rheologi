@@ -15,6 +15,7 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   '/project/tasks': 'crm.tasks',
   '/project/notes': 'crm.notes',
   '/notifications': 'crm.messages',
+  '/mail': 'crm.messages',
   '/crm/sales': 'crm.sales',
 
   // Dashboard
