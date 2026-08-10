@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requirePermission } from '../middleware/permission';
+import { requirePermission, checkUserPermission } from '../middleware/permission';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -514,9 +514,12 @@ router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), asy
     const current = await dbGet('SELECT * FROM leads WHERE id = ?', [req.params.id]) as any;
     if (!current) return res.status(404).json({ success: false, error: 'Lead not found' });
     
-    // Validate stage transition if stage is changing
+    // Validate stage transition if stage is changing (manage permission or master admin bypasses)
+    const user = (req as any).user;
+    const isMaster = user.userLevel == 1;
+    const canManageLeads = await checkUserPermission(user.userId, 'crm.leads', 'manage');
     const effectiveStage = stage || current.stage;
-    if (stage && stage !== current.stage) {
+    if (stage && stage !== current.stage && !isMaster && !canManageLeads) {
       // Won can only be set by the /convert endpoint
       if (stage === 'Won') {
         return res.status(400).json({ success: false, error: "Stage 'Won' can only be set via the Convert endpoint, not direct update." });
@@ -535,7 +538,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), asy
        currency || current.currency || 'IDR', probability || 10, source || null, color || null, notes || null, assigned_to || null,
        current.client_id, description || null, due_date || null, req.params.id]
     );
-    const userId = (req as any).user?.userId || null;
+    const userId = user?.userId || null;
     await logActivity(req.params.id as string, userId, 'updated', `Updated lead: ${company || current.company}`);
     if (stage && stage !== current.stage) {
       await logActivity(req.params.id as string, userId, 'stage_changed', `Stage: ${current.stage} \u2192 ${stage}`);
@@ -556,8 +559,11 @@ router.patch('/:id/stage', authMiddleware, async (req: Request, res: Response) =
     const old = await dbGet('SELECT * FROM leads WHERE id=?', [req.params.id]) as any;
     if (!old) return res.status(404).json({ success: false, error: 'Lead not found' });
 
-    // State machine validation
-    if (old.stage !== stage) {
+    // State machine validation (manage permission or master admin bypasses)
+    const user = (req as any).user;
+    const isMaster = user.userLevel == 1;
+    const canManageLeads = await checkUserPermission(user.userId, 'crm.leads', 'manage');
+    if (old.stage !== stage && !isMaster && !canManageLeads) {
       const transition = validateLeadTransition(old.stage, stage);
       if (!transition.valid) {
         return res.status(400).json({ success: false, error: transition.error });
@@ -565,7 +571,7 @@ router.patch('/:id/stage', authMiddleware, async (req: Request, res: Response) =
     }
 
     // Won stage requires conversion validation — must have client_id or trigger convert
-    if (stage === 'Won' && !old.client_id) {
+    if (stage === 'Won' && !old.client_id && !isMaster && !canManageLeads) {
       return res.status(400).json({
         success: false,
         error: 'Cannot mark as Won without converting to a Client first. Use the Convert action instead.',

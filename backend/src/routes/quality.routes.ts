@@ -146,107 +146,17 @@ router.get('/results', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/results', authMiddleware, requirePermission('quality.results', 'create'), async (req: Request, res: Response) => {
-  try {
-    const { batch_id, test_id, result_value, result_status, notes } = req.body;
-    const user_id = (req as any).user?.userId;
-
-    if (!batch_id || !test_id) {
-      return res.status(400).json({ error: 'batch_id and test_id are required' });
-    }
-
-    const result = await dbRun(`
-      INSERT INTO qc_results (
-        batch_id, qc_test_id, result_value, result_status, 
-        tested_by, test_date, notes
-      )
-      VALUES (?, ?, ?, ?, ?, NOW(), ?)
-    `, [
-      batch_id, test_id,
-      result_value || null,
-      result_status || 'pending',
-      user_id,
-      notes || null
-    ]);
-
-    res.status(201).json({
-      message: 'QC result recorded successfully',
-      data: { id: result.insertId, batch_id, test_id }
-    });
-  } catch (error) {
-    console.error('Error recording QC result:', error);
-    res.status(500).json({ error: 'Failed to record QC result' });
-  }
+// legacy writable endpoints removed — all QC decisions go through FPA workflow
+router.post('/results', authMiddleware, (_req: Request, res: Response) => {
+  res.status(410).json({ error: 'Endpoint removed. Use FPA analysis workflow (POST /qc/fpa) to record QC results.' });
 });
 
-router.put('/results/:id/approve', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
-  try {
-    const user_id = (req as any).user?.userId;
-    const { notes } = req.body;
-
-    // Update QC result
-    await dbRun(`
-      UPDATE qc_results 
-      SET result_status = 'passed', 
-          approved_by = ?, 
-          approved_at = NOW(),
-          notes = ?
-      WHERE id = ?
-    `, [user_id, notes || null, req.params.id]);
-
-    // Check if all required tests for the batch are passed
-    const qcResult = await dbGet(`SELECT batch_id FROM qc_results WHERE id = ?`, [req.params.id]) as any;
-
-    if (qcResult && qcResult.batch_id) {
-      const check = await dbGet(`
-        SELECT COUNT(*) as pending_count
-        FROM qc_results qr
-        WHERE qr.batch_id = ? AND (qr.result_status IS NULL OR qr.result_status != 'passed')
-      `, [qcResult.batch_id]) as any;
-
-      if (check.pending_count === 0) {
-        await dbRun(`
-          UPDATE batches SET qc_status = 'passed' WHERE id = ?
-        `, [qcResult.batch_id]);
-      }
-    }
-
-    res.json({ message: 'QC result approved successfully' });
-  } catch (error) {
-    console.error('Error approving QC result:', error);
-    res.status(500).json({ error: 'Failed to approve QC result' });
-  }
+router.put('/results/:id/approve', authMiddleware, (_req: Request, res: Response) => {
+  res.status(410).json({ error: 'Endpoint removed. Use FPA approval workflow (POST /qc/fpa/:id/approve) instead.' });
 });
 
-router.put('/results/:id/reject', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
-  try {
-    const user_id = (req as any).user?.userId;
-    const { notes } = req.body;
-
-    // Update QC result
-    await dbRun(`
-      UPDATE qc_results 
-      SET result_status = 'failed', 
-          approved_by = ?, 
-          approved_at = NOW(),
-          notes = ?
-      WHERE id = ?
-    `, [user_id, notes || null, req.params.id]);
-
-    // Update batch QC status to failed
-    const qcResult = await dbGet(`SELECT batch_id FROM qc_results WHERE id = ?`, [req.params.id]) as any;
-
-    if (qcResult) {
-      await dbRun(`
-        UPDATE batches SET qc_status = 'failed', status = 'rejected' WHERE id = ?
-      `, [qcResult.batch_id]);
-    }
-
-    res.json({ message: 'QC result rejected successfully' });
-  } catch (error) {
-    console.error('Error rejecting QC result:', error);
-    res.status(500).json({ error: 'Failed to reject QC result' });
-  }
+router.put('/results/:id/reject', authMiddleware, (_req: Request, res: Response) => {
+  res.status(410).json({ error: 'Endpoint removed. Use FPA rejection workflow (POST /qc/fpa/:id/reject) instead.' });
 });
 
 // Batches
@@ -472,12 +382,20 @@ router.get('/batch-release', authMiddleware, async (_req: Request, res: Response
       `SELECT b.id, b.batch_number, b.quantity, b.manufacture_date, b.expiry_date, b.status,
               p.name AS product_name, p.sku,
               w.name AS warehouse_name,
-              (SELECT COUNT(*) FROM qc_results qr WHERE qr.batch_id = b.id) AS total_tests,
-              (SELECT COUNT(*) FROM qc_results qr WHERE qr.batch_id = b.id AND qr.result_status = 'passed') AS passed_tests,
-              (SELECT COUNT(*) FROM qc_results qr WHERE qr.batch_id = b.id AND qr.result_status = 'failed') AS failed_tests
+              fpa.id AS fpa_id, fpa.fpa_number, fpa.status AS fpa_status,
+              (SELECT COUNT(*) FROM qc_analysis_results ar WHERE ar.fpa_id = fpa.id) AS total_tests,
+              (SELECT SUM(ar.is_pass = 1) FROM qc_analysis_results ar WHERE ar.fpa_id = fpa.id) AS tests_passed,
+              (SELECT SUM(ar.is_pass = 0) FROM qc_analysis_results ar WHERE ar.fpa_id = fpa.id) AS tests_failed
        FROM batches b
        JOIN products p ON p.id = b.product_id
        LEFT JOIN warehouses w ON w.id = b.warehouse_id
+       LEFT JOIN qc_analysis_requests fpa ON fpa.batch_no = b.batch_number
+         AND (fpa.needs_resampling = 0 OR fpa.needs_resampling IS NULL)
+         AND fpa.id = (
+           SELECT MAX(f2.id) FROM qc_analysis_requests f2
+           WHERE f2.batch_no = b.batch_number
+             AND (f2.needs_resampling = 0 OR f2.needs_resampling IS NULL)
+         )
        ORDER BY b.created_at DESC`
     );
     res.json({ success: true, data: batches });

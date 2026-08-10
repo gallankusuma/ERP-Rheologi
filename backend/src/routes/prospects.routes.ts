@@ -471,8 +471,9 @@ router.put('/:id', authMiddleware, requirePermission('crm.prospects', 'update'),
       return res.status(403).json({ error: 'You can only edit your own prospects' });
     }
 
-    // validate status change if provided
-    if (status && status !== current.status) {
+    // validate status change if provided (manage permission or master admin bypasses restrictions)
+    const isMaster = user.userLevel == 1;
+    if (status && status !== current.status && !isMaster && !canManageAll) {
       // 'converted' can only be set by the convert endpoint
       if (RESERVED_STATUSES.includes(status)) {
         return res.status(400).json({
