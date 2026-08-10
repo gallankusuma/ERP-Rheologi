@@ -3,14 +3,19 @@ import { dbAll, dbGet, dbRun } from '../config/database';
 // canonical FPA status values
 export type FpaCanonicalStatus = 'passed' | 'failed' | 'pending';
 
+// workflow statuses that mean "not done yet"
+const PENDING_STATUSES = [
+  'draft', 'pending', 'sample diterima', 'on progress', 'review', 'resampling'
+];
+
 /**
- * Resolve canonical pass/fail/pending for a single FPA.
- * Checks all required analysis result rows (spec snapshots).
+ * Pure analysis evaluator: checks pinned snapshot results only.
+ * Does NOT consider FPA workflow status.
  */
-export async function resolveFpaStatus(fpaId: number): Promise<FpaCanonicalStatus> {
+export async function evaluateAllResults(fpaId: number): Promise<FpaCanonicalStatus> {
   const results = await dbAll(
     `SELECT ar.id, ar.is_pass, ar.actual_value, ar.min_value, ar.max_value,
-            ar.standard_value, ar.specification_id
+            ar.standard_value, ar.is_required, ar.param_type
      FROM qc_analysis_results ar
      WHERE ar.fpa_id = ?`,
     [fpaId]
@@ -18,23 +23,12 @@ export async function resolveFpaStatus(fpaId: number): Promise<FpaCanonicalStatu
 
   if (!results.length) return 'pending';
 
-  // check linked spec is_required via specification_id
   let hasAnyFailed = false;
   let hasAnyPending = false;
 
   for (const r of results) {
-    // check if this spec row is required
-    let isRequired = true;
-    if (r.specification_id) {
-      const spec = await dbGet(
-        'SELECT is_required FROM qc_specifications WHERE id = ?',
-        [r.specification_id]
-      ) as any;
-      if (spec && spec.is_required === 0) {
-        isRequired = false;
-      }
-    }
-
+    // use pinned is_required from snapshot, not live spec
+    const isRequired = r.is_required !== 0;
     if (!isRequired) continue;
 
     if (r.actual_value === null || r.actual_value === undefined || r.actual_value === '') {
@@ -52,14 +46,60 @@ export async function resolveFpaStatus(fpaId: number): Promise<FpaCanonicalStatu
 }
 
 /**
+ * Workflow-aware resolver: considers FPA status + analysis results.
+ * This is the canonical function for checkpoint sync and batch release.
+ */
+export async function resolveFpaWorkflow(fpaId: number): Promise<FpaCanonicalStatus> {
+  const fpa = await dbGet(
+    'SELECT id, status, result FROM qc_analysis_requests WHERE id = ?',
+    [fpaId]
+  ) as any;
+
+  if (!fpa) return 'pending';
+
+  const statusLower = (fpa.status || '').toLowerCase();
+
+  // explicit rejection
+  if (statusLower === 'rejected') return 'failed';
+
+  // any non-final workflow status is pending
+  if (PENDING_STATUSES.includes(statusLower)) return 'pending';
+
+  // status = Approved: verify analysis results actually passed
+  if (statusLower === 'approved') {
+    const analysis = await evaluateAllResults(fpaId);
+    return analysis === 'passed' ? 'passed' : 'failed';
+  }
+
+  // any unknown status: pending
+  return 'pending';
+}
+
+/**
  * Sync FPA canonical status to linked wo_qc_checkpoint.
  * Production contract: status = pending | passed | failed
+ * Supports both direct fpa_id link and root FPA chain.
  */
 export async function syncCheckpoint(fpaId: number, status: FpaCanonicalStatus): Promise<void> {
-  const checkpoint = await dbGet(
+  // check direct link first
+  let checkpoint = await dbGet(
     'SELECT id FROM wo_qc_checkpoints WHERE fpa_id = ?',
     [fpaId]
   ) as any;
+
+  // if no direct link, check if this is a child — find root and check root
+  if (!checkpoint) {
+    const fpa = await dbGet(
+      'SELECT parent_fpa_id FROM qc_analysis_requests WHERE id = ?',
+      [fpaId]
+    ) as any;
+    if (fpa && fpa.parent_fpa_id) {
+      checkpoint = await dbGet(
+        'SELECT id FROM wo_qc_checkpoints WHERE fpa_id = ?',
+        [fpa.parent_fpa_id]
+      ) as any;
+    }
+  }
 
   if (!checkpoint) return;
 
@@ -77,18 +117,18 @@ export async function syncCheckpoint(fpaId: number, status: FpaCanonicalStatus):
 }
 
 /**
- * Resolve FPA status and sync to checkpoint in one call.
+ * Resolve FPA workflow status and sync to checkpoint in one call.
  */
 export async function resolveAndSync(fpaId: number): Promise<FpaCanonicalStatus> {
-  const status = await resolveFpaStatus(fpaId);
+  const status = await resolveFpaWorkflow(fpaId);
   await syncCheckpoint(fpaId, status);
   return status;
 }
 
 /**
  * Check whether a batch can be released.
- * Requires: batch exists, not already released, all mandatory FPAs passed,
- * all qc_results for batch passed (if any).
+ * Hardened: requires FPA evidence, Approved status, workflow = passed.
+ * No legacy qc_results weak path.
  */
 export async function canReleaseBatch(batchId: number): Promise<{ allowed: boolean; reason?: string }> {
   const batch = await dbGet('SELECT * FROM batches WHERE id = ?', [batchId]) as any;
@@ -96,37 +136,42 @@ export async function canReleaseBatch(batchId: number): Promise<{ allowed: boole
 
   if (batch.status === 'released') return { allowed: true, reason: 'Already released (idempotent)' };
 
-  // check FPAs linked to this batch
+  // find FPAs linked to this batch
   const fpas = await dbAll(
-    `SELECT id, status, result FROM qc_analysis_requests WHERE batch_no = ?`,
+    `SELECT id, status, result, parent_fpa_id, needs_resampling
+     FROM qc_analysis_requests WHERE batch_no = ?`,
     [batch.batch_number]
   ) as any[];
 
-  for (const fpa of fpas) {
-    const canonical = await resolveFpaStatus(fpa.id);
-    if (canonical === 'failed') {
-      return { allowed: false, reason: `FPA #${fpa.id} has failed QC` };
+  // no FPA = no QC evidence
+  if (!fpas.length) {
+    return { allowed: false, reason: 'No QC evidence - FPA required for batch release' };
+  }
+
+  // filter to active FPAs: skip parents that have been resampled
+  const activeFpas = fpas.filter(f => !f.needs_resampling || f.needs_resampling === 0);
+
+  if (!activeFpas.length) {
+    return { allowed: false, reason: 'All FPAs are resampled - no active FPA with final decision' };
+  }
+
+  for (const fpa of activeFpas) {
+    // must be explicitly Approved, not just results passing
+    const statusLower = (fpa.status || '').toLowerCase();
+    if (statusLower !== 'approved') {
+      return { allowed: false, reason: `FPA #${fpa.id} is not approved (status: ${fpa.status})` };
     }
-    if (canonical === 'pending') {
-      return { allowed: false, reason: `FPA #${fpa.id} has pending QC results` };
+
+    // workflow resolver must agree
+    const workflow = await resolveFpaWorkflow(fpa.id);
+    if (workflow !== 'passed') {
+      return { allowed: false, reason: `FPA #${fpa.id} workflow status: ${workflow}` };
     }
   }
 
-  // check qc_results for this batch (quality.routes.ts system)
-  const failedResults = await dbGet(
-    `SELECT COUNT(*) as cnt FROM qc_results WHERE batch_id = ? AND result_status = 'failed'`,
-    [batchId]
-  ) as any;
-  if (failedResults && failedResults.cnt > 0) {
-    return { allowed: false, reason: 'Batch has failed QC test results' };
-  }
-
-  const pendingResults = await dbGet(
-    `SELECT COUNT(*) as cnt FROM qc_results WHERE batch_id = ? AND (result_status IS NULL OR result_status = 'pending')`,
-    [batchId]
-  ) as any;
-  if (pendingResults && pendingResults.cnt > 0) {
-    return { allowed: false, reason: 'Batch has pending QC test results' };
+  // batch qc_status must be passed
+  if (batch.qc_status !== 'passed') {
+    return { allowed: false, reason: `Batch qc_status is '${batch.qc_status || 'null'}', expected 'passed'` };
   }
 
   return { allowed: true };
@@ -134,6 +179,7 @@ export async function canReleaseBatch(batchId: number): Promise<{ allowed: boole
 
 /**
  * Server-side pass/fail evaluation against spec snapshot.
+ * Supports min+max, min-only, max-only, qualitative.
  * Returns 1 (pass), 0 (fail), or null (cannot evaluate).
  */
 export function evaluateResult(
@@ -156,9 +202,12 @@ export function evaluateResult(
   const num = Number(actualValue);
   if (isNaN(num)) return null;
 
-  if (minValue !== null && minValue !== undefined && maxValue !== null && maxValue !== undefined) {
-    return (num >= minValue && num <= maxValue) ? 1 : 0;
-  }
+  const hasMin = minValue !== null && minValue !== undefined;
+  const hasMax = maxValue !== null && maxValue !== undefined;
+
+  if (hasMin && hasMax) return (num >= minValue && num <= maxValue) ? 1 : 0;
+  if (hasMin) return num >= minValue ? 1 : 0;
+  if (hasMax) return num <= maxValue ? 1 : 0;
 
   return null;
 }

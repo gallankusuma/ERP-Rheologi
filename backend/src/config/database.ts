@@ -564,6 +564,72 @@ const ensureRnDSchema = async (connection: any) => {
   console.log('✅ R&D module schema ensured');
 };
 
+const ensureQcSchema = async (connection: any) => {
+  // ensure all Cycle #1 columns exist (idempotent via IF NOT EXISTS / column check)
+  const addCol = async (table: string, col: string, def: string) => {
+    try {
+      const [rows] = await connection.execute(
+        `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [table, col]
+      );
+      if (rows[0].cnt === 0) {
+        await connection.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    } catch (e: any) {
+      if (!e.message?.includes('Duplicate column')) {
+        console.error(`Schema warning: ${table}.${col}: ${e.message}`);
+      }
+    }
+  };
+
+  // qc_parameters additions
+  await addCol('qc_parameters', 'code', "VARCHAR(50) DEFAULT NULL");
+  await addCol('qc_parameters', 'param_type', "VARCHAR(20) DEFAULT 'quantitative'");
+
+  // qc_analysis_requests workflow columns
+  await addCol('qc_analysis_requests', 'sampling_run', 'INT DEFAULT 1');
+  await addCol('qc_analysis_requests', 'parent_fpa_id', 'INT');
+  await addCol('qc_analysis_requests', 'approved_by_1', 'INT');
+  await addCol('qc_analysis_requests', 'approved_at_1', 'TIMESTAMP NULL');
+  await addCol('qc_analysis_requests', 'approved_by_2', 'INT');
+  await addCol('qc_analysis_requests', 'approved_at_2', 'TIMESTAMP NULL');
+  await addCol('qc_analysis_requests', 'needs_resampling', 'TINYINT DEFAULT 0');
+  await addCol('qc_analysis_requests', 'disposition', 'VARCHAR(50)');
+  await addCol('qc_analysis_requests', 'data_complete', 'TINYINT DEFAULT 0');
+  await addCol('qc_analysis_requests', 'analysis_notes', 'TEXT');
+  await addCol('qc_analysis_requests', 'wo_id', 'INT');
+  await addCol('qc_analysis_requests', 'specification_doc', 'VARCHAR(100)');
+  await addCol('qc_analysis_requests', 'sampling_point', 'VARCHAR(255)');
+  await addCol('qc_analysis_requests', 'sampling_qty', 'DECIMAL(15,4)');
+  await addCol('qc_analysis_requests', 'sampling_unit', 'VARCHAR(50)');
+  await addCol('qc_analysis_requests', 'process_type', 'VARCHAR(100)');
+  await addCol('qc_analysis_requests', 'sample_type', 'VARCHAR(100)');
+  await addCol('qc_analysis_requests', 'process_date', 'TIMESTAMP NULL');
+
+  // qc_analysis_results snapshot + operational columns
+  await addCol('qc_analysis_results', 'method_id', 'INT');
+  await addCol('qc_analysis_results', 'standard_value', 'VARCHAR(255)');
+  await addCol('qc_analysis_results', 'min_value', 'FLOAT');
+  await addCol('qc_analysis_results', 'max_value', 'FLOAT');
+  await addCol('qc_analysis_results', 'uom', 'VARCHAR(50)');
+  await addCol('qc_analysis_results', 'qc_type', 'VARCHAR(30)');
+  await addCol('qc_analysis_results', 'specification_id', 'INT');
+  await addCol('qc_analysis_results', 'is_required', 'TINYINT DEFAULT 1');
+  await addCol('qc_analysis_results', 'param_type', "VARCHAR(20) DEFAULT 'quantitative'");
+  await addCol('qc_analysis_results', 'saplo', 'FLOAT');
+  await addCol('qc_analysis_results', 'duplo', 'FLOAT');
+  await addCol('qc_analysis_results', 'analyst_id', 'INT');
+  await addCol('qc_analysis_results', 'notes', 'TEXT');
+  await addCol('qc_analysis_results', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
+  // batches audit columns
+  await addCol('batches', 'qc_status', 'VARCHAR(50)');
+  await addCol('batches', 'released_by', 'INT');
+  await addCol('batches', 'released_at', 'TIMESTAMP NULL');
+
+  console.log('QC module schema ensured');
+};
+
 const ensurePpicSchema = async (connection: any) => {
   const statements = [
     `CREATE TABLE IF NOT EXISTS mps_detail_sources (
@@ -936,6 +1002,7 @@ export async function initializeDatabase() {
     await ensureRnDSchema(connection);
     await ensureCrmSchema(connection);
     await ensurePpicSchema(connection);
+    await ensureQcSchema(connection);
     await ensureApprovalPermissions(connection);
     await ensureMenuPermissions(connection);
 

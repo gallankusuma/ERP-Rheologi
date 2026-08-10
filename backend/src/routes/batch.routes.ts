@@ -154,7 +154,7 @@ router.put('/:id', authMiddleware, requirePermission('inventory.batch-tracking',
 });
 
 // POST /api/batches/:id/release - Release batch for use (after QC approval)
-router.post('/:id/release', authMiddleware, requirePermission('inventory.batch-tracking', 'update'), async (req: Request, res: Response) => {
+router.post('/:id/release', authMiddleware, requirePermission('quality.batch-release', 'approve_2'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id);
     const userId = (req as any).user?.userId || null;

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
-import { resolveAndSync, evaluateResult } from '../services/qc.service';
+import { resolveAndSync, evaluateAllResults, evaluateResult, syncCheckpoint } from '../services/qc.service';
 
 const router = Router();
 
@@ -277,19 +277,23 @@ router.post('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'create'
       [fpa_number, type || 'Incoming', reference_id || null, reference_number || null, product_id, sampling_area_id || null, batch_no || null, quantity || null, supplier_id || null, notes || null, userId, wo_id || null]
     );
     
-    // P0-6: snapshot specs into qc_analysis_results with full spec data
+    // snapshot specs into qc_analysis_results with full spec data including is_required and param_type
     const specs = await dbAll(
-      'SELECT * FROM qc_specifications WHERE product_id = ? AND (qc_type = ? OR qc_type IS NULL)',
+      `SELECT s.*, p.param_type FROM qc_specifications s
+       JOIN qc_parameters p ON s.parameter_id = p.id
+       WHERE s.product_id = ? AND (s.qc_type = ? OR s.qc_type IS NULL)`,
       [product_id, type || 'Incoming']
     ) as any[];
     for (const spec of specs) {
       await dbRun(
         `INSERT INTO qc_analysis_results
-         (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [result.insertId, spec.parameter_id, spec.method_id || null,
          spec.standard_value || null, spec.min_value ?? null, spec.max_value ?? null,
-         spec.uom || null, spec.qc_type || null, spec.id]
+         spec.uom || null, spec.qc_type || null, spec.id,
+         spec.is_required !== undefined ? spec.is_required : 1,
+         spec.param_type || 'quantitative']
       );
     }
     
@@ -391,17 +395,13 @@ router.put('/fpa/:id/results', authMiddleware, requirePermission('quality.qc-fpa
     // update individual results with server-side pass/fail evaluation
     if (results && Array.isArray(results)) {
       for (const r of results) {
-        // load snapshot min/max for server-side evaluation
+        // load snapshot values for server-side evaluation (uses pinned data, not live master)
         const existing = await dbGet(
-          'SELECT min_value, max_value, standard_value FROM qc_analysis_results WHERE id = ?', [r.id]
+          'SELECT min_value, max_value, standard_value, param_type FROM qc_analysis_results WHERE id = ?', [r.id]
         ) as any;
         
-        // get param_type
-        const paramRow = await dbGet(
-          `SELECT p.param_type FROM qc_analysis_results ar
-           JOIN qc_parameters p ON ar.parameter_id = p.id WHERE ar.id = ?`, [r.id]
-        ) as any;
-        const paramType = paramRow?.param_type || 'quantitative';
+        // use pinned param_type from snapshot
+        const paramType = existing?.param_type || 'quantitative';
         
         // compute is_pass server-side
         let isPass = r.is_pass;
@@ -488,12 +488,22 @@ router.put('/fpa/:id/submit', authMiddleware, requirePermission('quality.qc-fpa'
   }
 });
 
-// normalized approve: sets result = "Passed" (not "Pass")
+// P0-A: approve guards with result evaluation first
 router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const fpaId = Number(req.params.id);
     const { review_notes } = req.body;
+
+    // guard: all required pinned results must pass
+    const analysis = await evaluateAllResults(fpaId);
+    if (analysis !== 'passed') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot approve: analysis results are '${analysis}'. All required results must pass.`
+      });
+    }
+
     await dbRun(
       `UPDATE qc_analysis_requests SET status = 'Approved', result = 'Passed',
        reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -504,15 +514,15 @@ router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa
     if (fpa && fpa.batch_no) {
       await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
     }
-    // sync checkpoint
-    await resolveAndSync(fpaId);
+    // sync checkpoint explicitly passed
+    await syncCheckpoint(fpaId, 'passed');
     res.json({ success: true, message: 'FPA approved' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to approve FPA' });
   }
 });
 
-// normalized reject: sets result = "Failed" (not "Fail")
+// P0-A: reject explicitly syncs failed
 router.put('/fpa/:id/reject', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
@@ -527,13 +537,15 @@ router.put('/fpa/:id/reject', authMiddleware, requirePermission('quality.qc-fpa'
     if (fpa && fpa.batch_no) {
       await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['failed', fpa.batch_no]);
     }
-    await resolveAndSync(fpaId);
+    // explicitly sync failed to checkpoint
+    await syncCheckpoint(fpaId, 'failed');
     res.json({ success: true, message: 'FPA rejected' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to reject FPA' });
   }
 });
 
+// P0-A: resample explicitly syncs pending
 router.put('/fpa/:id/resample', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
@@ -544,8 +556,8 @@ router.put('/fpa/:id/resample', authMiddleware, requirePermission('quality.qc-fp
        reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [userId, review_notes || null, fpaId]
     );
-    // resampling means checkpoint goes back to pending
-    await resolveAndSync(fpaId);
+    // explicitly sync pending to checkpoint
+    await syncCheckpoint(fpaId, 'pending');
     res.json({ success: true, message: 'FPA sent for resampling' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to resample FPA' });
@@ -600,7 +612,7 @@ router.put('/fpa/:id/approve-1', authMiddleware, requirePermission('quality.qc-f
   }
 });
 
-// P0-3: approve level 2 — triggers final status resolution
+// P0-A: approve level 2 — guards with result evaluation, triggers final resolution
 router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
@@ -609,25 +621,34 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
     if (!fpa) return res.status(404).json({ success: false, error: 'FPA not found' });
     if (!fpa.approved_by_1) return res.status(400).json({ success: false, error: 'Approve #1 must be completed first' });
     
+    // P0-A: guard - all required pinned results must pass before final approval
+    const analysis = await evaluateAllResults(fpaId);
+    if (analysis !== 'passed') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot approve: analysis results are '${analysis}'. All required results must pass.`
+      });
+    }
+    
     await dbRun(
       `UPDATE qc_analysis_requests SET approved_by_2 = ?, approved_at_2 = CURRENT_TIMESTAMP,
        status = 'Approved', result = 'Passed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [userId, fpaId]
     );
     
-    // sync batch and checkpoint
+    // sync batch and checkpoint explicitly passed
     if (fpa.batch_no) {
       await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
     }
-    await resolveAndSync(fpaId);
+    await syncCheckpoint(fpaId, 'passed');
     
-    res.json({ success: true, message: 'Approve #2 completed — FPA approved' });
+    res.json({ success: true, message: 'Approve #2 completed - FPA approved' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to approve #2' });
   }
 });
 
-// P0-3: create new resampling run (child FPA)
+// P0-B: create new resampling run (child FPA) + re-point checkpoint
 router.post('/fpa/:id/new-run', authMiddleware, requirePermission('quality.qc-fpa', 'create'), async (req: Request, res: Response) => {
   try {
     const parentId = Number(req.params.id);
@@ -659,18 +680,36 @@ router.post('/fpa/:id/new-run', authMiddleware, requirePermission('quality.qc-fp
        parent.sampling_qty, parent.sampling_unit, parent.process_type, parent.sample_type]
     );
     
-    // copy spec snapshot from parent's results
+    // P0-F: copy full spec snapshot from parent including is_required and param_type
     const parentResults = await dbAll(
-      'SELECT parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id FROM qc_analysis_results WHERE fpa_id = ?',
+      'SELECT parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type FROM qc_analysis_results WHERE fpa_id = ?',
       [parentId]
     ) as any[];
     for (const pr of parentResults) {
       await dbRun(
         `INSERT INTO qc_analysis_results
-         (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [result.insertId, pr.parameter_id, pr.method_id, pr.standard_value,
-         pr.min_value, pr.max_value, pr.uom, pr.qc_type, pr.specification_id]
+         pr.min_value, pr.max_value, pr.uom, pr.qc_type, pr.specification_id,
+         pr.is_required !== undefined ? pr.is_required : 1,
+         pr.param_type || 'quantitative']
+      );
+    }
+    
+    // P0-B: re-point checkpoint from parent/root to new child FPA
+    const checkpointRoot = parent.parent_fpa_id || parentId;
+    await dbRun(
+      `UPDATE wo_qc_checkpoints SET fpa_id = ?, status = 'pending', resolved_at = NULL
+       WHERE fpa_id = ?`,
+      [result.insertId, checkpointRoot]
+    );
+    // also check if checkpoint was on direct parent
+    if (checkpointRoot !== parentId) {
+      await dbRun(
+        `UPDATE wo_qc_checkpoints SET fpa_id = ?, status = 'pending', resolved_at = NULL
+         WHERE fpa_id = ?`,
+        [result.insertId, parentId]
       );
     }
     

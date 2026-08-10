@@ -368,22 +368,33 @@ router.delete('/qc-tests/:id', authMiddleware, requirePermission('quality.result
   }
 });
 
-// QC Results
+// P0-E: QC Results read-only adapter over canonical FPA analysis data
 router.get('/qc-results', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { batch_id } = req.query;
-    let query =
-      `SELECT qr.*, b.batch_number, t.name as test_name, u.full_name as tester_name
-       FROM qc_results qr
-       LEFT JOIN batches b ON qr.batch_id = b.id
-       LEFT JOIN qc_tests t ON qr.qc_test_id = t.id
-       LEFT JOIN users u ON qr.tested_by = u.id`;
+    let query = `
+      SELECT ar.id, ar.fpa_id, ar.actual_value, ar.is_pass, ar.min_value, ar.max_value,
+             ar.standard_value, ar.uom, ar.param_type, ar.notes, ar.created_at,
+             p.name as test_name, p.code as test_code,
+             f.batch_no as batch_number, f.fpa_number, f.status as fpa_status,
+             prod.name as product_name,
+             u.full_name as tested_by_name,
+             CASE WHEN ar.is_pass = 1 THEN 'passed' WHEN ar.is_pass = 0 THEN 'failed' ELSE 'pending' END as result_status
+      FROM qc_analysis_results ar
+      JOIN qc_analysis_requests f ON ar.fpa_id = f.id
+      LEFT JOIN qc_parameters p ON ar.parameter_id = p.id
+      LEFT JOIN products prod ON f.product_id = prod.id
+      LEFT JOIN users u ON ar.analyst_id = u.id`;
     const params: any[] = [];
     if (batch_id) {
-      query += ' WHERE qr.batch_id = ?';
-      params.push(batch_id);
+      // find batch_number from batch id
+      const batch = await dbGet('SELECT batch_number FROM batches WHERE id = ?', [batch_id]) as any;
+      if (batch) {
+        query += ' WHERE f.batch_no = ?';
+        params.push(batch.batch_number);
+      }
     }
-    query += ' ORDER BY qr.test_date DESC';
+    query += ' ORDER BY ar.created_at DESC';
     const results = await dbAll(query, params);
     res.json({ data: results });
   } catch (error) {
@@ -392,37 +403,7 @@ router.get('/qc-results', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.post('/qc-results', authMiddleware, requirePermission('quality.results', 'create'), async (req: Request, res: Response) => {
-  try {
-    const { batch_id, test_id, result, status, tested_at, tester_id, notes } = req.body;
-    if (!batch_id || !test_id) return res.status(400).json({ error: 'batch_id and test_id are required' });
-
-    const tester = tester_id || (req as any).user?.userId || null;
-    const result_res = await dbRun(
-      'INSERT INTO qc_results (batch_id, qc_test_id, test_id, result_value, result_status, test_date, tested_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [batch_id, test_id, test_id, result || null, status || 'pending', tested_at || new Date().toISOString().split('T')[0], tester, notes || null]
-    );
-
-    res.status(201).json({ message: 'QC result recorded', data: { id: result_res.insertId } });
-  } catch (error) {
-    console.error('Error creating QC result:', error);
-    res.status(500).json({ error: 'Failed to create QC result' });
-  }
-});
-
-router.put('/qc-results/:id', authMiddleware, requirePermission('quality.results', 'update'), async (req: Request, res: Response) => {
-  try {
-    const { result, status, tested_at, tester_id, notes } = req.body;
-    await dbRun(
-      'UPDATE qc_results SET result_value = ?, result_status = ?, test_date = COALESCE(?, test_date), tested_by = COALESCE(?, tested_by), notes = ? WHERE id = ?',
-      [result || null, status, tested_at || null, tester_id || null, notes || null, req.params.id]
-    );
-    res.json({ message: 'QC result updated' });
-  } catch (error) {
-    console.error('Error updating QC result:', error);
-    res.status(500).json({ error: 'Failed to update QC result' });
-  }
-});
+// P0-E: POST/PUT qc-results removed - no manual write path bypassing FPA specs
 
 // ============================================================
 // QC Sampling Plans
@@ -506,7 +487,7 @@ router.get('/batch-release', authMiddleware, async (_req: Request, res: Response
   }
 });
 
-router.post('/batch-release/:batchId/release', authMiddleware, requirePermission('quality.batch-release', 'approve'), async (req: Request, res: Response) => {
+router.post('/batch-release/:batchId/release', authMiddleware, requirePermission('quality.batch-release', 'approve_2'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.batchId);
     const userId = (req as any).user?.userId || null;
@@ -535,20 +516,21 @@ router.post('/batch-release/:batchId/release', authMiddleware, requirePermission
   }
 });
 
-router.post('/batch-release/:batchId/reject', authMiddleware, async (req: Request, res: Response) => {
+router.post('/batch-release/:batchId/reject', authMiddleware, requirePermission('quality.batch-release', 'approve_1'), async (req: Request, res: Response) => {
   try {
     const { notes } = req.body;
     await dbRun(
-      `UPDATE batches SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      `UPDATE batches SET status = 'rejected', qc_status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [req.params.batchId]
     );
     res.json({ success: true, message: 'Batch rejected' });
   } catch (error) {
+    console.error('Error rejecting batch:', error);
     res.status(500).json({ error: 'Failed to reject batch' });
   }
 });
 
-router.post('/batch-release/:batchId/hold', authMiddleware, async (req: Request, res: Response) => {
+router.post('/batch-release/:batchId/hold', authMiddleware, requirePermission('quality.batch-release', 'approve_1'), async (req: Request, res: Response) => {
   try {
     await dbRun(
       `UPDATE batches SET status = 'on_hold', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -556,6 +538,7 @@ router.post('/batch-release/:batchId/hold', authMiddleware, async (req: Request,
     );
     res.json({ success: true, message: 'Batch put on hold' });
   } catch (error) {
+    console.error('Error holding batch:', error);
     res.status(500).json({ error: 'Failed to hold batch' });
   }
 });

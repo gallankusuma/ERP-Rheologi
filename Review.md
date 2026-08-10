@@ -1,84 +1,153 @@
-Hasil yang dicatat tim dev bagus: WO id=28, tested SHA b38eca5, Production server, flow DRAFT → APPROVED → RELEASED → QC → Yield → COMPLETED → FG Receipt, plus beberapa negative gate berhasil.
+QC Cycle #1 follow-up review — revision `d7b1e65`.
 
-Tapi gue belum kasih FIRM/FREEZE, karena ada satu gap runtime yang sangat spesifik.
+Direction accepted. `qc.service.ts`, spec snapshot, shared batch gate, FPA Detail endpoints, and master parameter contract are the correct architecture.
 
-Issue Material positive path ternyata belum PASS
+Do NOT redesign again.
 
-Di dokumen tertulis:
+Please close these remaining blockers only.
 
-Step 5 — Issue Material — PASS (stock guard enforced\*)
+**P0-A — Separate analysis evaluation from final workflow decision**
 
-tetapi note-nya bilang actual request ditolak karena stock 0, requested 60.
+Current `resolveFpaStatus()` only evaluates parameter results.
 
-Jadi sebenarnya yang terbukti adalah:
+This cannot be used directly as final workflow state.
 
-Insufficient Stock Guard = PASS ✅
+Required semantics:
 
-bukan:
+- Draft / Sample Received / On Progress / Review → `pending`
+- Resampling → `pending`
+- Explicit Rejected / Failed → `failed`
+- Approved may become `passed` ONLY if all required pinned results are complete and passed.
 
-Successful Material Issue = PASS
+Approval endpoint must:
 
-Padahal positive smoke target kita adalah:
+1. evaluate pinned required results
+2. if result != passed → reject approval with 400
+3. only then set FPA Approved/Passed
+4. sync batch/checkpoint passed
 
-Generate Material
-→ Issue Material sukses
-→ RM inventory turun
-→ production jalan.
+Reject endpoint must explicitly sync `failed`.
 
-Sekarang smoke lanjut ke IN_PROGRESS, QC, Yield, dan FG Receipt walaupun material issue tadi gagal. Itu boleh terjadi karena current Start WO memang soft-warning terhadap shortage, tetapi belum membuktikan transaksi material issue sukses end-to-end.
+Resample endpoint must explicitly sync `pending`.
 
-Ada gap kedua yang terkait: dokumen mencatat FG Receipt 85 berhasil, tetapi belum menunjukkan explicit reconciliation:
+Never allow:
+`FPA Approved + Batch passed + checkpoint failed/pending`.
 
-FG inventory before
-→ receipt 85
-→ FG inventory after = before + 85
+**P0-B — Resampling must keep Production checkpoint linkage**
 
-Begitu juga belum ada explicit evidence:
+A child/new sampling run currently gets a new FPA id while `wo_qc_checkpoints.fpa_id` still points to parent.
 
-RM inventory before
-→ issue qty
-→ RM inventory after = before - issue qty.
+Choose one canonical strategy:
 
-Jadi statusnya sekarang
-Gate Status
-Production code P0/P1 ✅ CLEAN
-State machine runtime ✅ PASS
-Approved BOM runtime ✅ PASS
-QC pending → Complete rejection ✅ PASS
-QC → Yield → Completed ✅ PASS
-FG over-receipt rejection ✅ PASS
-Duplicate FG receipt ✅ PASS
-Production self-QC rejection ✅ PASS
-Insufficient RM stock guard ✅ PASS
-Successful RM Issue + stock deduction ⚠️ NOT PROVEN
-FG inventory reconciliation ⚠️ NOT EXPLICITLY PROVEN
+- checkpoint stays linked to root FPA and resolver evaluates latest active run, OR
+- when new-run is created, re-point checkpoint to new child FPA.
 
-Jadi nggak perlu revisi business code lagi. Tim dev cukup rerun smoke dengan fixture stock yang cukup.
+After resampling:
+parent result must not leave Production checkpoint passed.
 
-Misalnya:
+Child final approval must resolve the same Production checkpoint.
 
-RM stock before = 100
-→ required issue 60
-→ Issue Material 60 = 200
-→ assert wo_material.quantity_issued = 60
-→ assert RM inventory 100 → 40
-→ assert stock movement OUT = 60.
+**P0-C — Harden canReleaseBatch**
 
-Kemudian:
+No-FPA/no-QC batch must NOT return allowed=true.
 
-FG inventory before = X
-→ Yield = 85
-→ FG Receipt = 85
-→ assert FG inventory X → X+85
-→ assert stock movement IN = 85
-→ retry same idempotency key = 400.
+Release requires explicit QC evidence:
 
-Kalau mau lebih solid, sekalian commit smoke_test.py atau raw smoke log ke repo; saat ini gue hanya menemukan referensi smoke_test.py di status document, bukan script-nya sendiri.
+- relevant FPA exists unless explicitly exempted
+- final approval completed
+- canonical FPA decision = passed
+- batch qc_status = passed
+- no pending/failed mandatory QC
 
-Satu catatan lain: GitHub connector masih tidak menampilkan commit status/workflow run untuk SHA yang diuji, jadi klaim CI green di dokumen belum bisa gue independently verify dari connector. Tapi itu bukan blocker utama sekarang karena kita sudah punya production runtime verification; yang kurang tinggal positive inventory transaction tadi.
+An FPA with passing measurements but still On Progress/Review must NOT release a batch.
 
-Jadi verdict gue:
+Legacy qc_results must not create a second weaker release path.
 
-PRODUCTION CODE REVIEW = CLEAN ✅
-PRODUCTION RUNTIME GATE = PARTIAL PASS ⚠️
-FIRM/FREEZE = tinggal successful material issue + inventory reconciliation evidence
+**P0-D — Fix Batch Release RBAC**
+
+Current route uses:
+
+`quality.batch-release : approve`
+
+but seeded RBAC uses:
+
+`approve_1 / approve_2`.
+
+Use canonical permission, preferably final release = `approve_2` if this is final QC approval.
+
+Also add permission enforcement to Batch Release:
+
+- reject
+- hold
+
+Authentication alone is not sufficient.
+
+**P0-E — Remove duplicate writable Quality Results contract**
+
+`QualityResults.vue` still sends a DTO incompatible with `/quality/results`.
+
+Do not just rename frontend fields and preserve two QC engines.
+
+Canonical operational results should remain FPA analysis results.
+
+Preferred:
+
+- make `/quality/results` a read/report adapter over canonical QC/FPA data, OR
+- remove manual write path from this page.
+
+There must not be an independent user-selectable `pass/fail` result path bypassing pinned specifications.
+
+**P0-F — Complete immutable specification snapshot**
+
+Snapshot into `qc_analysis_results` must also include:
+
+- `is_required`
+- `param_type`
+
+Resolver must NOT query current `qc_specifications.is_required` to evaluate an old FPA.
+
+Server-side evaluation must NOT depend on current master `qc_parameters.param_type`.
+
+Historical FPA must be evaluated against the pinned rule existing when the FPA/run was created.
+
+For resampling, copy the entire snapshot including these fields.
+
+**P0-G — Commit the actual DB migration**
+
+Current application code references new QC columns, but repository migration `004_qc_tables.sql` does not contain them.
+
+Add versioned migration / `ensureQcSchema()` for every new field used by Cycle #1, including FPA workflow fields, snapshot fields, and batch qc/release audit fields.
+
+A fresh environment built only from repository migrations must work.
+
+No manual-production-only ALTER dependency.
+
+**P1 — Numeric evaluation**
+
+Support:
+
+- min + max → between
+- min only → `actual >= min`
+- max only → `actual <= max`
+
+Do not leave valid one-sided specification permanently pending.
+
+After revision, rerun focused negative smoke:
+
+1. FPA results pass + explicit Reject → checkpoint failed.
+2. FPA results pass + Resample → checkpoint pending.
+3. Child resample passes + final approval → original WO checkpoint passed.
+4. Failed/pending result + Approve #2 → 400.
+5. Batch with no FPA → release rejected.
+6. FPA passing but not approved → batch release rejected.
+7. Approved fully-passed FPA → release succeeds.
+8. normal QC role with final approval permission → release succeeds, no 403.
+9. user without permission → release/reject/hold rejected 403.
+10. change master spec after FPA creation → old FPA result remains unchanged.
+11. fresh DB migration → QC flow boots without manual SQL.
+
+Do not touch Production state machine or Production QC contract.
+
+Production still expects only:
+
+`wo_qc_checkpoints.status = pending | passed | failed`.
