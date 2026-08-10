@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { canReleaseBatch } from '../services/qc.service';
 
 const router = Router();
 
@@ -155,26 +156,24 @@ router.put('/:id', authMiddleware, requirePermission('inventory.batch-tracking',
 // POST /api/batches/:id/release - Release batch for use (after QC approval)
 router.post('/:id/release', authMiddleware, requirePermission('inventory.batch-tracking', 'update'), async (req: Request, res: Response) => {
   try {
-    // Check if batch has passed QC
-    const batch = await dbGet(`
-      SELECT * FROM batches WHERE id = ?
-    `, [req.params.id]);
-    
-    if (!batch) {
-      return res.status(404).json({ error: 'Batch not found' });
+    const batchId = Number(req.params.id);
+    const userId = (req as any).user?.userId || null;
+
+    const gate = await canReleaseBatch(batchId);
+    if (!gate.allowed && gate.reason !== 'Already released (idempotent)') {
+      return res.status(400).json({ error: gate.reason });
     }
-    
-    if (batch.qc_status !== 'passed') {
-      return res.status(400).json({ 
-        error: 'Cannot release batch - QC status must be "passed"' 
-      });
+
+    const batch = await dbGet('SELECT status FROM batches WHERE id = ?', [batchId]) as any;
+    if (batch && batch.status === 'released') {
+      return res.json({ message: 'Batch already released' });
     }
-    
-    await dbRun(`
-      UPDATE batches 
-      SET status = 'released', updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ?
-    `, [req.params.id]);
+
+    await dbRun(
+      `UPDATE batches SET status = 'released', released_by = ?, released_at = CURRENT_TIMESTAMP,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [userId, batchId]
+    );
     
     res.json({ message: 'Batch released successfully' });
   } catch (error) {

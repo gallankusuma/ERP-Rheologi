@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { canReleaseBatch } from '../services/qc.service';
 
 const router = Router();
 
@@ -505,15 +506,31 @@ router.get('/batch-release', authMiddleware, async (_req: Request, res: Response
   }
 });
 
-router.post('/batch-release/:batchId/release', authMiddleware, async (req: Request, res: Response) => {
+router.post('/batch-release/:batchId/release', authMiddleware, requirePermission('quality.batch-release', 'approve'), async (req: Request, res: Response) => {
   try {
+    const batchId = Number(req.params.batchId);
+    const userId = (req as any).user?.userId || null;
     const { notes } = req.body;
+
+    const gate = await canReleaseBatch(batchId);
+    if (!gate.allowed && gate.reason !== 'Already released (idempotent)') {
+      return res.status(400).json({ success: false, error: gate.reason });
+    }
+
+    // idempotent: if already released, return success
+    const batch = await dbGet('SELECT status FROM batches WHERE id = ?', [batchId]) as any;
+    if (batch && batch.status === 'released') {
+      return res.json({ success: true, message: 'Batch already released' });
+    }
+
     await dbRun(
-      `UPDATE batches SET status = 'released', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [req.params.batchId]
+      `UPDATE batches SET status = 'released', released_by = ?, released_at = CURRENT_TIMESTAMP,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [userId, batchId]
     );
     res.json({ success: true, message: 'Batch released' });
   } catch (error) {
+    console.error('Error releasing batch:', error);
     res.status(500).json({ error: 'Failed to release batch' });
   }
 });
