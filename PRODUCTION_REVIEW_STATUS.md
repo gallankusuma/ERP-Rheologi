@@ -113,17 +113,17 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 
 ---
 
-## Runtime Verification (v4 — with full inventory reconciliation)
+## Runtime Verification (v5 — clean, API-only, exact SHA)
 
 | Field | Value |
 |---|---|
-| Tested SHA | `177157e` + DECIMAL coercion fix |
+| Tested SHA | `3d0858b` |
 | Environment | Production (`76.13.22.155`) |
-| Date/Time | 2026-08-10T04:11:40Z |
-| Tester | Automated: `tests/production_smoke_test.py` |
-| WO Used | id=34, bom_id=17, product_id=470, warehouse=1 |
+| Date/Time | 2026-08-10T04:47:00Z |
+| Tester | Automated: `tests/production_smoke_test.py` (env-var creds, no direct DB) |
+| WO Used | id=36, bom_id=17, product_id=470, warehouse=1 |
 
-### Positive Flow: 22/22 PASS
+### Positive Flow: 23/23 PASS
 
 | # | Step | Result |
 |---|---|---|
@@ -131,9 +131,10 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 | 2 | DRAFT → APPROVED | PASS |
 | 3 | APPROVED → RELEASED (validates BOM + line) | PASS |
 | 4 | Generate Materials from pinned BOM | PASS |
-| 5 | Issue Material (explicit warehouse) | PASS (wo_mat=50, issued=60) |
-| 5a | RM stock deduction | PASS (2380 → 2320, delta=-60) |
+| 5 | Issue Material (explicit warehouse) | PASS (wo_mat=57, issued=60) |
+| 5a | RM stock deduction | PASS (2320 → 2260, delta=-60) |
 | 5b | wo_materials.quantity_issued | PASS (60.0) |
+| 5c | stock_movements OUT | PASS (60.0, reference_type=work_order) |
 | 6 | RELEASED → IN_PROGRESS | PASS |
 | 7 | Create mandatory QC checkpoint (auto-creates FPA) | PASS |
 | 8 | Complete rejected while QC pending | PASS (400) |
@@ -141,8 +142,8 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 | 10 | Record Yield (output=85, loss=15) | PASS |
 | 11 | IN_PROGRESS → COMPLETED | PASS |
 | 12 | FG Receipt (qty=85) | PASS |
-| 12a | FG inventory reconciliation | PASS (255 → 340, delta=+85) |
-| 12b | stock_movements IN | PASS (85.0) |
+| 12a | FG inventory reconciliation | PASS (340 → 425, delta=+85) |
+| 12b | stock_movements IN | PASS (85.0, reference_type=fg_receipt) |
 | 13 | Duplicate receipt (same idempotency key) | PASS (rejected 400) |
 
 ### Negative Gates: PASS
@@ -160,19 +161,30 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 ```
 RM Issue:
   product_id=72, warehouse=1
-  BEFORE: 2380.0
-  AFTER:  2320.0
+  BEFORE: 2320.0
+  AFTER:  2260.0
   DELTA:  -60.0 (matches BOM qty 0.6 * WO qty 100)
+  stock_movements OUT = 60.0 (reference_type=work_order, reference_id=36)
 
 FG Receipt:
   product_id=470, warehouse=1
-  BEFORE: 255.0
-  AFTER:  340.0
+  BEFORE: 340.0
+  AFTER:  425.0
   DELTA:  +85.0 (matches yield output_quantity)
+  stock_movements IN = 85.0 (reference_type=fg_receipt, reference_id=36)
 
-stock_movements IN (fg_receipt): 85.0
 wo_materials.quantity_issued: 60.0
 ```
+
+### Security Remediation (P0)
+
+| Issue | Status |
+|---|---|
+| Plaintext DB creds in smoke test | FIXED — env vars only, old history purged via git-filter-repo |
+| Plaintext admin creds in smoke test | FIXED — env vars only |
+| Direct SQL production stock seeding | FIXED — uses audited API (POST /inventory) |
+| DB credential rotation | DONE — `erp_user` password rotated |
+| Git history purge | DONE — force-pushed `e305881...3d0858b` |
 
 ### Bugfix Found During Smoke
 
@@ -183,8 +195,8 @@ Fixed with `Number()` coercion. Previous runs showed `quantity_issued=0.0001`.
 ### Summary
 
 ```
-PASS: 22 / 22
-FAIL: 0 / 22
+PASS: 23 / 23
+FAIL: 0 / 23
 ```
 
 **PRODUCTION MODULE = FIRM / FREEZE ✅**
