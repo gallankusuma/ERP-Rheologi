@@ -1,128 +1,84 @@
-✅ 1. Approved BOM pin + Release guard — CLOSED
+Hasil yang dicatat tim dev bagus: WO id=28, tested SHA b38eca5, Production server, flow DRAFT → APPROVED → RELEASED → QC → Yield → COMPLETED → FG Receipt, plus beberapa negative gate berhasil.
 
-Manual WO sekarang hanya auto-pin BOM:
+Tapi gue belum kasih FIRM/FREEZE, karena ada satu gap runtime yang sangat spesifik.
 
-status = ACTIVE
+Issue Material positive path ternyata belum PASS
 
-- approval_status = 2
+Di dokumen tertulis:
 
-Saat transition ke RELEASED, backend juga sudah validate:
+Step 5 — Issue Material — PASS (stock guard enforced\*)
 
-line process ada
-bom_id ada
-BOM benar-benar exists
-BOM product = WO product
-BOM ACTIVE
-approval_status = 2
+tetapi note-nya bilang actual request ditolak karena stock 0, requested 60.
 
-Generate Material juga sudah revalidate pinned BOM sebelum explosion.
+Jadi sebenarnya yang terbukti adalah:
 
-Verdict BOM: ✅ CLEAN
+Insufficient Stock Guard = PASS ✅
 
-✅ 2. Production MRP UOM — CLOSED
+bukan:
 
-Query sudah berubah menjadi canonical:
+Successful Material Issue = PASS
 
-LEFT JOIN uom u
-ON p.unit_of_measure_id = u.id
+Padahal positive smoke target kita adalah:
 
-Jadi typo p.uom_id sudah hilang.
+Generate Material
+→ Issue Material sukses
+→ RM inventory turun
+→ production jalan.
 
-Verdict MRP UOM: ✅ CLEAN
+Sekarang smoke lanjut ke IN_PROGRESS, QC, Yield, dan FG Receipt walaupun material issue tadi gagal. Itu boleh terjadi karena current Start WO memang soft-warning terhadap shortage, tetapi belum membuktikan transaksi material issue sukses end-to-end.
 
-🔴 3. FG Receipt QC read-model — masih ada satu mismatch
+Ada gap kedua yang terkait: dokumen mencatat FG Receipt 85 berhasil, tetapi belum menunjukkan explicit reconciliation:
 
-Perbaikannya secara konsep sudah benar.
+FG inventory before
+→ receipt 85
+→ FG inventory after = before + 85
 
-GET /production/fg-receipt sekarang membaca wo_qc_checkpoints, bukan lagi wo_results.qc_status.
+Begitu juga belum ada explicit evidence:
 
-Tetapi query GET menghitung:
+RM inventory before
+→ issue qty
+→ RM inventory after = before - issue qty.
 
-SUM(
-CASE WHEN status = 'failed'
-THEN 1 ELSE 0 END
-) AS any_failed
+Jadi statusnya sekarang
+Gate Status
+Production code P0/P1 ✅ CLEAN
+State machine runtime ✅ PASS
+Approved BOM runtime ✅ PASS
+QC pending → Complete rejection ✅ PASS
+QC → Yield → Completed ✅ PASS
+FG over-receipt rejection ✅ PASS
+Duplicate FG receipt ✅ PASS
+Production self-QC rejection ✅ PASS
+Insufficient RM stock guard ✅ PASS
+Successful RM Issue + stock deduction ⚠️ NOT PROVEN
+FG inventory reconciliation ⚠️ NOT EXPLICITLY PROVEN
 
-lalu:
+Jadi nggak perlu revisi business code lagi. Tim dev cukup rerun smoke dengan fixture stock yang cukup.
 
-kalau ada ANY failed checkpoint
-→ qc_status = failed
+Misalnya:
 
-Sedangkan POST /fg-receipt business gate hanya memblok:
+RM stock before = 100
+→ required issue 60
+→ Issue Material 60 = 200
+→ assert wo_material.quantity_issued = 60
+→ assert RM inventory 100 → 40
+→ assert stock movement OUT = 60.
 
-mandatory checkpoint yang belum passed.
+Kemudian:
 
-Jadi contoh:
+FG inventory before = X
+→ Yield = 85
+→ FG Receipt = 85
+→ assert FG inventory X → X+85
+→ assert stock movement IN = 85
+→ retry same idempotency key = 400.
 
-Mandatory QC A = passed
-Optional QC B = failed
+Kalau mau lebih solid, sekalian commit smoke_test.py atau raw smoke log ke repo; saat ini gue hanya menemukan referensi smoke_test.py di status document, bukan script-nya sendiri.
 
-Backend POST:
+Satu catatan lain: GitHub connector masih tidak menampilkan commit status/workflow run untuk SHA yang diuji, jadi klaim CI green di dokumen belum bisa gue independently verify dari connector. Tapi itu bukan blocker utama sekarang karena kita sudah punya production runtime verification; yang kurang tinggal positive inventory transaction tadi.
 
-mandatory_not_passed = 0
-→ FG Receipt ALLOWED
+Jadi verdict gue:
 
-tetapi GET/UI:
-
-any_failed > 0
-→ qc_status = failed
-→ Receive button HIDDEN
-
-Jadi UI dan backend masih tidak memakai rule yang sama.
-
-Fix-nya kecil banget
-
-Karena canonical business rule kita selama ini adalah mandatory QC gate, jangan ubah POST.
-
-Ubah GET aggregation dari:
-
-SUM(
-CASE WHEN status = 'failed'
-THEN 1 ELSE 0 END
-) AS any_failed
-
-menjadi misalnya:
-
-SUM(
-CASE
-WHEN is_mandatory = 1
-AND status = 'failed'
-THEN 1
-ELSE 0
-END
-) AS mandatory_failed
-
-Lalu derive:
-
-qc_total == 0
-→ pending
-
-mandatory_failed > 0
-→ failed
-
-mandatory_not_passed > 0
-→ pending
-
-else
-→ passed
-
-Dengan begitu GET UI dan POST transaction gate menggunakan exact business rule yang sama.
-
-Jadi status sekarang:
-
-Pinned Approved BOM = ✅ CLOSED
-MRP UOM = ✅ CLOSED
-FG Receipt QC derive = ⚠️ 1 residual
-
-P0 = 1
-P1 = 0
-
-Gue nggak buka scope baru lagi. Cuma fix satu predicate QC itu.
-
-Setelah itu masuk, gue cek titik tersebut sekali lagi. Kalau sesuai:
-
-PRODUCTION CODE REVIEW = CONDITIONALLY CLEAN / TEST GATE REQUIRED ✅
-
-Lalu kita langsung masuk Production runtime smoke:
-
-PPIC WO → APPROVED → RELEASED → Generate Material → Issue Material → IN_PROGRESS → QC → Yield → COMPLETED → FG Receipt → Inventory
+PRODUCTION CODE REVIEW = CLEAN ✅
+PRODUCTION RUNTIME GATE = PARTIAL PASS ⚠️
+FIRM/FREEZE = tinggal successful material issue + inventory reconciliation evidence

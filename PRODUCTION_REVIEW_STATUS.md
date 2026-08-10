@@ -113,17 +113,17 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 
 ---
 
-## Runtime Verification
+## Runtime Verification (v4 — with full inventory reconciliation)
 
 | Field | Value |
 |---|---|
-| Tested SHA | `b38eca5` |
+| Tested SHA | `177157e` + DECIMAL coercion fix |
 | Environment | Production (`76.13.22.155`) |
-| Date/Time | 2026-08-10T03:02:25Z |
-| Tester | Automated smoke test (`smoke_test.py`) |
-| WO Used | id=28, bom_id=17, product_id=470 |
+| Date/Time | 2026-08-10T04:11:40Z |
+| Tester | Automated: `tests/production_smoke_test.py` |
+| WO Used | id=34, bom_id=17, product_id=470, warehouse=1 |
 
-### Positive Flow: PASS
+### Positive Flow: 22/22 PASS
 
 | # | Step | Result |
 |---|---|---|
@@ -131,17 +131,19 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 | 2 | DRAFT → APPROVED | PASS |
 | 3 | APPROVED → RELEASED (validates BOM + line) | PASS |
 | 4 | Generate Materials from pinned BOM | PASS |
-| 5 | Issue Material (explicit warehouse) | PASS (stock guard enforced*) |
+| 5 | Issue Material (explicit warehouse) | PASS (wo_mat=50, issued=60) |
+| 5a | RM stock deduction | PASS (2380 → 2320, delta=-60) |
+| 5b | wo_materials.quantity_issued | PASS (60.0) |
 | 6 | RELEASED → IN_PROGRESS | PASS |
 | 7 | Create mandatory QC checkpoint (auto-creates FPA) | PASS |
 | 8 | Complete rejected while QC pending | PASS (400) |
 | 9 | Quality pass QC via FPA module | PASS (checkpoint=passed) |
 | 10 | Record Yield (output=85, loss=15) | PASS |
 | 11 | IN_PROGRESS → COMPLETED | PASS |
-| 12 | FG Receipt (qty=85, not planned 100) | PASS |
+| 12 | FG Receipt (qty=85) | PASS |
+| 12a | FG inventory reconciliation | PASS (255 → 340, delta=+85) |
+| 12b | stock_movements IN | PASS (85.0) |
 | 13 | Duplicate receipt (same idempotency key) | PASS (rejected 400) |
-
-*Step 5 note: Issue correctly rejected for insufficient stock (Available: 0, Requested: 60). This validates the stock guard — not a code defect, a data condition.
 
 ### Negative Gates: PASS
 
@@ -153,10 +155,36 @@ DRAFT → APPROVED → RELEASED → Generate Material → Issue Material
 | N4 | FG receipt > actual output | REJECTED (400) |
 | N5 | Yield self-set QC passed | BLOCKED (qc_status unchanged) |
 
+### Inventory Reconciliation Evidence
+
+```
+RM Issue:
+  product_id=72, warehouse=1
+  BEFORE: 2380.0
+  AFTER:  2320.0
+  DELTA:  -60.0 (matches BOM qty 0.6 * WO qty 100)
+
+FG Receipt:
+  product_id=470, warehouse=1
+  BEFORE: 255.0
+  AFTER:  340.0
+  DELTA:  +85.0 (matches yield output_quantity)
+
+stock_movements IN (fg_receipt): 85.0
+wo_materials.quantity_issued: 60.0
+```
+
+### Bugfix Found During Smoke
+
+`production.routes.ts` line 598: mysql2 returns DECIMAL columns as strings.
+`(mat.quantity_issued || 0) + quantity` concatenated string + number instead of adding.
+Fixed with `Number()` coercion. Previous runs showed `quantity_issued=0.0001`.
+
 ### Summary
 
 ```
-PASS: 17 / FAIL: 0 (1 data-condition stock guard = correct behavior)
+PASS: 22 / 22
+FAIL: 0 / 22
 ```
 
-**PRODUCTION CODE REVIEW = CLEAN ✅**
+**PRODUCTION MODULE = FIRM / FREEZE ✅**

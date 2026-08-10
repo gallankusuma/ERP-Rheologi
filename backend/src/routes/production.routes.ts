@@ -595,9 +595,11 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
         throw new Error(`Cannot issue material for WO with status '${woRows[0]?.status}'. WO must be RELEASED, IN_PROGRESS, or ON_HOLD.`);
       }
 
-      const newIssued = (mat.quantity_issued || 0) + quantity;
-      if (newIssued > mat.quantity_required) {
-        throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${mat.quantity_required}). Already issued: ${mat.quantity_issued || 0}`);
+      const alreadyIssued = Number(mat.quantity_issued) || 0;
+      const requiredQty = Number(mat.quantity_required) || 0;
+      const newIssued = alreadyIssued + Number(quantity);
+      if (newIssued > requiredQty) {
+        throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${requiredQty}). Already issued: ${alreadyIssued}`);
       }
 
       // 2. Lock and validate inventory stock — prevent negative stock
@@ -606,7 +608,7 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
         [mat.product_id, warehouse_id]
       );
       const stock = stockRows[0];
-      const currentQty = stock ? (stock.quantity || 0) : 0;
+      const currentQty = stock ? Number(stock.quantity) || 0 : 0;
 
       if (currentQty < quantity) {
         throw new Error(`Insufficient stock. Available: ${currentQty}, Requested: ${quantity}`);
