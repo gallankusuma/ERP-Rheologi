@@ -152,11 +152,11 @@ router.post('/results', authMiddleware, (_req: Request, res: Response) => {
 });
 
 router.put('/results/:id/approve', authMiddleware, (_req: Request, res: Response) => {
-  res.status(410).json({ error: 'Endpoint removed. Use FPA approval workflow (POST /qc/fpa/:id/approve) instead.' });
+  res.status(410).json({ error: 'Endpoint removed. Use FPA approval workflow (PUT /qc/fpa/:id/approve) instead.' });
 });
 
 router.put('/results/:id/reject', authMiddleware, (_req: Request, res: Response) => {
-  res.status(410).json({ error: 'Endpoint removed. Use FPA rejection workflow (POST /qc/fpa/:id/reject) instead.' });
+  res.status(410).json({ error: 'Endpoint removed. Use FPA rejection workflow (PUT /qc/fpa/:id/reject) instead.' });
 });
 
 // Batches

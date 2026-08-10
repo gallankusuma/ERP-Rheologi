@@ -274,7 +274,7 @@ router.post('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'create'
     
     const result = await dbRun(
       'INSERT INTO qc_analysis_requests (fpa_number, type, reference_id, reference_number, product_id, sampling_area_id, batch_no, quantity, supplier_id, notes, created_by, wo_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [fpa_number, type || 'Incoming', reference_id || null, reference_number || null, product_id, sampling_area_id || null, batch_no || null, quantity || null, supplier_id || null, notes || null, userId, wo_id || null]
+      [fpa_number, type || 'Incoming', reference_id || null, reference_number || null, product_id || null, sampling_area_id || null, batch_no || null, quantity || null, supplier_id || null, notes || null, userId, wo_id || null]
     );
     
     // snapshot specs into qc_analysis_results with full spec data including is_required and param_type
