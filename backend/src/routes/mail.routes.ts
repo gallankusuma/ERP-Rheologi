@@ -76,67 +76,90 @@ router.get('/folders', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/mail/messages — list messages in a folder
+// GET /api/mail/messages — list messages in a folder (with optional search)
 router.get('/messages', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const folder = (req.query.folder as string) || 'INBOX';
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 25;
+    const search = (req.query.search as string) || '';
 
     const { client } = await getImapClient(userId);
     await client.connect();
 
     const mailbox = await client.mailboxOpen(folder);
-    const total = mailbox.exists || 0;
 
-    if (total === 0) {
-      await client.logout();
-      return res.json({ success: true, messages: [], total: 0, page, pages: 0 });
-    }
+    let messages: any[] = [];
+    let total = 0;
 
-    // calculate sequence range (newest first)
-    const end = total - (page - 1) * limit;
-    const start = Math.max(1, end - limit + 1);
+    if (search.trim()) {
+      // use IMAP SEARCH for text matching
+      const searchRaw = await client.search({
+        or: [
+          { subject: search },
+          { from: search },
+          { to: search },
+        ],
+      }, { uid: true });
 
-    if (end < 1) {
-      await client.logout();
-      return res.json({ success: true, messages: [], total, page, pages: Math.ceil(total / limit) });
-    }
+      const searchResults: number[] = Array.isArray(searchRaw) ? searchRaw : [];
+      total = searchResults.length;
+      if (total === 0) {
+        await client.logout();
+        return res.json({ success: true, messages: [], total: 0, page, pages: 0 });
+      }
 
-    const messages: any[] = [];
+      // paginate the UIDs (newest first = reverse order)
+      const sortedUids = searchResults.sort((a, b) => b - a);
+      const startIdx = (page - 1) * limit;
+      const pageUids = sortedUids.slice(startIdx, startIdx + limit);
 
-    for await (const msg of client.fetch(`${start}:${end}`, {
-      envelope: true,
-      flags: true,
-      bodyStructure: true,
-      uid: true,
-    })) {
-      messages.push({
-        uid: msg.uid,
-        seq: msg.seq,
-        subject: msg.envelope?.subject || '(No Subject)',
-        from: msg.envelope?.from?.map((a: any) => ({
-          name: a.name || '',
-          address: `${a.mailbox}@${a.host}`,
-        })) || [],
-        to: msg.envelope?.to?.map((a: any) => ({
-          name: a.name || '',
-          address: `${a.mailbox}@${a.host}`,
-        })) || [],
-        date: msg.envelope?.date || null,
-        messageId: msg.envelope?.messageId || null,
-        flags: Array.from(msg.flags || []),
-        seen: msg.flags?.has('\\Seen') || false,
-        flagged: msg.flags?.has('\\Flagged') || false,
-        hasAttachment: hasAttachments(msg.bodyStructure),
-      });
+      if (pageUids.length > 0) {
+        const uidSet = pageUids.join(',');
+        for await (const msg of client.fetch(uidSet, {
+          envelope: true,
+          flags: true,
+          bodyStructure: true,
+          uid: true,
+        }, { uid: true })) {
+          messages.push(formatMessage(msg));
+        }
+      }
+
+      // sort newest first
+      messages.sort((a, b) => b.uid - a.uid);
+    } else {
+      // no search: use sequence-based pagination
+      total = mailbox.exists || 0;
+
+      if (total === 0) {
+        await client.logout();
+        return res.json({ success: true, messages: [], total: 0, page, pages: 0 });
+      }
+
+      const end = total - (page - 1) * limit;
+      const start = Math.max(1, end - limit + 1);
+
+      if (end < 1) {
+        await client.logout();
+        return res.json({ success: true, messages: [], total, page, pages: Math.ceil(total / limit) });
+      }
+
+      for await (const msg of client.fetch(`${start}:${end}`, {
+        envelope: true,
+        flags: true,
+        bodyStructure: true,
+        uid: true,
+      })) {
+        messages.push(formatMessage(msg));
+      }
+
+      // reverse so newest first
+      messages.reverse();
     }
 
     await client.logout();
-
-    // reverse so newest first
-    messages.reverse();
 
     res.json({
       success: true,
@@ -150,6 +173,29 @@ router.get('/messages', authMiddleware, async (req: Request, res: Response) => {
     res.status(error.message.includes('No email account') ? 400 : 500).json({ success: false, error: error.message });
   }
 });
+
+// helper to format a fetched IMAP message
+function formatMessage(msg: any) {
+  return {
+    uid: msg.uid,
+    seq: msg.seq,
+    subject: msg.envelope?.subject || '(No Subject)',
+    from: msg.envelope?.from?.map((a: any) => ({
+      name: a.name || '',
+      address: `${a.mailbox}@${a.host}`,
+    })) || [],
+    to: msg.envelope?.to?.map((a: any) => ({
+      name: a.name || '',
+      address: `${a.mailbox}@${a.host}`,
+    })) || [],
+    date: msg.envelope?.date || null,
+    messageId: msg.envelope?.messageId || null,
+    flags: Array.from(msg.flags || []),
+    seen: msg.flags?.has('\\Seen') || false,
+    flagged: msg.flags?.has('\\Flagged') || false,
+    hasAttachment: hasAttachments(msg.bodyStructure),
+  };
+}
 
 // GET /api/mail/messages/:uid — get full message with body
 router.get('/messages/:uid', authMiddleware, async (req: Request, res: Response) => {

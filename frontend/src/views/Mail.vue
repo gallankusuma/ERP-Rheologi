@@ -129,11 +129,20 @@
 
     <!-- center: message list -->
     <div class="w-96 bg-white border-r border-gray-200 flex flex-col shrink-0">
-      <div class="px-4 py-3 border-b flex items-center justify-between">
-        <h2 class="font-semibold text-gray-800">{{ folderLabel }}</h2>
-        <button @click="loadMessages" class="text-gray-400 hover:text-gray-600 p-1" title="Refresh">
-          <svg class="w-4 h-4" :class="{ 'animate-spin': loadingMessages }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        </button>
+      <div class="px-4 py-3 border-b">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="font-semibold text-gray-800">{{ folderLabel }}</h2>
+          <button @click="loadMessages" class="text-gray-400 hover:text-gray-600 p-1" title="Refresh">
+            <svg class="w-4 h-4" :class="{ 'animate-spin': loadingMessages }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+        </div>
+        <div class="relative">
+          <svg class="absolute left-2.5 top-2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input v-model="searchQuery" @input="onSearchInput" type="text" placeholder="Search emails..." class="w-full pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+          <button v-if="searchQuery" @click="clearSearch" class="absolute right-2 top-1.5 text-gray-400 hover:text-gray-600">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
       </div>
 
       <div v-if="loadingMessages" class="flex-1 flex items-center justify-center">
@@ -260,7 +269,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { api } from '../lib/api';
 
 interface EmailMessage {
@@ -334,6 +343,13 @@ const composeError = ref('');
 const editorRef = ref<HTMLElement | null>(null);
 const composeForm = ref({ to: '', cc: '', bcc: '', subject: '', html: '' });
 
+// search
+const searchQuery = ref('');
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// auto-refresh
+let refreshInterval: ReturnType<typeof setInterval> | null = null;
+
 // folder display config
 const folderMap: Record<string, { label: string; icon: string }> = {
   'INBOX': { label: 'Inbox', icon: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>' },
@@ -369,6 +385,18 @@ const sanitizedHtml = computed(() => {
 // lifecycle
 onMounted(async () => {
   await checkAccount();
+  // auto-refresh every 30 seconds
+  refreshInterval = setInterval(async () => {
+    if (hasAccount.value && !loadingMessages.value && !showCompose.value) {
+      await loadMessages();
+      await loadUnreadCount();
+    }
+  }, 30000);
+});
+
+onUnmounted(() => {
+  if (refreshInterval) clearInterval(refreshInterval);
+  if (searchTimeout) clearTimeout(searchTimeout);
 });
 
 async function checkAccount() {
@@ -401,7 +429,9 @@ async function loadFolders() {
 async function loadMessages() {
   loadingMessages.value = true;
   try {
-    const res = await api.get('/mail/messages', { params: { folder: currentFolder.value, page: currentPage.value, limit: 25 } });
+    const params: any = { folder: currentFolder.value, page: currentPage.value, limit: 25 };
+    if (searchQuery.value.trim()) params.search = searchQuery.value.trim();
+    const res = await api.get('/mail/messages', { params });
     messages.value = res.data.messages || [];
     totalMessages.value = res.data.total || 0;
     totalPages.value = res.data.pages || 0;
@@ -410,6 +440,24 @@ async function loadMessages() {
   } finally {
     loadingMessages.value = false;
   }
+}
+
+function onSearchInput() {
+  if (searchTimeout) clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    currentPage.value = 1;
+    selectedMessage.value = null;
+    emailDetail.value = null;
+    loadMessages();
+  }, 400);
+}
+
+function clearSearch() {
+  searchQuery.value = '';
+  currentPage.value = 1;
+  selectedMessage.value = null;
+  emailDetail.value = null;
+  loadMessages();
 }
 
 async function loadUnreadCount() {
