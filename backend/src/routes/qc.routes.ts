@@ -528,7 +528,7 @@ router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa
   }
 });
 
-// auto-create NCR from rejected FPA
+// reject FPA
 router.put('/fpa/:id/reject', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
@@ -546,57 +546,7 @@ router.put('/fpa/:id/reject', authMiddleware, requirePermission('quality.qc-fpa'
     // explicitly sync failed to checkpoint
     await syncCheckpoint(fpaId, 'failed');
 
-    // auto-create NCR linked to this FPA
-    let ncrId: number | null = null;
-    try {
-      const now = new Date();
-      const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-      const rand = Math.floor(1000 + Math.random() * 9000);
-      const ncrNumber = `NCR-${datePart}-${rand}`;
-
-      // find batch_id from batch_no
-      let batchId = null;
-      if (fpa && fpa.batch_no) {
-        const batch = await dbGet('SELECT id FROM batches WHERE batch_number = ?', [fpa.batch_no]) as any;
-        if (batch) batchId = batch.id;
-      }
-
-      // collect failed parameters for description
-      const failedParams = await dbAll(
-        `SELECT p.name, ar.actual_value, ar.min_value, ar.max_value, ar.standard_value
-         FROM qc_analysis_results ar
-         LEFT JOIN qc_parameters p ON p.id = ar.parameter_id
-         WHERE ar.fpa_id = ? AND ar.is_pass = 0`,
-        [fpaId]
-      ) as any[];
-
-      const failedList = failedParams.map((fp: any) => {
-        const spec = fp.min_value != null && fp.max_value != null
-          ? `${fp.min_value}-${fp.max_value}`
-          : fp.standard_value || '-';
-        return `${fp.name}: actual=${fp.actual_value}, spec=${spec}`;
-      }).join('; ');
-
-      const description = `Auto-generated from rejected FPA ${fpa?.fpa_number || fpaId}. `
-        + (failedList ? `Failed parameters: ${failedList}. ` : '')
-        + (review_notes ? `Review notes: ${review_notes}` : '');
-
-      const ncrResult = await dbRun(
-        `INSERT INTO qc_ncr (ncr_number, product_id, batch_id, category, severity, description,
-         status, reported_by, source_fpa_id, source_type)
-         VALUES (?, ?, ?, 'product', 'major', ?, 'open', ?, ?, 'fpa_reject')`,
-        [ncrNumber, fpa?.product_id || null, batchId, description, userId, fpaId]
-      );
-      ncrId = ncrResult.insertId;
-    } catch (ncrErr: any) {
-      console.error('Failed to auto-create NCR from rejected FPA:', ncrErr.message);
-    }
-
-    res.json({
-      success: true,
-      message: 'FPA rejected' + (ncrId ? `, NCR #${ncrId} auto-created` : ''),
-      ncr_id: ncrId
-    });
+    res.json({ success: true, message: 'FPA rejected' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to reject FPA' });
   }
