@@ -674,6 +674,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Non-Conformance Reports' },
   },
   {
+    path: '/quality/ncr/:id',
+    name: 'QualityNCRDetailPage',
+    component: () => import('../views/QualityNCRDetail.vue'),
+    meta: { requiresAuth: true, title: 'NCR Detail' },
+  },
+  {
     path: '/quality/rework',
     name: 'QualityReworkPage',
     component: () => import('../views/QualityRework.vue'),
@@ -962,8 +968,12 @@ const router = createRouter({
 // Navigation guard for authentication + per-menu permission (mirrors the sidebar filtering in
 // Layout.vue — this covers direct URL entry / bookmarks / back-button to a page whose menu
 // entry was hidden because the current role isn't granted view access to it).
-router.beforeEach((to, _from, next) => {
-  const isAuthenticated = localStorage.getItem('token');
+router.beforeEach(async (to, _from, next) => {
+  const { useAuthStore } = await import('../stores/auth');
+  const authStore = useAuthStore();
+
+  // check token from store first, fallback to localStorage for first load
+  const isAuthenticated = authStore.isAuthenticated || !!localStorage.getItem('token');
 
   if (to.meta.requiresAuth && !isAuthenticated) {
     next('/login');
@@ -975,12 +985,13 @@ router.beforeEach((to, _from, next) => {
   }
 
   // block direct URL access to pages the role can't view (mirrors sidebar filtering)
-  if (isAuthenticated) {
+  if (isAuthenticated && to.meta.requiresAuth) {
+    // ensure permissions are hydrated from server before checking
+    await authStore.ensureHydrated();
+
     const resource = getResourceForPath(to.path);
     if (resource) {
-      let user: any = null;
-      try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* ignore */ }
-      const hasAccess = !!user?.permissions?.includes(`${resource}.view`);
+      const hasAccess = authStore.hasPermission(`${resource}.view`);
       if (!hasAccess) {
         next('/');
         return;
@@ -992,3 +1003,4 @@ router.beforeEach((to, _from, next) => {
 });
 
 export default router;
+

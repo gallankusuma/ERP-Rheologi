@@ -14,20 +14,25 @@ app.use(pinia);
 app.use(router);
 app.directive('permission', vPermission);
 
-// Initialize auth state from localStorage
+// Initialize auth state and hydrate permissions before mounting
 const authStore = useAuthStore();
-authStore.initializeAuth();
 
-// Global 401 handler
-api.interceptors.response.use(
-	(response) => response,
-	(error) => {
-		if (error?.response?.status === 401) {
-			authStore.logout();
-			router.push('/login');
-		}
-		return Promise.reject(error);
-	}
-);
+async function bootstrap() {
+  await authStore.initializeAuth();
 
-app.mount('#app');
+  // Global 401 handler
+  api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error?.response?.status === 401) {
+        authStore.logout();
+        router.push('/login');
+      }
+      return Promise.reject(error);
+    }
+  );
+
+  app.mount('#app');
+}
+
+bootstrap();

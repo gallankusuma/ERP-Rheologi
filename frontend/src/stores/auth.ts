@@ -11,19 +11,25 @@ interface User {
   department_name?: string;
   department?: string;
   permissions?: string[];
+  permission_version?: string | null;
 }
 
 interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  permissionsHydrated: boolean;
 }
+
+// in-flight hydration promise so multiple callers don't race
+let hydrationPromise: Promise<void> | null = null;
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
     user: null,
     token: localStorage.getItem('token'),
     isAuthenticated: !!localStorage.getItem('token'),
+    permissionsHydrated: false,
   }),
 
   getters: {
@@ -41,6 +47,7 @@ export const useAuthStore = defineStore('auth', {
         this.token = response.data.token;
         this.user = response.data.user;
         this.isAuthenticated = true;
+        this.permissionsHydrated = true;
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
         setAuthToken(response.data.token);
@@ -56,6 +63,7 @@ export const useAuthStore = defineStore('auth', {
         this.token = response.data.token;
         this.user = response.data.user;
         this.isAuthenticated = true;
+        this.permissionsHydrated = true;
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
         setAuthToken(response.data.token);
@@ -69,12 +77,13 @@ export const useAuthStore = defineStore('auth', {
       this.token = null;
       this.user = null;
       this.isAuthenticated = false;
+      this.permissionsHydrated = false;
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       setAuthToken(null);
     },
 
-    initializeAuth() {
+    async initializeAuth() {
       const token = localStorage.getItem('token');
       const user = localStorage.getItem('user');
       if (token) {
@@ -89,10 +98,22 @@ export const useAuthStore = defineStore('auth', {
           console.warn('Failed to parse stored user');
         }
       }
-      // always refresh permissions from server on app load
+      // hydrate permissions from server before marking ready
       if (this.isAuthenticated) {
-        this.refreshPermissions();
+        await this.refreshPermissions();
       }
+      this.permissionsHydrated = true;
+    },
+
+    async ensureHydrated(): Promise<void> {
+      if (this.permissionsHydrated) return;
+      if (!hydrationPromise) {
+        hydrationPromise = this.refreshPermissions().then(() => {
+          this.permissionsHydrated = true;
+          hydrationPromise = null;
+        });
+      }
+      return hydrationPromise;
     },
 
     async refreshPermissions() {

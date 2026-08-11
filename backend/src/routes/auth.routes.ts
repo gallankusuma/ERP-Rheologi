@@ -194,6 +194,11 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
       if (roleRow) roleName = roleRow.name;
     }
 
+    // generate a simple version hash from sorted permissions for staleness detection
+    const permissionVersion = permissions.length
+      ? permissions.sort().join(',').split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0).toString(36)
+      : '0';
+
     res.json({
       user: {
         id: user.id,
@@ -203,6 +208,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
         role_id: user.role_id,
         user_level: user.user_level || 1,
         permissions,
+        permission_version: permissionVersion,
       },
     });
   } catch (error) {

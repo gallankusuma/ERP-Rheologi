@@ -364,13 +364,22 @@ onMounted(() => {
   fetchInbox();
   // Poll every 60s
   void setInterval(fetchInbox, 60000);
-  // Clean up on unmount handled below
+
+  // refresh permissions when user returns to tab (cross-session invalidation)
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 });
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible' && authStore.isAuthenticated) {
+    authStore.refreshPermissions();
+  }
+};
 
 onUnmounted(() => {
   if (closeMenuHandler) {
     document.removeEventListener('click', closeMenuHandler);
   }
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
 });
 
 // ============================================
