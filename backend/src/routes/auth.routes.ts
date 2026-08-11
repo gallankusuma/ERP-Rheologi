@@ -126,10 +126,13 @@ router.post(
       // Get default role for new users (Officer)
       const defaultRole = await dbGet('SELECT id FROM roles WHERE code = ?', ['OFFICER']) as { id: number } | undefined;
 
+      // derive username from email prefix
+      const username = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_');
+
       // Insert user with default role and user_level
       const result = await dbRun(
-        'INSERT INTO users (email, password, name, role_id, user_level, is_active) VALUES (?, ?, ?, ?, ?, 1)',
-        [email, hashedPassword, name, defaultRole?.id || null, 1]
+        'INSERT INTO users (username, email, password, full_name, role_id, user_level, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)',
+        [username, email, hashedPassword, name, defaultRole?.id || null, 1]
       );
 
       // Generate token
