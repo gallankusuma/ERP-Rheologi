@@ -36,6 +36,8 @@ export const useAuthStore = defineStore('auth', {
     /** Check if the user has a specific permission like 'inventory.dashboard.view' */
     hasPermission: (state) => (permission: string): boolean => {
       if (!state.user) return false;
+      // fail-closed: if permissions aren't hydrated, deny
+      if (!state.permissionsHydrated) return false;
       return state.user.permissions?.includes(permission) || false;
     },
   },
@@ -63,10 +65,15 @@ export const useAuthStore = defineStore('auth', {
         this.token = response.data.token;
         this.user = response.data.user;
         this.isAuthenticated = true;
-        this.permissionsHydrated = true;
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
         setAuthToken(response.data.token);
+
+        // register response doesn't include role_id/permissions,
+        // so hydrate from /auth/me before marking ready
+        const hydrated = await this.refreshPermissions();
+        this.permissionsHydrated = hydrated;
+
         return response.data;
       } catch (error: any) {
         throw error.response?.data || error;
@@ -98,33 +105,40 @@ export const useAuthStore = defineStore('auth', {
           console.warn('Failed to parse stored user');
         }
       }
-      // hydrate permissions from server before marking ready
+      // hydrate permissions from server — only mark ready on success
       if (this.isAuthenticated) {
-        await this.refreshPermissions();
+        const hydrated = await this.refreshPermissions();
+        this.permissionsHydrated = hydrated;
+      } else {
+        // not authenticated, nothing to hydrate
+        this.permissionsHydrated = true;
       }
-      this.permissionsHydrated = true;
     },
 
     async ensureHydrated(): Promise<void> {
       if (this.permissionsHydrated) return;
       if (!hydrationPromise) {
-        hydrationPromise = this.refreshPermissions().then(() => {
-          this.permissionsHydrated = true;
+        hydrationPromise = this.refreshPermissions().then((ok) => {
+          this.permissionsHydrated = ok;
           hydrationPromise = null;
         });
       }
       return hydrationPromise;
     },
 
-    async refreshPermissions() {
+    // returns true if /auth/me succeeded, false otherwise
+    async refreshPermissions(): Promise<boolean> {
       try {
         const response = await api.get('/auth/me');
         if (response.data?.user) {
           this.user = response.data.user;
           localStorage.setItem('user', JSON.stringify(response.data.user));
+          return true;
         }
+        return false;
       } catch (e) {
-        // silent fail — user keeps existing permissions
+        // fail-closed: caller knows hydration failed
+        return false;
       }
     },
   },
