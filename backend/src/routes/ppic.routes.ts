@@ -192,8 +192,8 @@ router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), as
 
       // 1. FG Stock from inventory
       const fgStockRow = await dbGet(
-        'SELECT COALESCE(SUM(quantity), 0) as total_stock FROM inventory_stocks WHERE product_id = ?',
-        [d.product_id]
+        'SELECT COALESCE(SUM(quantity), 0) as total_stock FROM inventory_stocks WHERE product_id = ? AND status = ?',
+        [d.product_id, 'available']
       ) as any;
       detail.fg_inventory_stock = Number(fgStockRow?.total_stock || 0);
 
@@ -223,7 +223,7 @@ router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), as
         const bomDetails = await dbAll(`
           SELECT bd.raw_material_id, bd.quantity as quantity_per_unit, bd.unit_of_measure_id,
             p.name as material_name, p.sku as material_sku,
-            COALESCE((SELECT SUM(quantity) FROM inventory_stocks WHERE product_id = bd.raw_material_id), 0) as stock_qty
+            COALESCE((SELECT SUM(quantity) FROM inventory_stocks WHERE product_id = bd.raw_material_id AND status = 'available'), 0) as stock_qty
           FROM bom_details bd
           LEFT JOIN products p ON bd.raw_material_id = p.id
           WHERE bd.bom_header_id = ?
@@ -248,6 +248,29 @@ router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), as
       }
 
       enrichedDetails.push(detail);
+    }
+
+    // load demand provenance sources for all details
+    if (detailIds.length > 0) {
+      const srcPlaceholders = detailIds.map(() => '?').join(',');
+      const sources = await dbAll(`
+        SELECT mds.*,
+          si.quantity as si_qty, si.delivered_qty as si_delivered_qty,
+          so.so_number, so.status as so_status,
+          cust.name as customer_name,
+          fh.forecast_number
+        FROM mps_detail_sources mds
+        LEFT JOIN so_items si ON mds.so_item_id = si.id
+        LEFT JOIN sales_orders so ON si.so_id = so.id
+        LEFT JOIN customers cust ON so.customer_id = cust.id
+        LEFT JOIN forecast_headers fh ON mds.forecast_header_id = fh.id
+        WHERE mds.mps_detail_id IN (${srcPlaceholders})
+        ORDER BY mds.mps_detail_id, mds.source_type, mds.id
+      `, detailIds) as any[];
+
+      for (const detail of enrichedDetails) {
+        detail.demand_sources = sources.filter((s: any) => s.mps_detail_id === detail.id);
+      }
     }
 
     // Generate week columns based on MPS period, not current date
@@ -307,25 +330,31 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
     const endDate = `${header.period_year}-${String(header.period_month).padStart(2, '0')}-31`;
 
     // Source 1: Sales Order Items
+    // use outstanding qty (quantity - delivered_qty) so partially-fulfilled SOs only contribute remaining demand
     let soItems: any[] = [];
+    // only approved/confirmed SOs; use expected_ship_date for week allocation
     soItems = await dbAll(`
-      SELECT 'SO' as source_type, si.id as source_id, si.product_id, si.quantity,
-        so.id as so_id, so.so_date as ref_date, CONCAT('SO-', so.so_number) as ref_label,
+      SELECT 'SO' as source_type, si.id as source_id, si.product_id,
+        (si.quantity - COALESCE(si.delivered_qty, 0)) as quantity,
+        so.id as so_id, COALESCE(so.expected_ship_date, so.so_date) as ref_date, CONCAT('SO-', so.so_number) as ref_label,
         p.name as product_name, p.sku as product_sku,
         bh.id as bom_id
       FROM so_items si
       JOIN sales_orders so ON si.so_id = so.id
       JOIN products p ON si.product_id = p.id
       LEFT JOIN bom_headers bh ON bh.product_id = si.product_id AND bh.status = 'ACTIVE'
-      WHERE so.status IN ('OPEN', 'open', 'APPROVED', 'CONFIRMED', 'PROCESSING', 'DRAFT', 'confirmed')
-        AND (so.so_date BETWEEN ? AND ? OR so.so_date <= ?)
+      WHERE so.status IN ('APPROVED', 'CONFIRMED', 'PROCESSING', 'confirmed', 'processing')
+        AND (si.quantity - COALESCE(si.delivered_qty, 0)) > 0
+        AND (COALESCE(so.expected_ship_date, so.so_date) BETWEEN ? AND ? OR COALESCE(so.expected_ship_date, so.so_date) <= ?)
         AND si.id NOT IN (
-          SELECT COALESCE(so_item_id, 0) FROM mps_details WHERE so_item_id IS NOT NULL
+          SELECT COALESCE(so_item_id, 0) FROM mps_details WHERE so_item_id IS NOT NULL AND mps_header_id = ?
         )
         AND si.id NOT IN (
-          SELECT COALESCE(so_item_id, 0) FROM mps_detail_sources WHERE so_item_id IS NOT NULL
+          SELECT COALESCE(mds.so_item_id, 0) FROM mps_detail_sources mds
+          JOIN mps_details md ON mds.mps_detail_id = md.id
+          WHERE mds.so_item_id IS NOT NULL AND md.mps_header_id = ?
         )
-    `, [startDate, endDate, endDate]) as any[];
+    `, [startDate, endDate, endDate, id, id]) as any[];
 
     // Source 2: Client Projects (where product_id is linked)
     let projItems: any[] = [];
@@ -348,12 +377,14 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
           OR cp.start_date IS NULL
         )
         AND cp.id NOT IN (
-          SELECT COALESCE(project_id, 0) FROM mps_details WHERE project_id IS NOT NULL
+          SELECT COALESCE(project_id, 0) FROM mps_details WHERE project_id IS NOT NULL AND mps_header_id = ?
         )
         AND cp.id NOT IN (
-          SELECT COALESCE(project_id, 0) FROM mps_detail_sources WHERE project_id IS NOT NULL
+          SELECT COALESCE(mds.project_id, 0) FROM mps_detail_sources mds
+          JOIN mps_details md ON mds.mps_detail_id = md.id
+          WHERE mds.project_id IS NOT NULL AND md.mps_header_id = ?
         )
-    `, [startDate, endDate, startDate, endDate, startDate, endDate]) as any[];
+    `, [startDate, endDate, startDate, endDate, startDate, endDate, id, id]) as any[];
 
     // Deduplicate: If a Project was created from an SO, remove SO items from that same SO
     // Projects take priority (they represent committed demand)
@@ -615,7 +646,7 @@ router.post('/mps/:id/add-item', authMiddleware, requirePermission('ppic.mps', '
 router.put('/mps/:id/details/:detailId/remark', authMiddleware, requirePermission('ppic.mps', 'update'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
-    const { current_stock, batch_no, batch_qty, lead_time_weeks } = req.body;
+    const { current_stock, batch_no, batch_qty, lead_time_weeks, buffer_stock } = req.body;
 
     const header = await dbGet('SELECT status FROM mps_headers WHERE id = ?', [id]) as any;
     if (!header) return res.status(404).json({ error: 'MPS not found' });
@@ -626,9 +657,17 @@ router.put('/mps/:id/details/:detailId/remark', authMiddleware, requirePermissio
         current_stock = COALESCE(?, current_stock),
         batch_no = COALESCE(?, batch_no),
         batch_qty = COALESCE(?, batch_qty),
-        lead_time_weeks = COALESCE(?, lead_time_weeks)
+        lead_time_weeks = COALESCE(?, lead_time_weeks),
+        buffer_stock = COALESCE(?, buffer_stock)
       WHERE id = ? AND mps_header_id = ?
-    `, [current_stock, batch_no, batch_qty, lead_time_weeks, detailId, id]);
+    `, [
+      current_stock !== undefined ? current_stock : null,
+      batch_no !== undefined ? batch_no : null,
+      batch_qty !== undefined ? batch_qty : null,
+      lead_time_weeks !== undefined ? lead_time_weeks : null,
+      buffer_stock !== undefined ? buffer_stock : null,
+      detailId, id
+    ]);
 
     res.json({ message: 'Remark updated' });
   } catch (error) {
@@ -1128,7 +1167,7 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
 
       // load actual inventory and saved settings
       const invRow = await dbGet(
-        'SELECT COALESCE(SUM(quantity),0) as total FROM inventory_stocks WHERE product_id = ?', [matId]
+        'SELECT COALESCE(SUM(quantity),0) as total FROM inventory_stocks WHERE product_id = ? AND status = ?', [matId, 'available']
       ) as any;
       const matSettings = await dbGet(
         'SELECT lead_time, first_stock, order_quantity FROM mrp_material_settings WHERE material_id = ?', [matId]
@@ -1252,7 +1291,10 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
       return res.status(400).json({ error: 'No materials have net requirements > 0.' });
     }
 
-    const header = await dbGet('SELECT mps_number, period_year, period_month FROM mps_headers WHERE id = ?', [id]) as any;
+    const header = await dbGet('SELECT mps_number, period_year, period_month, status FROM mps_headers WHERE id = ?', [id]) as any;
+    if (!header || header.status !== 'Confirmed') {
+      return res.status(400).json({ error: 'PR can only be generated from a Confirmed MPS. Please confirm the MPS first.' });
+    }
     const userId = (req as any).user?.userId || null;
 
     // duplicate safety: check if a PR was already generated from this MPS detail
@@ -1369,9 +1411,9 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
       weekColumns.push({ week: wk, year: yr, label: `W${wk}`, dateRange: `${range.start}-${range.end}` });
     }
 
-    // 1. Get ALL MPS headers (Draft + Confirmed) for the requested year
+    // only Confirmed MPS drives procurement via standalone MRP
     const mpsHeaders = await dbAll(
-      `SELECT id FROM mps_headers WHERE status IN ('Draft', 'Confirmed') AND period_year = ?`,
+      `SELECT id FROM mps_headers WHERE status = 'Confirmed' AND period_year = ?`,
       [year]
     ) as any[];
 
@@ -1482,7 +1524,7 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
         'SELECT lead_time, first_stock, order_quantity FROM mrp_material_settings WHERE material_id = ?', [mid]
       ) as any;
       const inv = await dbGet(
-        'SELECT COALESCE(SUM(quantity),0) as total FROM inventory_stocks WHERE product_id = ?', [mid]
+        'SELECT COALESCE(SUM(quantity),0) as total FROM inventory_stocks WHERE product_id = ? AND status = ?', [mid, 'available']
       ) as any;
       matSettingsMap[mid] = settings || null;
       matInventoryMap[mid] = Number(inv?.total || 0);
@@ -1948,6 +1990,7 @@ router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppi
   try {
     const forecast = await dbGet('SELECT * FROM forecast_headers WHERE id = ?', [req.params.id]) as any;
     if (!forecast) return res.status(404).json({ error: 'Forecast not found' });
+    if (forecast.status !== 'Confirmed') return res.status(400).json({ error: 'Only Confirmed forecasts can be pushed to MPS. Please confirm the forecast first.' });
 
     // Get all forecast week data grouped by product_id and week
     const forecastData = await dbAll(`
@@ -2015,6 +2058,20 @@ router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppi
             'INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty) VALUES (?, ?, ?, ?, 0, 0, 0, 0)',
             [mpsDetail.id, pw.week_number, pw.year, pw.total_qty]
           );
+        }
+
+        // write forecast provenance record
+        try {
+          await dbRun(
+            `INSERT INTO mps_detail_sources (mps_detail_id, source_type, forecast_header_id, week_number, year, quantity)
+             VALUES (?, 'FORECAST', ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
+            [mpsDetail.id, Number(req.params.id), pw.week_number, pw.year, pw.total_qty]
+          );
+        } catch (srcErr: any) {
+          if (!srcErr.message?.includes('Duplicate')) {
+            console.error('Error inserting forecast source:', srcErr);
+          }
         }
         updated++;
       }
@@ -2281,6 +2338,20 @@ router.post('/forecast-monthly/push-to-mps', authMiddleware, requirePermission('
               'INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty) VALUES (?, ?, ?, ?, 0, 0, 0, 0)',
               [detail.id, w, year, weeklyForecast.toFixed(2)]
             );
+          }
+
+          // write forecast provenance record
+          try {
+            await dbRun(
+              `INSERT INTO mps_detail_sources (mps_detail_id, source_type, forecast_header_id, week_number, year, quantity)
+               VALUES (?, 'FORECAST', NULL, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
+              [detail.id, w, year, weeklyForecast.toFixed(2)]
+            );
+          } catch (srcErr: any) {
+            if (!srcErr.message?.includes('Duplicate')) {
+              console.error('Error inserting forecast source:', srcErr);
+            }
           }
           updatedWeeks++;
         }

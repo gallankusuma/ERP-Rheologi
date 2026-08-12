@@ -185,17 +185,17 @@
                 </tr>
               </thead>
               <tbody>
-                <!-- FOR EACH PRODUCT: 7 ROWS -->
+                <!-- FOR EACH PRODUCT: 10 ROWS -->
                 <template v-for="(item, pIdx) in mpsDetails" :key="item.id">
                   <!-- Row 1: Demand (SO) -->
                   <tr class="border-b border-gray-100 hover:bg-blue-50/30">
-                    <!-- No (rowspan 8) -->
-                    <td :rowspan="8" class="px-2 py-1 text-center font-bold text-gray-600 border-r bg-gray-50 sticky left-0 z-20 align-top pt-4 text-sm"
+                    <!-- No (rowspan 10) -->
+                    <td :rowspan="10" class="px-2 py-1 text-center font-bold text-gray-600 border-r bg-gray-50 sticky left-0 z-20 align-top pt-4 text-sm"
                       style="border-bottom: 3px solid #0d9488">
                       {{ pIdx + 1 }}
                     </td>
-                    <!-- INFO (rowspan 8) -->
-                    <td :rowspan="8" class="px-2 py-2 border-r bg-gradient-to-b from-teal-50 to-cyan-50 sticky z-20 align-top"
+                    <!-- INFO (rowspan 10) -->
+                    <td :rowspan="10" class="px-2 py-2 border-r bg-gradient-to-b from-teal-50 to-cyan-50 sticky z-20 align-top"
                       style="border-bottom: 3px solid #0d9488; left: 40px">
                       <div class="space-y-1">
                         <div class="bg-amber-500 text-white rounded px-2 py-1.5 flex items-center justify-between">
@@ -227,8 +227,8 @@
                         <div v-if="item.bom_name" class="text-[9px] text-gray-500 px-1">BOM: {{ item.bom_name }}</div>
                       </div>
                     </td>
-                    <!-- PRODUCT (rowspan 8) -->
-                    <td :rowspan="8" class="px-3 py-2 border-r sticky z-20 align-middle text-center bg-white cursor-pointer hover:bg-orange-50 transition-colors group/prod"
+                    <!-- PRODUCT (rowspan 10) -->
+                    <td :rowspan="10" class="px-3 py-2 border-r sticky z-20 align-middle text-center bg-white cursor-pointer hover:bg-orange-50 transition-colors group/prod"
                       style="border-bottom: 3px solid #0d9488; left: 200px" @click="openMrp(item)">
                       <div class="text-[10px] text-teal-600 font-bold">FG-{{ pIdx + 1 }}</div>
                       <div class="font-bold text-gray-900 text-[13px] mt-1 leading-tight group-hover/prod:text-orange-700">{{ item.product_name }}</div>
@@ -246,10 +246,11 @@
                         🗑 Remove
                       </button>
                     </td>
-                    <!-- ROW: Demand SO -->
+                    <!-- ROW: Sales Order -->
                     <td class="px-1 py-1 border-r sticky z-20 bg-white" style="left: 330px">
-                      <div class="bg-teal-600 text-white rounded px-2 py-2 text-[11px] font-bold flex items-center gap-1">
-                        📋 Demand (SO)
+                      <div class="bg-teal-600 text-white rounded px-2 py-2 text-[11px] font-bold flex items-center gap-1 cursor-pointer hover:bg-teal-700 transition-colors"
+                        @click="provenanceItem = provenanceItem === item ? null : item">
+                        📋 Sales Order
                         <span v-if="item.demand_qty > 0" class="ml-auto text-[9px] bg-white/20 px-1 rounded font-normal">Ref:{{ formatN(item.demand_qty) }}</span>
                       </div>
                     </td>
@@ -261,8 +262,8 @@
                         / {{ formatN(item.demand_qty) }}
                       </div>
                     </td>
-                    <!-- UOM (rowspan 8) -->
-                    <td :rowspan="8" class="px-1 py-1 text-center border-r bg-gray-50 align-middle font-semibold text-gray-600 text-[11px]"
+                    <!-- UOM (rowspan 10) -->
+                    <td :rowspan="10" class="px-1 py-1 text-center border-r bg-gray-50 align-middle font-semibold text-gray-600 text-[11px]"
                       style="border-bottom: 3px solid #0d9488">
                       {{ item.uom_name || 'Unit' }}
                     </td>
@@ -295,11 +296,47 @@
                     </td>
                   </tr>
 
-                  <!-- Row 3: Total Demand -->
+                  <!-- Row 3: Forecast Consumed -->
+                  <tr class="border-b border-gray-100">
+                    <td class="px-1 py-1 border-r sticky z-20 bg-white" style="left: 330px">
+                      <div class="bg-cyan-500 text-white rounded px-2 py-1.5 text-[11px] font-bold flex items-center gap-1">
+                        🔄 Forecast Consumed
+                      </div>
+                    </td>
+                    <td class="px-1 py-1 text-center border-r font-bold bg-cyan-50 text-cyan-700 text-sm">
+                      {{ formatN(forecastConsumedSum(item)) }}
+                    </td>
+                    <td v-for="wc in weekColumns" :key="'fc-'+wc.week+'-'+wc.year"
+                      class="px-0 py-0.5 text-center border-r">
+                      <div class="py-1.5 text-[11px] font-medium bg-cyan-50 text-cyan-700">
+                        {{ formatN(getForecastConsumed(item, wc)) }}
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Row 4: Net Forecast -->
+                  <tr class="border-b border-gray-100">
+                    <td class="px-1 py-1 border-r sticky z-20 bg-white" style="left: 330px">
+                      <div class="bg-emerald-500 text-white rounded px-2 py-1.5 text-[11px] font-bold flex items-center gap-1">
+                        📈 Net Forecast
+                      </div>
+                    </td>
+                    <td class="px-1 py-1 text-center border-r font-bold bg-emerald-50 text-emerald-700 text-sm">
+                      {{ formatN(netForecastSum(item)) }}
+                    </td>
+                    <td v-for="wc in weekColumns" :key="'nf-'+wc.week+'-'+wc.year"
+                      class="px-0 py-0.5 text-center border-r">
+                      <div class="py-1.5 text-[11px] font-medium bg-emerald-50 text-emerald-700">
+                        {{ formatN(getNetForecast(item, wc)) }}
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Row 5: Total Demand -->
                   <tr class="border-b border-gray-100">
                     <td class="px-1 py-1 border-r sticky z-20 bg-white" style="left: 330px">
                       <div class="bg-gray-700 text-white rounded px-2 py-2 text-[11px] font-bold flex items-center gap-1">
-                        📌 Total Demand (MAX)
+                        📌 Total Demand
                       </div>
                     </td>
                     <td class="px-1 py-1 text-center border-r font-bold bg-gray-100 text-gray-800 text-sm">
@@ -454,6 +491,49 @@
             </table>
           </div>
         </div>
+
+        <!-- Demand Provenance Panel -->
+        <transition name="toast-fade">
+          <div v-if="provenanceItem" class="mt-3 bg-white rounded-xl border-2 border-teal-300 shadow-lg overflow-hidden">
+            <div class="px-4 py-2.5 bg-gradient-to-r from-teal-600 to-cyan-600 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🔍</span>
+                <div>
+                  <h3 class="text-sm font-bold text-white">Demand Provenance — {{ provenanceItem.product_name }}</h3>
+                  <p class="text-[10px] text-teal-100">Source breakdown for demand quantity</p>
+                </div>
+              </div>
+              <button @click="provenanceItem = null" class="text-white/70 hover:text-white text-lg leading-none px-2">×</button>
+            </div>
+            <div class="p-4">
+              <div v-if="!provenanceItem.demand_sources || provenanceItem.demand_sources.length === 0"
+                class="text-center py-4 text-gray-400 text-sm">
+                No provenance records. Use "Pull Orders" or "Push Forecast" to populate demand sources.
+              </div>
+              <div v-else class="space-y-1.5">
+                <div v-for="src in provenanceItem.demand_sources" :key="src.id"
+                  class="flex items-center justify-between px-3 py-2 rounded-lg text-sm"
+                  :class="src.source_type === 'SO_ITEM' ? 'bg-teal-50 border border-teal-200' : src.source_type === 'FORECAST' ? 'bg-blue-50 border border-blue-200' : 'bg-purple-50 border border-purple-200'">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[11px] font-bold px-1.5 py-0.5 rounded"
+                      :class="src.source_type === 'SO_ITEM' ? 'bg-teal-200 text-teal-800' : src.source_type === 'FORECAST' ? 'bg-blue-200 text-blue-800' : 'bg-purple-200 text-purple-800'">
+                      {{ src.source_type === 'SO_ITEM' ? 'SO' : src.source_type === 'FORECAST' ? 'FORECAST' : 'PROJECT' }}
+                    </span>
+                    <span class="font-medium text-gray-800">
+                      {{ src.source_type === 'SO_ITEM' ? ('SO-' + (src.so_number || '?')) : src.source_type === 'FORECAST' ? ('Forecast' + (src.forecast_number ? ' ' + src.forecast_number : '') + (src.week_number ? ' W' + src.week_number : '')) : ('Project #' + (src.project_id || '?')) }}
+                    </span>
+                    <span v-if="src.customer_name" class="text-[11px] text-gray-500">{{ src.customer_name }}</span>
+                  </div>
+                  <span class="font-bold text-gray-900">{{ formatN(Number(src.quantity) || 0) }}</span>
+                </div>
+                <div class="mt-2 pt-2 border-t border-gray-200 flex items-center justify-between px-3 text-sm font-bold text-gray-700">
+                  <span>Total from sources</span>
+                  <span>{{ formatN(provenanceItem.demand_sources.reduce((s: number, src: any) => s + (Number(src.quantity) || 0), 0)) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </transition>
 
         <!-- Actions for Confirmed MPS: Generate Work Orders -->
         <div v-if="activeMps.status === 'Confirmed' && mpsDetails.length > 0"
@@ -969,6 +1049,7 @@ const saving = ref(false);
 const pulling = ref(false);
 const toastMsg = ref('');
 const toastType = ref<'warn'|'error'|'ok'>('warn');
+const provenanceItem = ref<any>(null);
 let toastTimer: any = null;
 const showToast = (msg: string, type: 'warn'|'error'|'ok' = 'warn') => {
   toastMsg.value = msg;
@@ -1088,9 +1169,39 @@ const taskTotal = (item: any, field: string): number => {
   return sum;
 };
 
+// forecast consumption: portion of forecast "consumed" by confirmed SO
+const getForecastConsumed = (item: any, wc: any): number => {
+  const wd = getWeekData(item, wc);
+  const so = Number(wd.so_qty) || 0;
+  const forecast = Number(wd.forecast_qty) || 0;
+  return Math.min(so, forecast);
+};
+
+const getNetForecast = (item: any, wc: any): number => {
+  const wd = getWeekData(item, wc);
+  const so = Number(wd.so_qty) || 0;
+  const forecast = Number(wd.forecast_qty) || 0;
+  return Math.max(forecast - so, 0);
+};
+
+const netForecastSum = (item: any): number => {
+  let sum = 0;
+  for (const wc of weekColumns.value) sum += getNetForecast(item, wc);
+  return sum;
+};
+
+const forecastConsumedSum = (item: any): number => {
+  let sum = 0;
+  for (const wc of weekColumns.value) sum += getForecastConsumed(item, wc);
+  return sum;
+};
+
+// total demand uses forecast consumption: SO + max(Forecast - SO, 0)
 const getTotalDemand = (item: any, wc: any): number => {
   const wd = getWeekData(item, wc);
-  return Math.max(Number(wd.so_qty) || 0, Number(wd.forecast_qty) || 0);
+  const so = Number(wd.so_qty) || 0;
+  const netForecast = getNetForecast(item, wc);
+  return so + netForecast;
 };
 
 const totalDemandSum = (item: any): number => {
@@ -1101,7 +1212,9 @@ const totalDemandSum = (item: any): number => {
 
 const getBeginningInv = (item: any, weekIdx: number): number => {
   if (weekIdx === 0) {
-    return (Number(item.fg_inventory_stock) || 0) + (Number(item.wo_actual_output) || 0);
+    // canonical FG balance from inventory_stocks only
+    // wo_actual_output is NOT added here because FG Receipt already credits inventory_stocks
+    return Number(item.fg_inventory_stock) || 0;
   }
   return getEndingInv(item, weekIdx - 1);
 };

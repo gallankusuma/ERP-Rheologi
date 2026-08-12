@@ -155,8 +155,8 @@ router.put('/:id', authMiddleware, requirePermission('production.workorders', 'u
         const unavailable = [];
         for (const mat of materials) {
           const stock = await dbGet(
-            'SELECT COALESCE(SUM(quantity), 0) as total FROM inventory_stocks WHERE product_id = ?',
-            [mat.product_id]
+            'SELECT COALESCE(SUM(quantity), 0) as total FROM inventory_stocks WHERE product_id = ? AND status = ?',
+            [mat.product_id, 'available']
           );
           if ((stock?.total || 0) < mat.quantity_required) {
             unavailable.push(`${mat.product_name}: need ${mat.quantity_required}, have ${stock?.total || 0}`);

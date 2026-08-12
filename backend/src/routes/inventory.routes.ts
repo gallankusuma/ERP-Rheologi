@@ -237,58 +237,70 @@ router.post('/stock-transfers/:id/reject', authMiddleware, async (req: Request, 
   }
 });
 
-// Helper function to execute stock transfer (deduct from source, add to destination)
+// helper: execute stock transfer (deduct from source, add to destination) using canonical inventory_stocks
 async function executeStockTransfer(transfer: any) {
   try {
-    console.log('🚚 Executing stock transfer:', transfer);
+    console.log('[StockTransfer] Executing:', transfer);
 
-    // Deduct from source warehouse inventory
+    // deduct from source warehouse
     const sourceInv = await dbGet(`
-      SELECT * FROM inventory 
+      SELECT * FROM inventory_stocks 
       WHERE product_id = ? AND warehouse_id = ?
     `, [transfer.product_id, transfer.from_warehouse_id]) as any;
 
     if (sourceInv) {
-      const newQty = (sourceInv.quantity || 0) - transfer.quantity;
+      const newQty = Math.max(0, (Number(sourceInv.quantity) || 0) - transfer.quantity);
       await dbRun(`
-        UPDATE inventory 
-        SET quantity = ?, updated_at = CURRENT_TIMESTAMP 
+        UPDATE inventory_stocks 
+        SET quantity = ?, last_updated = CURRENT_TIMESTAMP 
         WHERE id = ?
       `, [newQty, sourceInv.id]);
-      console.log(`✅ Deducted ${transfer.quantity} from source warehouse`);
+      console.log(`[StockTransfer] Deducted ${transfer.quantity} from source warehouse ${transfer.from_warehouse_id}`);
     } else {
-      console.warn('⚠️ Source inventory record not found, skipping deduction');
+      console.warn('[StockTransfer] Source inventory_stocks record not found, skipping deduction');
     }
 
-    // Add to destination warehouse inventory
+    // add to destination warehouse
     const destInv = await dbGet(`
-      SELECT * FROM inventory 
+      SELECT * FROM inventory_stocks 
       WHERE product_id = ? AND warehouse_id = ?
     `, [transfer.product_id, transfer.to_warehouse_id]) as any;
 
     if (destInv) {
-      const newQty = (destInv.quantity || 0) + transfer.quantity;
       await dbRun(`
-        UPDATE inventory 
-        SET quantity = ?, updated_at = CURRENT_TIMESTAMP 
+        UPDATE inventory_stocks 
+        SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP 
         WHERE id = ?
-      `, [newQty, destInv.id]);
-      console.log(`✅ Added ${transfer.quantity} to destination warehouse`);
+      `, [transfer.quantity, destInv.id]);
+      console.log(`[StockTransfer] Added ${transfer.quantity} to destination warehouse ${transfer.to_warehouse_id}`);
     } else {
-      // Create new inventory record if doesn't exist
       await dbRun(`
-        INSERT INTO inventory (product_id, warehouse_id, quantity)
-        VALUES (?, ?, ?)
+        INSERT INTO inventory_stocks (product_id, warehouse_id, quantity, last_updated)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
       `, [transfer.product_id, transfer.to_warehouse_id, transfer.quantity]);
-      console.log(`✅ Created new inventory record at destination`);
+      console.log(`[StockTransfer] Created new inventory_stocks record at destination`);
     }
 
-    console.log('✅ Stock transfer execution completed');
+    // record stock movements for audit trail
+    const transferLabel = transfer.transfer_number || `TRF-${transfer.id || 'manual'}`;
+    await dbRun(
+      `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
+       VALUES (?, ?, ?, 'outbound', 'TRANSFER', ?, ?, CURRENT_TIMESTAMP)`,
+      [transfer.product_id, transfer.from_warehouse_id, transfer.quantity, transfer.id || null, `${transferLabel} - Transfer out`]
+    );
+    await dbRun(
+      `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
+       VALUES (?, ?, ?, 'inbound', 'TRANSFER', ?, ?, CURRENT_TIMESTAMP)`,
+      [transfer.product_id, transfer.to_warehouse_id, transfer.quantity, transfer.id || null, `${transferLabel} - Transfer in`]
+    );
+
+    console.log('[StockTransfer] Execution completed');
   } catch (error) {
-    console.error('❌ Error executing stock transfer:', error);
+    console.error('[StockTransfer] Error:', error);
     throw error;
   }
 }
+
 
 // ========================================
 // STOCK ADJUSTMENTS (Manual Corrections)

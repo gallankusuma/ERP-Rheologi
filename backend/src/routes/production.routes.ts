@@ -228,7 +228,7 @@ router.get('/planning/weekly', authMiddleware, requirePermission('production.pla
          (w.scheduled_start IS NOT NULL AND YEAR(w.scheduled_start) = ? AND MONTH(w.scheduled_start) = ?)
          OR (w.scheduled_end IS NOT NULL AND YEAR(w.scheduled_end) = ? AND MONTH(w.scheduled_end) = ?)
          OR (w.actual_start IS NOT NULL AND YEAR(w.actual_start) = ? AND MONTH(w.actual_start) = ?)
-         OR (w.status IN ('in_progress', 'in-progress', 'pending', 'planned'))
+         OR (w.status IN ('in_progress', 'in-progress'))
        )
        ORDER BY w.scheduled_start ASC, w.created_at ASC`,
       [year, month, year, month, year, month]
@@ -605,7 +605,7 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
 
       // 2. Lock and validate inventory stock — prevent negative stock
       const [stockRows] = await conn.execute(
-        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? FOR UPDATE',
+        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = \'available\' FOR UPDATE',
         [mat.product_id, warehouse_id]
       );
       const stock = stockRows[0];
@@ -1332,7 +1332,7 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
 
       // 4. Update inventory stock (with row lock)
       const [stockRows] = await conn.execute(
-        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? FOR UPDATE',
+        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = \'available\' FOR UPDATE',
         [wo.product_id, warehouse_id]
       );
       if (stockRows[0]) {
@@ -1466,7 +1466,7 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
              GREATEST(COALESCE(req.total_required, 0) - COALESCE(inv.total_qty, 0), 0) AS total_shortage
       FROM products p
       LEFT JOIN uom u ON p.unit_of_measure_id = u.id
-      LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = p.id
+      LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks WHERE status = 'available' GROUP BY product_id) inv ON inv.product_id = p.id
       JOIN (
         SELECT bd.raw_material_id AS product_id, SUM(bd.quantity * wo.quantity) AS total_required
         FROM work_orders wo
@@ -1525,7 +1525,7 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
       FROM work_orders wo
       JOIN bom_details bd ON bd.bom_header_id = wo.bom_id
       JOIN products p ON p.id = bd.raw_material_id
-      LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks GROUP BY product_id) inv ON inv.product_id = bd.raw_material_id
+      LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks WHERE status = 'available' GROUP BY product_id) inv ON inv.product_id = bd.raw_material_id
       WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
         AND wo.bom_id IS NOT NULL
       ORDER BY shortage DESC

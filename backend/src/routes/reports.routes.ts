@@ -61,32 +61,36 @@ router.get('/inventory', authMiddleware, async (req: Request, res: Response) => 
       SELECT
         COUNT(DISTINCT product_id) AS total_products,
         SUM(quantity) AS total_stock,
-        SUM(quantity * COALESCE(unit_cost, 0)) AS total_valuation
-      FROM inventory
+        0 AS total_valuation
+      FROM inventory_stocks
+      WHERE status = 'available'
     `, []);
 
     const lowStock = await dbAll(`
-      SELECT p.name, p.sku, i.quantity, p.minimum_stock
-      FROM inventory i
+      SELECT p.name, p.sku, COALESCE(SUM(i.quantity), 0) as quantity, p.minimum_stock
+      FROM inventory_stocks i
       JOIN products p ON i.product_id = p.id
-      WHERE i.quantity <= COALESCE(p.minimum_stock, 0) AND p.minimum_stock > 0
-      ORDER BY (i.quantity / p.minimum_stock) ASC LIMIT 20
+      WHERE p.minimum_stock > 0 AND i.status = 'available'
+      GROUP BY i.product_id, p.name, p.sku, p.minimum_stock
+      HAVING COALESCE(SUM(i.quantity), 0) <= p.minimum_stock
+      ORDER BY (COALESCE(SUM(i.quantity), 0) / p.minimum_stock) ASC LIMIT 20
     `, []);
 
     const byWarehouse = await dbAll(`
       SELECT w.name AS warehouse_name, COUNT(DISTINCT i.product_id) AS products,
-        SUM(i.quantity) AS total_qty, SUM(i.quantity * COALESCE(i.unit_cost, 0)) AS valuation
-      FROM inventory i
+        SUM(i.quantity) AS total_qty, 0 AS valuation
+      FROM inventory_stocks i
       LEFT JOIN warehouses w ON i.warehouse_id = w.id
       GROUP BY i.warehouse_id, w.name
-      ORDER BY valuation DESC
+      ORDER BY total_qty DESC
     `, []);
 
     const topItems = await dbAll(`
-      SELECT p.name, p.sku, i.quantity, i.quantity * COALESCE(i.unit_cost, 0) AS value
-      FROM inventory i
+      SELECT p.name, p.sku, SUM(i.quantity) as quantity, 0 AS value
+      FROM inventory_stocks i
       JOIN products p ON i.product_id = p.id
-      ORDER BY value DESC LIMIT 20
+      GROUP BY i.product_id, p.name, p.sku
+      ORDER BY quantity DESC LIMIT 20
     `, []);
 
     res.json({ success: true, data: { summary, lowStock, byWarehouse, topItems } });

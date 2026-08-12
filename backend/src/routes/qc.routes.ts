@@ -648,6 +648,65 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
       await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
     }
     await syncCheckpoint(fpaId, 'passed');
+
+    // P0-2: release qc_hold inventory when Incoming QC passes
+    if (fpa.type === 'Incoming' && fpa.reference_id) {
+      try {
+        // find grn to get warehouse_id
+        const grn = await dbGet('SELECT warehouse_id FROM goods_receipts WHERE id = ?', [fpa.reference_id]) as any;
+        const warehouseId = grn?.warehouse_id || 1;
+
+        // find qc_hold row for this product+warehouse
+        const holdRow = await dbGet(
+          'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+          [fpa.product_id, warehouseId, 'qc_hold']
+        ) as any;
+
+        if (holdRow) {
+          const releaseQty = Number(fpa.quantity) || Number(holdRow.quantity);
+
+          // check if available row exists for same product+warehouse
+          const availRow = await dbGet(
+            'SELECT id FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+            [fpa.product_id, warehouseId, 'available']
+          ) as any;
+
+          if (availRow) {
+            // merge: add to available, reduce qc_hold
+            await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, availRow.id]);
+            const remaining = Number(holdRow.quantity) - releaseQty;
+            if (remaining <= 0) {
+              await dbRun('DELETE FROM inventory_stocks WHERE id = ?', [holdRow.id]);
+            } else {
+              await dbRun('UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [remaining, holdRow.id]);
+            }
+          } else {
+            // no available row: just flip status
+            if (releaseQty >= Number(holdRow.quantity)) {
+              await dbRun('UPDATE inventory_stocks SET status = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
+            } else {
+              // partial release: split row
+              await dbRun('UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, holdRow.id]);
+              await dbRun(
+                'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+                [warehouseId, fpa.product_id, releaseQty, 'available']
+              );
+            }
+          }
+
+          // record stock movement for QC release
+          await dbRun(
+            `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
+             VALUES (?, ?, ?, 'qc_release', 'FPA', ?, ?, CURRENT_TIMESTAMP)`,
+            [fpa.product_id, warehouseId, releaseQty, fpaId, `QC PASS - ${fpa.fpa_number} released to available`]
+          );
+          console.log(`[QC Release] Released ${releaseQty} of product ${fpa.product_id} from qc_hold to available`);
+        }
+      } catch (releaseErr: any) {
+        console.error('[QC Release] Failed to release qc_hold inventory:', releaseErr.message);
+        // don't fail the approve — inventory release is best-effort
+      }
+    }
     
     res.json({ success: true, message: 'Approve #2 completed - FPA approved' });
   } catch (error) {

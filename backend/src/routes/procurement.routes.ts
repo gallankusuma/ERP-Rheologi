@@ -1766,23 +1766,29 @@ router.delete('/goods-receipts/:id', authMiddleware, requirePermission('procurem
       }
     };
 
-    // If GRN was approved (inventory was updated), reverse the stock
+    // if GRN was approved (inventory was updated), reverse the inventory_stocks balance
     if (Number(grn.approval_status) === 2) {
-      // Get items to reverse inventory
       const grnItems = await dbAll(
         'SELECT * FROM grn_items WHERE grn_id = ?', [id]
       ) as any[];
 
       for (const item of grnItems) {
         if (item.product_id && (item.received_quantity || 0) > 0) {
-          // Reduce inventory
+          // reverse canonical inventory_stocks (keyed by product + warehouse)
           await safeCleanup(
-            'UPDATE inventory SET quantity_on_hand = GREATEST(0, quantity_on_hand - ?), quantity_available = GREATEST(0, quantity_available - ?) WHERE product_id = ?',
-            [item.received_quantity, item.received_quantity, item.product_id],
-            'inventory_reverse'
+            'UPDATE inventory_stocks SET quantity = GREATEST(0, quantity - ?), last_updated = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?',
+            [item.received_quantity, item.product_id, grn.warehouse_id || 1],
+            'inventory_stocks_reverse'
           );
         }
       }
+
+      // also delete inventory_transactions for this GRN
+      await safeCleanup(
+        'DELETE FROM inventory_transactions WHERE reference_type = ? AND reference_id = ?',
+        ['GRN', id],
+        'inventory_transactions_reverse'
+      );
     }
 
     // 1. Delete stock movements referencing this GRN
@@ -1991,7 +1997,8 @@ router.post('/goods-receipts/:id/reject', authMiddleware, async (req: Request, r
   }
 });
 
-// Sync approved GRN into inventory (quantity_on_hand / available) and log inventory transactions
+// sync approved GRN into inventory (as qc_hold) and log inventory transactions
+// stock is held until Incoming QC passes, then released to 'available'
 async function applyGrnToInventory(grn: any, items: any[]) {
   try {
     const alreadyPosted = await dbGet(
@@ -2004,33 +2011,27 @@ async function applyGrnToInventory(grn: any, items: any[]) {
       return;
     }
 
-    const defaultLocation = grn.warehouse_id ? `WH-${grn.warehouse_id}` : null;
-
     for (const item of items) {
       const qty = Number(item.received_quantity || 0);
       if (!item.product_id || qty <= 0) continue;
 
-      const existing = await dbGet(
-        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ?', 
-        [item.product_id, grn.warehouse_id || 1]
+      // look for existing qc_hold row for same product+warehouse
+      const existingHold = await dbGet(
+        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+        [item.product_id, grn.warehouse_id || 1, 'qc_hold']
       ) as any;
 
-      let inventoryId: number;
-      if (existing) {
+      if (existingHold) {
         await dbRun(
-          `UPDATE inventory_stocks
-          SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP
-          WHERE id = ?`,
-          [qty, existing.id]
+          `UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
+          [qty, existingHold.id]
         );
-        inventoryId = existing.id;
       } else {
-        const insertResult = await dbRun(
-          `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, reorder_point)
-          VALUES (?, ?, ?, 10)`,
+        await dbRun(
+          `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, reorder_point)
+          VALUES (?, ?, ?, 'qc_hold', 0)`,
           [grn.warehouse_id || 1, item.product_id, qty]
         );
-        inventoryId = insertResult.insertId;
       }
 
       const grnLabel = grn.grn_number || grn.gr_number || `GRN-${grn.id}`;
@@ -2042,12 +2043,12 @@ async function applyGrnToInventory(grn: any, items: any[]) {
           grn.warehouse_id,
           qty,
           grn.id,
-          `${grnLabel}${item.remarks ? ' - ' + item.remarks : ''}`
+          `${grnLabel} [QC_HOLD]${item.remarks ? ' - ' + item.remarks : ''}`
         ]
       );
     }
 
-    console.log('[GRN Approve] Inventory updated from GRN', { grnId: grn.id, items: items.length });
+    console.log('[GRN Approve] Inventory updated from GRN (qc_hold)', { grnId: grn.id, items: items.length });
   } catch (error) {
     console.error('[GRN Approve] Failed to apply GRN to inventory:', error);
   }

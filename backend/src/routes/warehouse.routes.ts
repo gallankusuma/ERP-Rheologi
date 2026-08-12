@@ -87,26 +87,28 @@ router.post('/stock-movements', authMiddleware, requirePermission('master_data.w
     );
     const movementId = movementResult.insertId;
 
-    const inv = await dbGet('SELECT id, quantity_on_hand, quantity_reserved FROM inventory WHERE product_id = ?', [product_id]) as { id: number; quantity_on_hand: number; quantity_reserved: number } | undefined;
+    // update canonical inventory_stocks balance
+    const inv = await dbGet(
+      'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ?',
+      [product_id, warehouse_id]
+    ) as { id: number; quantity: number } | undefined;
 
     if (!inv) {
-      const onHand = movement_type === 'OUT' ? -qty : qty;
-      if (onHand < 0) throw new Error('Cannot create negative stock');
+      const balance = movement_type === 'OUT' ? -qty : qty;
+      if (balance < 0) throw new Error('Cannot create negative stock');
       await dbRun(
-        'INSERT INTO inventory (product_id, quantity_on_hand, quantity_reserved, quantity_available, location) VALUES (?, ?, ?, ?, ?)',
-        [product_id, onHand, 0, onHand, null]
+        'INSERT INTO inventory_stocks (product_id, warehouse_id, quantity, last_updated) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+        [product_id, warehouse_id, balance]
       );
     } else {
-      let onHand = inv.quantity_on_hand || 0;
-      if (movement_type === 'IN') onHand += qty;
-      if (movement_type === 'OUT') onHand -= qty;
-      if (movement_type === 'TRANSFER') onHand = onHand; // net zero but record movement
-      if (onHand < 0) throw new Error('Insufficient stock');
-      
-      const reserved = inv.quantity_reserved || 0;
+      let balance = Number(inv.quantity) || 0;
+      if (movement_type === 'IN') balance += qty;
+      if (movement_type === 'OUT') balance -= qty;
+      // TRANSFER type is net-zero at this warehouse — movement recorded but balance unchanged
+      if (balance < 0) throw new Error('Insufficient stock');
       await dbRun(
-        'UPDATE inventory SET quantity_on_hand = ?, quantity_reserved = ?, quantity_available = ? WHERE id = ?',
-        [onHand, reserved, onHand - reserved, inv.id]
+        'UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+        [balance, inv.id]
       );
     }
 
