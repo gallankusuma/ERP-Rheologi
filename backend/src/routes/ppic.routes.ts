@@ -342,7 +342,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
       FROM so_items si
       JOIN sales_orders so ON si.so_id = so.id
       JOIN products p ON si.product_id = p.id
-      LEFT JOIN bom_headers bh ON bh.product_id = si.product_id AND bh.status = 'ACTIVE'
+      LEFT JOIN bom_headers bh ON bh.product_id = si.product_id AND bh.status = 'ACTIVE' AND bh.approval_status = 2
       WHERE so.status IN ('APPROVED', 'CONFIRMED', 'PROCESSING', 'confirmed', 'processing')
         AND (si.quantity - COALESCE(si.delivered_qty, 0)) > 0
         AND (COALESCE(so.expected_ship_date, so.so_date) BETWEEN ? AND ? OR COALESCE(so.expected_ship_date, so.so_date) <= ?)
@@ -367,7 +367,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
         bh.id as bom_id
       FROM client_projects cp
       JOIN products p ON cp.product_id = p.id
-      LEFT JOIN bom_headers bh ON bh.product_id = cp.product_id AND bh.status = 'ACTIVE'
+      LEFT JOIN bom_headers bh ON bh.product_id = cp.product_id AND bh.status = 'ACTIVE' AND bh.approval_status = 2
       WHERE cp.status IN ('open', 'in_progress')
         AND cp.product_id IS NOT NULL
         AND (
@@ -595,7 +595,7 @@ router.post('/mps/:id/add-item', authMiddleware, requirePermission('ppic.mps', '
     let bomId = reqBomId || null;
     if (!bomId) {
       const bom = await dbGet(
-        "SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' LIMIT 1",
+        "SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' AND approval_status = 2 LIMIT 1",
         [product_id]
       ) as any;
       bomId = bom?.id || null;
@@ -1177,6 +1177,29 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
       const firstStock = matSettings ? Number(matSettings.first_stock) : actualStock;
       const orderQty = matSettings ? Number(matSettings.order_quantity) : 0;
 
+      // P1: query open PO outstanding for this material
+      const poOutstanding = await dbAll(`
+        SELECT GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) AS outstanding,
+               po.expected_date
+        FROM purchase_order_items poi
+        JOIN purchase_orders po ON poi.purchase_order_id = po.id
+        WHERE po.status IN ('APPROVED','PROCESSING','PARTIAL')
+          AND po.approval_status = 2
+          AND poi.product_id = ?
+          AND GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) > 0
+      `, [matId]) as any[];
+
+      // map PO outstanding to week numbers
+      const poByWeek: Record<string, number> = {};
+      for (const po of poOutstanding) {
+        if (!po.expected_date) continue;
+        const poDate = new Date(po.expected_date);
+        const poWeek = getWeekNumber(poDate);
+        const poYear = poDate.getFullYear();
+        const key = `${poWeek}-${poYear}`;
+        poByWeek[key] = (poByWeek[key] || 0) + Number(po.outstanding);
+      }
+
       // Calculate per-week data
       const weeks = weekColumns.map((wc: any) => {
         // Gross requirement = MPS production_qty × BOM qty_per_unit
@@ -1188,10 +1211,15 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
         const mrpWeek = mrpData.find((m: any) => m.material_id === matId && m.week_number === wc.week && m.year === wc.year);
         const plannedReceipt = Number(mrpWeek?.planned_order_receipt || 0);
 
+        // PO scheduled receipt for this week
+        const key = `${wc.week}-${wc.year}`;
+        const scheduledReceipt = Math.round((poByWeek[key] || 0) * 100) / 100;
+
         return {
           week_number: wc.week,
           year: wc.year,
           gross_requirements: Math.round(grossReq * 100) / 100,
+          scheduled_receipt: scheduledReceipt,
           planned_order_receipt: plannedReceipt,
         };
       });
@@ -1519,6 +1547,9 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
     const allMatIds = Object.keys(materialMap).map(Number);
     const matSettingsMap: Record<number, any> = {};
     const matInventoryMap: Record<number, number> = {};
+    // P1: PO scheduled receipts per material per week
+    const matPoByWeek: Record<number, Record<string, number>> = {};
+
     for (const mid of allMatIds) {
       const settings = await dbGet(
         'SELECT lead_time, first_stock, order_quantity FROM mrp_material_settings WHERE material_id = ?', [mid]
@@ -1528,6 +1559,28 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
       ) as any;
       matSettingsMap[mid] = settings || null;
       matInventoryMap[mid] = Number(inv?.total || 0);
+
+      // query open PO outstanding for this material
+      const poOutstanding = await dbAll(`
+        SELECT GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) AS outstanding,
+               po.expected_date
+        FROM purchase_order_items poi
+        JOIN purchase_orders po ON poi.purchase_order_id = po.id
+        WHERE po.status IN ('APPROVED','PROCESSING','PARTIAL')
+          AND po.approval_status = 2
+          AND poi.product_id = ?
+          AND GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) > 0
+      `, [mid]) as any[];
+
+      matPoByWeek[mid] = {};
+      for (const po of poOutstanding) {
+        if (!po.expected_date) continue;
+        const poDate = new Date(po.expected_date);
+        const poWeek = getWeekNumber(poDate);
+        const poYear = poDate.getFullYear();
+        const key = `${poWeek}-${poYear}`;
+        matPoByWeek[mid][key] = (matPoByWeek[mid][key] || 0) + Number(po.outstanding);
+      }
     }
 
     // 9. Build final materials array with weekly data
@@ -1544,10 +1597,14 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
         const plannedReceipt = Number(savedWeek?.planned_order_receipt || 0);
         const plannedRelease = Number(savedWeek?.planned_order_release || 0);
 
+        // PO scheduled receipt for this week
+        const scheduledReceipt = Math.round((matPoByWeek[mat.material_id]?.[key] || 0) * 100) / 100;
+
         return {
           week_number: wc.week,
           year: wc.year,
           gross_requirements: Math.round(grossReq * 100) / 100,
+          scheduled_receipt: scheduledReceipt,
           planned_order_receipt: plannedReceipt,
           planned_order_release: plannedRelease
         };
@@ -2028,7 +2085,7 @@ router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppi
         if (!product) continue;
 
         const bom = await dbGet(
-          "SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' LIMIT 1",
+          "SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' AND approval_status = 2 LIMIT 1",
           [productId]
         ) as any;
 

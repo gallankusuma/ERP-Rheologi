@@ -754,12 +754,16 @@ const ensureQcSchema = async (connection: any) => {
 
 const ensurePpicSchema = async (connection: any) => {
   const statements = [
+    // P0-4: mps_detail_sources with FORECAST support (fresh DB)
     `CREATE TABLE IF NOT EXISTS mps_detail_sources (
       id INT AUTO_INCREMENT PRIMARY KEY,
       mps_detail_id INT NOT NULL,
-      source_type ENUM('SO_ITEM','PROJECT') NOT NULL,
+      source_type ENUM('SO_ITEM','PROJECT','FORECAST') NOT NULL,
       so_item_id INT NULL,
       project_id INT NULL,
+      forecast_header_id INT NULL,
+      week_number INT NULL,
+      year INT NULL,
       quantity DECIMAL(15,2) DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_so_item (so_item_id),
@@ -776,11 +780,57 @@ const ensurePpicSchema = async (connection: any) => {
     )`,
     `ALTER TABLE line_processes ADD COLUMN IF NOT EXISTS working_hours_per_week DECIMAL(5,1) DEFAULT 40`,
     `ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS week_number INT NULL`,
+
+    // P0-4: migrate existing mps_detail_sources to support FORECAST
+    `ALTER TABLE mps_detail_sources MODIFY COLUMN source_type ENUM('SO_ITEM','PROJECT','FORECAST') NOT NULL`,
+    `ALTER TABLE mps_detail_sources ADD COLUMN IF NOT EXISTS forecast_header_id INT NULL`,
+    `ALTER TABLE mps_detail_sources ADD COLUMN IF NOT EXISTS week_number INT NULL`,
+    `ALTER TABLE mps_detail_sources ADD COLUMN IF NOT EXISTS year INT NULL`,
+
+    // P0-1: ensure inventory_stocks has status column
+    `ALTER TABLE inventory_stocks ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'available'`,
+
+    // P0-5: batch-approve all ACTIVE BOMs for BOM parity with Production
+    `UPDATE bom_headers SET approval_status = 2 WHERE status = 'ACTIVE' AND approval_status != 2`,
   ];
 
   for (const statement of statements) {
     await execSchemaEnsure(connection, statement);
   }
+
+  // P0-1: migrate unique key from (warehouse_id, product_id) to (warehouse_id, product_id, status)
+  // this allows both 'available' and 'qc_hold' rows per product+warehouse
+  // must drop FK constraints first since MySQL uses the unique index to back them
+  try {
+    // check if old index still exists
+    const [indexes] = await connection.execute(
+      "SHOW INDEX FROM inventory_stocks WHERE Key_name = 'unique_warehouse_product'"
+    );
+    if (indexes.length > 0) {
+      // drop FKs that depend on the unique index columns
+      try { await connection.execute('ALTER TABLE inventory_stocks DROP FOREIGN KEY inventory_stocks_ibfk_1'); } catch (_e) { /* already dropped */ }
+      try { await connection.execute('ALTER TABLE inventory_stocks DROP FOREIGN KEY inventory_stocks_ibfk_2'); } catch (_e) { /* already dropped */ }
+
+      await connection.execute('ALTER TABLE inventory_stocks DROP INDEX unique_warehouse_product');
+      console.log('Dropped old unique_warehouse_product index');
+
+      // re-add the FKs (they'll use the idx_product_id / new indexes)
+      try { await connection.execute('ALTER TABLE inventory_stocks ADD CONSTRAINT inventory_stocks_ibfk_1 FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)'); } catch (_e) { /* may already exist */ }
+      try { await connection.execute('ALTER TABLE inventory_stocks ADD CONSTRAINT inventory_stocks_ibfk_2 FOREIGN KEY (product_id) REFERENCES products(id)'); } catch (_e) { /* may already exist */ }
+    }
+  } catch (e: any) {
+    console.warn('unique_warehouse_product migration warning:', e.message?.substring(0, 120));
+  }
+  try {
+    await connection.execute('ALTER TABLE inventory_stocks ADD UNIQUE KEY uq_wh_product_status (warehouse_id, product_id, status)');
+    console.log('Created uq_wh_product_status index');
+  } catch (e: any) {
+    // already exists
+    if (!e.message?.includes('Duplicate key name')) {
+      console.warn('Create uq_wh_product_status warning:', e.message?.substring(0, 100));
+    }
+  }
+
   console.log('PPIC module schema ensured');
 };
 

@@ -1999,59 +1999,56 @@ router.post('/goods-receipts/:id/reject', authMiddleware, async (req: Request, r
 
 // sync approved GRN into inventory (as qc_hold) and log inventory transactions
 // stock is held until Incoming QC passes, then released to 'available'
+// errors propagate to caller — GRN approval must fail if inventory posting fails
 async function applyGrnToInventory(grn: any, items: any[]) {
-  try {
-    const alreadyPosted = await dbGet(
-      'SELECT COUNT(*) as cnt FROM inventory_transactions WHERE reference_type = ? AND reference_id = ?',
-      ['GRN', grn.id]
+  const alreadyPosted = await dbGet(
+    'SELECT COUNT(*) as cnt FROM inventory_transactions WHERE reference_type = ? AND reference_id = ?',
+    ['GRN', grn.id]
+  ) as any;
+
+  if ((alreadyPosted?.cnt || 0) > 0) {
+    console.log('[GRN Approve] Inventory already updated for this GRN, skipping duplicate apply');
+    return;
+  }
+
+  for (const item of items) {
+    const qty = Number(item.received_quantity || 0);
+    if (!item.product_id || qty <= 0) continue;
+
+    // look for existing qc_hold row for same product+warehouse
+    const existingHold = await dbGet(
+      'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+      [item.product_id, grn.warehouse_id || 1, 'qc_hold']
     ) as any;
 
-    if ((alreadyPosted?.cnt || 0) > 0) {
-      console.log('[GRN Approve] Inventory already updated for this GRN, skipping duplicate apply');
-      return;
-    }
-
-    for (const item of items) {
-      const qty = Number(item.received_quantity || 0);
-      if (!item.product_id || qty <= 0) continue;
-
-      // look for existing qc_hold row for same product+warehouse
-      const existingHold = await dbGet(
-        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-        [item.product_id, grn.warehouse_id || 1, 'qc_hold']
-      ) as any;
-
-      if (existingHold) {
-        await dbRun(
-          `UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
-          [qty, existingHold.id]
-        );
-      } else {
-        await dbRun(
-          `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, reorder_point)
-          VALUES (?, ?, ?, 'qc_hold', 0)`,
-          [grn.warehouse_id || 1, item.product_id, qty]
-        );
-      }
-
-      const grnLabel = grn.grn_number || grn.gr_number || `GRN-${grn.id}`;
+    if (existingHold) {
       await dbRun(
-        `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
-        VALUES (?, ?, ?, 'inbound', 'GRN', ?, ?, CURRENT_TIMESTAMP)`,
-        [
-          item.product_id,
-          grn.warehouse_id,
-          qty,
-          grn.id,
-          `${grnLabel} [QC_HOLD]${item.remarks ? ' - ' + item.remarks : ''}`
-        ]
+        `UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
+        [qty, existingHold.id]
+      );
+    } else {
+      await dbRun(
+        `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, reorder_point)
+        VALUES (?, ?, ?, 'qc_hold', 0)`,
+        [grn.warehouse_id || 1, item.product_id, qty]
       );
     }
 
-    console.log('[GRN Approve] Inventory updated from GRN (qc_hold)', { grnId: grn.id, items: items.length });
-  } catch (error) {
-    console.error('[GRN Approve] Failed to apply GRN to inventory:', error);
+    const grnLabel = grn.grn_number || grn.gr_number || `GRN-${grn.id}`;
+    await dbRun(
+      `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
+      VALUES (?, ?, ?, 'inbound', 'GRN', ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        item.product_id,
+        grn.warehouse_id,
+        qty,
+        grn.id,
+        `${grnLabel} [QC_HOLD]${item.remarks ? ' - ' + item.remarks : ''}`
+      ]
+    );
   }
+
+  console.log('[GRN Approve] Inventory updated from GRN (qc_hold)', { grnId: grn.id, items: items.length });
 }
 
 // ── Manual Price Search ─────────────────────────────────────────────────────

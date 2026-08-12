@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission, checkUserPermission } from '../middleware/permission';
 
@@ -237,68 +237,65 @@ router.post('/stock-transfers/:id/reject', authMiddleware, async (req: Request, 
   }
 });
 
-// helper: execute stock transfer (deduct from source, add to destination) using canonical inventory_stocks
+// helper: execute stock transfer atomically — rejects insufficient/missing source stock
 async function executeStockTransfer(transfer: any) {
-  try {
-    console.log('[StockTransfer] Executing:', transfer);
+  await dbTransaction(async (conn) => {
+    // lock source row (available only) — prevent concurrent deductions
+    const [sourceRows] = await conn.execute(
+      'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? FOR UPDATE',
+      [transfer.product_id, transfer.from_warehouse_id, 'available']
+    );
+    const source = sourceRows[0];
 
-    // deduct from source warehouse
-    const sourceInv = await dbGet(`
-      SELECT * FROM inventory_stocks 
-      WHERE product_id = ? AND warehouse_id = ?
-    `, [transfer.product_id, transfer.from_warehouse_id]) as any;
-
-    if (sourceInv) {
-      const newQty = Math.max(0, (Number(sourceInv.quantity) || 0) - transfer.quantity);
-      await dbRun(`
-        UPDATE inventory_stocks 
-        SET quantity = ?, last_updated = CURRENT_TIMESTAMP 
-        WHERE id = ?
-      `, [newQty, sourceInv.id]);
-      console.log(`[StockTransfer] Deducted ${transfer.quantity} from source warehouse ${transfer.from_warehouse_id}`);
-    } else {
-      console.warn('[StockTransfer] Source inventory_stocks record not found, skipping deduction');
+    if (!source) {
+      throw new Error(`No available stock found for product ${transfer.product_id} in warehouse ${transfer.from_warehouse_id}`);
     }
 
-    // add to destination warehouse
-    const destInv = await dbGet(`
-      SELECT * FROM inventory_stocks 
-      WHERE product_id = ? AND warehouse_id = ?
-    `, [transfer.product_id, transfer.to_warehouse_id]) as any;
+    const sourceQty = Number(source.quantity) || 0;
+    if (sourceQty < transfer.quantity) {
+      throw new Error(`Insufficient stock: available ${sourceQty}, requested ${transfer.quantity}`);
+    }
 
-    if (destInv) {
-      await dbRun(`
-        UPDATE inventory_stocks 
-        SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP 
-        WHERE id = ?
-      `, [transfer.quantity, destInv.id]);
-      console.log(`[StockTransfer] Added ${transfer.quantity} to destination warehouse ${transfer.to_warehouse_id}`);
+    // deduct from source
+    await conn.execute(
+      'UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+      [transfer.quantity, source.id]
+    );
+
+    // add to destination (available only)
+    const [destRows] = await conn.execute(
+      'SELECT id FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? FOR UPDATE',
+      [transfer.product_id, transfer.to_warehouse_id, 'available']
+    );
+    const dest = destRows[0];
+
+    if (dest) {
+      await conn.execute(
+        'UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+        [transfer.quantity, dest.id]
+      );
     } else {
-      await dbRun(`
-        INSERT INTO inventory_stocks (product_id, warehouse_id, quantity, last_updated)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-      `, [transfer.product_id, transfer.to_warehouse_id, transfer.quantity]);
-      console.log(`[StockTransfer] Created new inventory_stocks record at destination`);
+      await conn.execute(
+        'INSERT INTO inventory_stocks (product_id, warehouse_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+        [transfer.product_id, transfer.to_warehouse_id, transfer.quantity, 'available']
+      );
     }
 
     // record stock movements for audit trail
     const transferLabel = transfer.transfer_number || `TRF-${transfer.id || 'manual'}`;
-    await dbRun(
+    await conn.execute(
       `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
        VALUES (?, ?, ?, 'outbound', 'TRANSFER', ?, ?, CURRENT_TIMESTAMP)`,
       [transfer.product_id, transfer.from_warehouse_id, transfer.quantity, transfer.id || null, `${transferLabel} - Transfer out`]
     );
-    await dbRun(
+    await conn.execute(
       `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
        VALUES (?, ?, ?, 'inbound', 'TRANSFER', ?, ?, CURRENT_TIMESTAMP)`,
       [transfer.product_id, transfer.to_warehouse_id, transfer.quantity, transfer.id || null, `${transferLabel} - Transfer in`]
     );
 
-    console.log('[StockTransfer] Execution completed');
-  } catch (error) {
-    console.error('[StockTransfer] Error:', error);
-    throw error;
-  }
+    console.log(`[StockTransfer] Transferred ${transfer.quantity} of product ${transfer.product_id}: WH ${transfer.from_warehouse_id} -> WH ${transfer.to_warehouse_id}`);
+  });
 }
 
 
