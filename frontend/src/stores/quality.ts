@@ -149,6 +149,16 @@ export const useQualityStore = defineStore('quality', {
     async addNCRAction(ncrId: number, data: any) {
       return (await api.post(`/quality/ncr/${ncrId}/actions`, data)).data;
     },
+    async fetchNCRDetail(id: number) {
+      const res = await api.get(`/quality/ncr/${id}`);
+      return res.data.data;
+    },
+    async closeNCR(id: number) {
+      return (await api.put(`/quality/ncr/${id}/close`)).data;
+    },
+    async completeNCRAction(ncrId: number, actionId: number) {
+      return (await api.put(`/quality/ncr/${ncrId}/actions/${actionId}/complete`)).data;
+    },
 
     // ---- Rework ----
     async fetchRework() {

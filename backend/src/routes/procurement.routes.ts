@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission, checkUserPermission } from '../middleware/permission';
+import { autoCreateFpa } from '../services/qc.service';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -1916,6 +1917,35 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
       }
 
       await applyGrnToInventory(updated, items);
+
+      // auto-trigger Incoming QC: create FPA for each GRN item with Incoming specs
+      const createdFpas: Array<{ productId: number; fpaNumber: string }> = [];
+      try {
+        const uniqueProducts = new Map<number, any>();
+        for (const item of items) {
+          if (item.product_id && !uniqueProducts.has(item.product_id)) {
+            uniqueProducts.set(item.product_id, item);
+          }
+        }
+        for (const [productId, item] of uniqueProducts) {
+          const fpaResult = await autoCreateFpa({
+            type: 'Incoming',
+            productId,
+            batchNo: item.batch_number || null,
+            supplierId: updated.vendor_id || null,
+            referenceId: grnId,
+            referenceNumber: grnNumber,
+            notes: `Auto-generated Incoming QC from GRN ${grnNumber}`,
+            createdBy: userId,
+            quantity: item.received_quantity || null
+          });
+          if (fpaResult) {
+            createdFpas.push({ productId, fpaNumber: fpaResult.fpaNumber });
+          }
+        }
+      } catch (incomingErr: any) {
+        console.error('[GRN Approve] Failed to auto-create Incoming QC FPA:', incomingErr.message);
+      }
     }
 
     const finalData = await dbGet(

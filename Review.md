@@ -1,153 +1,48 @@
-QC Cycle #1 follow-up review — revision `d7b1e65`.
+**RBAC Review — Final Acceptance Gate**
 
-Direction accepted. `qc.service.ts`, spec snapshot, shared batch gate, FPA Detail endpoints, and master parameter contract are the correct architecture.
+Review terhadap latest `main` sudah dilakukan sampai commit:
 
-Do NOT redesign again.
+`a48eec9` — P0-A fail-closed hydration + P0-B register hydration
+`ef5af6a` — router guard menggunakan authStore + ensureHydrated + cross-session permission refresh
 
-Please close these remaining blockers only.
+**Code review result: GREEN.**
 
-**P0-A — Separate analysis evaluation from final workflow decision**
+P0 findings sebelumnya sudah addressed:
 
-Current `resolveFpaStatus()` only evaluates parameter results.
+- Router guard tidak lagi menggunakan cached `localStorage.user.permissions` sebagai source of truth.
+- Protected navigation menunggu effective permission hydration.
+- Permission check sekarang fail-closed jika `/auth/me` gagal.
+- Register flow melakukan hydration melalui `/auth/me` sebelum permission dianggap ready.
+- Cross-session role permission changes direfresh ketika session/tab kembali aktif.
+- Backend tetap menjadi final authorization authority.
 
-This cannot be used directly as final workflow state.
+**Tidak ada perubahan architecture RBAC tambahan yang diminta saat ini.**
 
-Required semantics:
+Sebelum RBAC dinyatakan **FIRM / FREEZE**, lakukan final runtime acceptance test menggunakan user non-admin:
 
-- Draft / Sample Received / On Progress / Review → `pending`
-- Resampling → `pending`
-- Explicit Rejected / Failed → `failed`
-- Approved may become `passed` ONLY if all required pinned results are complete and passed.
+1. Grant `View` → menu harus muncul dan direct URL harus accessible.
+2. Revoke `View` → setelah permission refresh, menu harus hilang dan direct URL harus blocked.
+3. Grant `Create` tanpa `Update` → Create aktif, Edit tetap disabled/hidden.
+4. Grant `Update` → Edit menjadi aktif.
+5. Revoke `Create/Update/Delete` → corresponding UI actions harus disabled/hidden.
+6. Kirim mutation request langsung ke backend tanpa permission → harus return `403`, walaupun frontend guard dilewati.
+7. Test user baru / newly registered user → effective permissions harus langsung sesuai role tanpa logout/login.
+8. Test perubahan permission terhadap user yang sedang login → setelah tab focus/permission refresh, effective access harus mengikuti permission terbaru tanpa stale cache.
 
-Approval endpoint must:
+Mohon report hasil test dalam format:
 
-1. evaluate pinned required results
-2. if result != passed → reject approval with 400
-3. only then set FPA Approved/Passed
-4. sync batch/checkpoint passed
+`Scenario | Expected | Actual | PASS/FAIL`
 
-Reject endpoint must explicitly sync `failed`.
+Jika seluruh matrix PASS:
 
-Resample endpoint must explicitly sync `pending`.
+**RBAC = GREEN / FIRM / FREEZE**
 
-Never allow:
-`FPA Approved + Batch passed + checkpoint failed/pending`.
+Setelah itu jangan ubah RBAC contract/permission architecture tanpa regression requirement yang jelas.
 
-**P0-B — Resampling must keep Production checkpoint linkage**
+Next review scope setelah RBAC freeze:
 
-A child/new sampling run currently gets a new FPA id while `wo_qc_checkpoints.fpa_id` still points to parent.
+**Inventory → Procurement → Finance**
 
-Choose one canonical strategy:
+Baseline untuk review berikutnya:
 
-- checkpoint stays linked to root FPA and resolver evaluates latest active run, OR
-- when new-run is created, re-point checkpoint to new child FPA.
-
-After resampling:
-parent result must not leave Production checkpoint passed.
-
-Child final approval must resolve the same Production checkpoint.
-
-**P0-C — Harden canReleaseBatch**
-
-No-FPA/no-QC batch must NOT return allowed=true.
-
-Release requires explicit QC evidence:
-
-- relevant FPA exists unless explicitly exempted
-- final approval completed
-- canonical FPA decision = passed
-- batch qc_status = passed
-- no pending/failed mandatory QC
-
-An FPA with passing measurements but still On Progress/Review must NOT release a batch.
-
-Legacy qc_results must not create a second weaker release path.
-
-**P0-D — Fix Batch Release RBAC**
-
-Current route uses:
-
-`quality.batch-release : approve`
-
-but seeded RBAC uses:
-
-`approve_1 / approve_2`.
-
-Use canonical permission, preferably final release = `approve_2` if this is final QC approval.
-
-Also add permission enforcement to Batch Release:
-
-- reject
-- hold
-
-Authentication alone is not sufficient.
-
-**P0-E — Remove duplicate writable Quality Results contract**
-
-`QualityResults.vue` still sends a DTO incompatible with `/quality/results`.
-
-Do not just rename frontend fields and preserve two QC engines.
-
-Canonical operational results should remain FPA analysis results.
-
-Preferred:
-
-- make `/quality/results` a read/report adapter over canonical QC/FPA data, OR
-- remove manual write path from this page.
-
-There must not be an independent user-selectable `pass/fail` result path bypassing pinned specifications.
-
-**P0-F — Complete immutable specification snapshot**
-
-Snapshot into `qc_analysis_results` must also include:
-
-- `is_required`
-- `param_type`
-
-Resolver must NOT query current `qc_specifications.is_required` to evaluate an old FPA.
-
-Server-side evaluation must NOT depend on current master `qc_parameters.param_type`.
-
-Historical FPA must be evaluated against the pinned rule existing when the FPA/run was created.
-
-For resampling, copy the entire snapshot including these fields.
-
-**P0-G — Commit the actual DB migration**
-
-Current application code references new QC columns, but repository migration `004_qc_tables.sql` does not contain them.
-
-Add versioned migration / `ensureQcSchema()` for every new field used by Cycle #1, including FPA workflow fields, snapshot fields, and batch qc/release audit fields.
-
-A fresh environment built only from repository migrations must work.
-
-No manual-production-only ALTER dependency.
-
-**P1 — Numeric evaluation**
-
-Support:
-
-- min + max → between
-- min only → `actual >= min`
-- max only → `actual <= max`
-
-Do not leave valid one-sided specification permanently pending.
-
-After revision, rerun focused negative smoke:
-
-1. FPA results pass + explicit Reject → checkpoint failed.
-2. FPA results pass + Resample → checkpoint pending.
-3. Child resample passes + final approval → original WO checkpoint passed.
-4. Failed/pending result + Approve #2 → 400.
-5. Batch with no FPA → release rejected.
-6. FPA passing but not approved → batch release rejected.
-7. Approved fully-passed FPA → release succeeds.
-8. normal QC role with final approval permission → release succeeds, no 403.
-9. user without permission → release/reject/hold rejected 403.
-10. change master spec after FPA creation → old FPA result remains unchanged.
-11. fresh DB migration → QC flow boots without manual SQL.
-
-Do not touch Production state machine or Production QC contract.
-
-Production still expects only:
-
-`wo_qc_checkpoints.status = pending | passed | failed`.
+`a48eec93ad0df1e757d25330742f0633c845a2be`

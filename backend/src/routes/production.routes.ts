@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { validateTransition, EXECUTION_STATUSES, ISSUABLE_STATUSES, MRP_OPEN_STATUSES } from '../utils/wo-transitions';
+import { autoCreateFpa } from '../services/qc.service';
 
 // Bound once so /mrp and /mrp/shortage cannot drift apart the way they drifted
 // from /mrp/dashboard.
@@ -801,7 +802,36 @@ router.post('/execution/:woId/complete', authMiddleware, requirePermission('prod
       `UPDATE work_orders SET status='completed', actual_end=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
       [woId]
     );
-    res.json({ success: true, message: 'Work order completed' });
+
+    // auto-trigger FG QC: create FPA for finished goods inspection
+    let fgFpa: { fpaId: number; fpaNumber: string } | null = null;
+    try {
+      const woFull = await dbGet(
+        'SELECT w.*, p.name as product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ?',
+        [woId]
+      ) as any;
+      if (woFull && woFull.product_id) {
+        // find batch from wo_results
+        const yield_row = await dbGet('SELECT batch_number FROM wo_results WHERE wo_id = ? LIMIT 1', [woId]) as any;
+        fgFpa = await autoCreateFpa({
+          type: 'FG',
+          productId: woFull.product_id,
+          batchNo: yield_row?.batch_number || null,
+          woId: Number(woId),
+          notes: `Auto-generated FG QC for completed WO ${woFull.wo_number || woId}`,
+          createdBy: (req as any).user?.userId || null,
+          quantity: woFull.quantity || null
+        });
+      }
+    } catch (fgErr: any) {
+      console.error('Failed to auto-create FG FPA on WO complete:', fgErr.message);
+    }
+
+    res.json({
+      success: true,
+      message: 'Work order completed' + (fgFpa ? `, FG QC FPA ${fgFpa.fpaNumber} created` : ''),
+      fg_fpa: fgFpa
+    });
   } catch (error) {
     console.error('Error completing WO:', error);
     res.status(500).json({ error: 'Failed to complete work order' });

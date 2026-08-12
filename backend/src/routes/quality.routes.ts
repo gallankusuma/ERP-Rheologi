@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
-import { canReleaseBatch } from '../services/qc.service';
+import { canReleaseBatch, autoCreateFpa } from '../services/qc.service';
 
 const router = Router();
 
@@ -503,7 +503,29 @@ router.get('/ncr/:id', authMiddleware, async (req: Request, res: Response) => {
        FROM qc_ncr_actions a LEFT JOIN users u ON u.id = a.action_by WHERE a.ncr_id = ? ORDER BY a.created_at ASC`,
       [req.params.id]
     );
-    res.json({ success: true, data: { ...ncr, actions } });
+
+    // load source FPA details
+    let sourceFpa = null;
+    if ((ncr as any).source_fpa_id) {
+      sourceFpa = await dbGet(
+        `SELECT id, fpa_number, type, status, result, batch_no, created_at
+         FROM qc_analysis_requests WHERE id = ?`,
+        [(ncr as any).source_fpa_id]
+      );
+    }
+
+    // load linked rework orders
+    const reworks = await dbAll(
+      `SELECT r.*, COALESCE(u.full_name, u.username) AS created_by_name,
+              f.fpa_number AS retest_fpa_number, f.status AS retest_fpa_status, f.result AS retest_fpa_result
+       FROM qc_rework_orders r
+       LEFT JOIN users u ON u.id = r.created_by
+       LEFT JOIN qc_analysis_requests f ON f.id = r.retest_fpa_id
+       WHERE r.ncr_id = ? ORDER BY r.created_at ASC`,
+      [req.params.id]
+    );
+
+    res.json({ success: true, data: { ...ncr, actions, sourceFpa, reworks } });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch NCR' });
   }
@@ -565,13 +587,15 @@ router.get('/rework', authMiddleware, async (_req: Request, res: Response) => {
     const reworks = await dbAll(
       `SELECT r.*, n.ncr_number, p.name AS product_name, b.batch_number,
               w.wo_number,
-              COALESCE(u.full_name, u.username) AS created_by_name
+              COALESCE(u.full_name, u.username) AS created_by_name,
+              f.fpa_number AS retest_fpa_number, f.status AS retest_fpa_status, f.result AS retest_fpa_result
        FROM qc_rework_orders r
        LEFT JOIN qc_ncr n ON n.id = r.ncr_id
        LEFT JOIN products p ON p.id = r.product_id
        LEFT JOIN batches b ON b.id = r.batch_id
        LEFT JOIN work_orders w ON w.id = r.wo_id
        LEFT JOIN users u ON u.id = r.created_by
+       LEFT JOIN qc_analysis_requests f ON f.id = r.retest_fpa_id
        ORDER BY r.created_at DESC`
     );
     res.json({ success: true, data: reworks });
@@ -600,10 +624,99 @@ router.post('/rework', authMiddleware, requirePermission('quality.rework', 'crea
 router.put('/rework/:id/status', authMiddleware, requirePermission('quality.rework', 'update'), async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
-    await dbRun('UPDATE qc_rework_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [status, req.params.id]);
-    res.json({ success: true, message: 'Rework status updated' });
+    const reworkId = Number(req.params.id);
+    const userId = (req as any).user?.userId || null;
+    await dbRun('UPDATE qc_rework_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [status, reworkId]);
+
+    // when rework completed, auto-create re-test FPA
+    let retestFpa: { fpaId: number; fpaNumber: string } | null = null;
+    if (status === 'completed') {
+      try {
+        const rework = await dbGet(
+          `SELECT r.*, b.batch_number FROM qc_rework_orders r
+           LEFT JOIN batches b ON b.id = r.batch_id
+           WHERE r.id = ?`,
+          [reworkId]
+        ) as any;
+        if (rework && rework.product_id) {
+          retestFpa = await autoCreateFpa({
+            type: 'FG',
+            productId: rework.product_id,
+            batchNo: rework.batch_number || null,
+            woId: rework.wo_id || null,
+            notes: `Re-test after rework ${rework.rework_number || reworkId}`,
+            createdBy: userId,
+            quantity: rework.quantity || null
+          });
+          if (retestFpa) {
+            await dbRun('UPDATE qc_rework_orders SET retest_fpa_id = ? WHERE id = ?', [retestFpa.fpaId, reworkId]);
+          }
+        }
+        // update linked NCR status to investigating
+        if (rework && rework.ncr_id) {
+          await dbRun(
+            "UPDATE qc_ncr SET status = 'investigating', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'open'",
+            [rework.ncr_id]
+          );
+        }
+      } catch (retestErr: any) {
+        console.error('Failed to auto-create re-test FPA on rework complete:', retestErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Rework status updated' + (retestFpa ? `, re-test FPA ${retestFpa.fpaNumber} created` : ''),
+      retest_fpa: retestFpa
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update rework status' });
+  }
+});
+
+// close NCR with verification
+router.put('/ncr/:id/close', authMiddleware, requirePermission('quality.ncr', 'update'), async (req: Request, res: Response) => {
+  try {
+    const ncrId = Number(req.params.id);
+    const userId = (req as any).user?.userId || null;
+    const { close_notes } = req.body;
+
+    // check all CAPA actions are completed
+    const openActions = await dbAll(
+      "SELECT id FROM qc_ncr_actions WHERE ncr_id = ? AND status != 'completed'",
+      [ncrId]
+    ) as any[];
+
+    if (openActions.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot close NCR: ${openActions.length} CAPA action(s) still open`
+      });
+    }
+
+    await dbRun(
+      `UPDATE qc_ncr SET status = 'closed', corrective_action = COALESCE(corrective_action, ''),
+       updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [ncrId]
+    );
+    res.json({ success: true, message: 'NCR closed' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to close NCR' });
+  }
+});
+
+// complete a CAPA action
+router.put('/ncr/:ncrId/actions/:actionId/complete', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { actionId } = req.params;
+    const userId = (req as any).user?.userId || null;
+    await dbRun(
+      "UPDATE qc_ncr_actions SET status = 'completed', completed_at = CURRENT_TIMESTAMP, completed_by = ? WHERE id = ?",
+      [userId, actionId]
+    );
+    res.json({ success: true, message: 'Action completed' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to complete action' });
   }
 });
 

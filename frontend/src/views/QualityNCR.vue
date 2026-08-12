@@ -10,9 +10,9 @@
       </div>
 
       <!-- Stats -->
-      <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+      <div class="grid grid-cols-1 sm:grid-cols-5 gap-4 mb-6">
         <div class="bg-white shadow rounded-lg p-4">
-          <p class="text-xs text-gray-500 uppercase">Total NCRs</p>
+          <p class="text-xs text-gray-500 uppercase">Total</p>
           <p class="text-2xl font-bold">{{ store.ncrs.length }}</p>
         </div>
         <div class="bg-white shadow rounded-lg p-4">
@@ -20,8 +20,12 @@
           <p class="text-2xl font-bold text-red-700">{{ store.ncrs.filter(n => n.status === 'open').length }}</p>
         </div>
         <div class="bg-white shadow rounded-lg p-4">
-          <p class="text-xs text-yellow-600 uppercase">Under Investigation</p>
+          <p class="text-xs text-yellow-600 uppercase">Investigating</p>
           <p class="text-2xl font-bold text-yellow-700">{{ store.ncrs.filter(n => n.status === 'investigating').length }}</p>
+        </div>
+        <div class="bg-white shadow rounded-lg p-4">
+          <p class="text-xs text-blue-600 uppercase">Auto-Generated</p>
+          <p class="text-2xl font-bold text-blue-700">{{ store.ncrs.filter(n => n.source_type === 'fpa_reject').length }}</p>
         </div>
         <div class="bg-white shadow rounded-lg p-4">
           <p class="text-xs text-green-600 uppercase">Closed</p>
@@ -29,41 +33,65 @@
         </div>
       </div>
 
+      <!-- Filter -->
+      <div class="flex gap-3 mb-4">
+        <select v-model="filterStatus" class="px-3 py-2 border rounded-md text-sm bg-white">
+          <option value="">All Status</option>
+          <option value="open">Open</option>
+          <option value="investigating">Investigating</option>
+          <option value="corrective_action">Corrective Action</option>
+          <option value="closed">Closed</option>
+        </select>
+        <select v-model="filterSource" class="px-3 py-2 border rounded-md text-sm bg-white">
+          <option value="">All Sources</option>
+          <option value="manual">Manual</option>
+          <option value="fpa_reject">Auto (FPA Reject)</option>
+        </select>
+        <input v-model="searchText" type="text" placeholder="Search NCR number or product..." class="px-3 py-2 border rounded-md text-sm flex-1" />
+      </div>
+
       <div v-if="store.loading" class="text-center py-10"><div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
 
       <div v-else class="bg-white shadow rounded-lg overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
+        <table class="w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">NCR #</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-              <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Severity</th>
-              <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Raised</th>
-              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">NCR #</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Product</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Category</th>
+              <th class="px-4 py-3 text-center text-sm font-medium text-gray-500">Source</th>
+              <th class="px-4 py-3 text-center text-sm font-medium text-gray-500">Severity</th>
+              <th class="px-4 py-3 text-center text-sm font-medium text-gray-500">Status</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Description</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Raised</th>
+              <th class="px-4 py-3 text-right text-sm font-medium text-gray-500">Actions</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-200">
-            <tr v-for="n in store.ncrs" :key="n.id" class="hover:bg-gray-50">
-              <td class="px-4 py-3 text-sm font-medium text-blue-600">{{ n.ncr_number }}</td>
-              <td class="px-4 py-3 text-sm text-gray-900">{{ n.product_name }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">{{ n.category }}</td>
+            <tr v-for="n in filteredNCRs" :key="n.id" class="hover:bg-gray-50">
+              <td class="px-4 py-3 font-medium">
+                <router-link :to="`/quality/ncr/${n.id}`" class="text-blue-600 hover:underline">{{ n.ncr_number }}</router-link>
+              </td>
+              <td class="px-4 py-3 text-gray-900">{{ n.product_name }}</td>
+              <td class="px-4 py-3 text-gray-600 capitalize">{{ n.category }}</td>
+              <td class="px-4 py-3 text-center">
+                <span v-if="n.source_type === 'fpa_reject'" class="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">Auto</span>
+                <span v-else class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">Manual</span>
+              </td>
               <td class="px-4 py-3 text-center">
                 <span :class="severityBadge(n.severity)" class="px-2 py-1 rounded-full text-xs font-medium">{{ n.severity }}</span>
               </td>
               <td class="px-4 py-3 text-center">
                 <span :class="statusBadge(n.status)" class="px-2 py-1 rounded-full text-xs font-medium">{{ n.status }}</span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ n.description }}</td>
-              <td class="px-4 py-3 text-sm text-gray-400">{{ formatDate(n.created_at) }}</td>
+              <td class="px-4 py-3 text-gray-600 max-w-xs truncate">{{ n.description }}</td>
+              <td class="px-4 py-3 text-gray-400">{{ formatDate(n.created_at) }}</td>
               <td class="px-4 py-3 text-right space-x-1">
-                <button @click="viewNCR(n)" class="text-blue-600 hover:underline text-xs">View</button>
+                <router-link :to="`/quality/ncr/${n.id}`" class="text-blue-600 hover:underline text-xs">Detail</router-link>
                 <button v-if="n.status !== 'closed'" @click="openAddAction(n)" class="text-purple-600 hover:underline text-xs">Add Action</button>
               </td>
             </tr>
-            <tr v-if="!store.ncrs.length"><td colspan="8" class="text-center py-8 text-gray-400">No NCRs raised</td></tr>
+            <tr v-if="!filteredNCRs.length"><td colspan="9" class="text-center py-8 text-gray-400">No NCRs found</td></tr>
           </tbody>
         </table>
       </div>
@@ -116,28 +144,6 @@
         </div>
       </div>
 
-      <!-- View NCR Detail Modal -->
-      <div v-if="selectedNCR" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-          <div class="flex justify-between items-start mb-4">
-            <div>
-              <h3 class="text-lg font-bold">{{ selectedNCR.ncr_number }}</h3>
-              <p class="text-sm text-gray-500">{{ selectedNCR.product_name }} — {{ selectedNCR.category }}</p>
-            </div>
-            <span :class="severityBadge(selectedNCR.severity)" class="px-2 py-1 rounded-full text-xs font-medium">{{ selectedNCR.severity }}</span>
-          </div>
-          <div class="space-y-3">
-            <div><p class="text-xs text-gray-500 uppercase mb-1">Description</p><p class="text-sm">{{ selectedNCR.description }}</p></div>
-            <div v-if="selectedNCR.root_cause"><p class="text-xs text-gray-500 uppercase mb-1">Root Cause</p><p class="text-sm">{{ selectedNCR.root_cause }}</p></div>
-            <div v-if="selectedNCR.corrective_action"><p class="text-xs text-gray-500 uppercase mb-1">Corrective Action</p><p class="text-sm">{{ selectedNCR.corrective_action }}</p></div>
-            <div v-if="selectedNCR.preventive_action"><p class="text-xs text-gray-500 uppercase mb-1">Preventive Action</p><p class="text-sm">{{ selectedNCR.preventive_action }}</p></div>
-          </div>
-          <div class="flex justify-end mt-4">
-            <button @click="selectedNCR = null" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md text-sm">Close</button>
-          </div>
-        </div>
-      </div>
-
       <!-- Add Action Modal -->
       <div v-if="showAction" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
@@ -171,19 +177,33 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useQualityStore } from '../stores/quality';
 import { api } from '../lib/api';
 
 const store = useQualityStore();
 const products = ref<any[]>([]);
 const showCreate = ref(false);
-const selectedNCR = ref<any>(null);
 const showAction = ref(false);
 const actionNCRId = ref<number>(0);
+const filterStatus = ref('');
+const filterSource = ref('');
+const searchText = ref('');
 
 const form = ref({ product_id: '', category: 'process', severity: 'minor', description: '', root_cause: '' });
 const actionForm = ref({ action_type: 'corrective', description: '', due_date: '' });
+
+const filteredNCRs = computed(() => {
+  return store.ncrs.filter((n: any) => {
+    if (filterStatus.value && n.status !== filterStatus.value) return false;
+    if (filterSource.value && (n.source_type || 'manual') !== filterSource.value) return false;
+    if (searchText.value) {
+      const q = searchText.value.toLowerCase();
+      if (!(n.ncr_number || '').toLowerCase().includes(q) && !(n.product_name || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+});
 
 const severityBadge = (s: string) => ({
   'bg-red-100 text-red-800': s === 'critical',
@@ -199,8 +219,6 @@ const statusBadge = (s: string) => ({
 });
 
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString() : '-';
-
-const viewNCR = (n: any) => { selectedNCR.value = n; };
 
 const openAddAction = (n: any) => {
   actionNCRId.value = n.id;

@@ -211,3 +211,67 @@ export function evaluateResult(
 
   return null;
 }
+
+/**
+ * Auto-create an FPA with spec snapshot for a given product and qc_type.
+ * Used by WO complete (FG), GRN approve (Incoming), Rework complete (FG re-test).
+ * Returns null if no specs exist for the product+qcType combo.
+ */
+export async function autoCreateFpa(opts: {
+  type: string;            // 'FG' | 'Incoming' | 'LP'
+  productId: number;
+  batchNo?: string | null;
+  woId?: number | null;
+  supplierId?: number | null;
+  referenceId?: number | null;
+  referenceNumber?: string | null;
+  notes?: string | null;
+  createdBy?: number | null;
+  samplingAreaId?: number | null;
+  quantity?: number | null;
+}): Promise<{ fpaId: number; fpaNumber: string } | null> {
+  // check if any specs exist for this product + qc_type
+  const specs = await dbAll(
+    `SELECT s.*, p.param_type FROM qc_specifications s
+     JOIN qc_parameters p ON s.parameter_id = p.id
+     WHERE s.product_id = ? AND (s.qc_type = ? OR s.qc_type IS NULL)`,
+    [opts.productId, opts.type]
+  ) as any[];
+
+  if (!specs.length) return null;
+
+  // generate FPA number
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const rand = Math.floor(100 + Math.random() * 900);
+  const fpaNumber = `FPA-${opts.type}-${datePart}-${rand}`;
+
+  const result = await dbRun(
+    `INSERT INTO qc_analysis_requests
+     (fpa_number, type, reference_id, reference_number, product_id, sampling_area_id,
+      batch_no, quantity, supplier_id, notes, created_by, wo_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [fpaNumber, opts.type, opts.referenceId || null, opts.referenceNumber || null,
+     opts.productId, opts.samplingAreaId || null, opts.batchNo || null,
+     opts.quantity || null, opts.supplierId || null, opts.notes || null,
+     opts.createdBy || null, opts.woId || null]
+  );
+
+  const fpaId = result.insertId;
+
+  // snapshot specs into qc_analysis_results
+  for (const spec of specs) {
+    await dbRun(
+      `INSERT INTO qc_analysis_results
+       (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [fpaId, spec.parameter_id, spec.method_id || null,
+       spec.standard_value || null, spec.min_value ?? null, spec.max_value ?? null,
+       spec.uom || null, spec.qc_type || null, spec.id,
+       spec.is_required !== undefined ? spec.is_required : 1,
+       spec.param_type || 'quantitative']
+    );
+  }
+
+  return { fpaId, fpaNumber };
+}

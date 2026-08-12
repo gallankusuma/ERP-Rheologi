@@ -744,6 +744,11 @@ const ensureQcSchema = async (connection: any) => {
   await addCol('batches', 'released_by', 'INT');
   await addCol('batches', 'released_at', 'TIMESTAMP NULL');
 
+  // cycle #2: NCR ↔ FPA linkage
+  await addCol('qc_ncr', 'source_fpa_id', 'INT NULL');
+  await addCol('qc_ncr', 'source_type', "VARCHAR(30) NULL DEFAULT 'manual'");
+  await addCol('qc_rework_orders', 'retest_fpa_id', 'INT NULL');
+
   console.log('QC module schema ensured');
 };
 

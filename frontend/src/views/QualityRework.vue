@@ -29,40 +29,56 @@
         </div>
       </div>
 
+      <!-- Toast -->
+      <div v-if="toast" class="mb-4 p-3 rounded-lg text-sm" :class="toast.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+        {{ toast.message }}
+      </div>
+
       <div v-if="store.loading" class="text-center py-10"><div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
 
       <div v-else class="bg-white shadow rounded-lg overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
+        <table class="w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rework #</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">NCR Ref</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
-              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Qty</th>
-              <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Rework #</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">NCR Ref</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Product</th>
+              <th class="px-4 py-3 text-right text-sm font-medium text-gray-500">Qty</th>
+              <th class="px-4 py-3 text-center text-sm font-medium text-gray-500">Status</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Re-test FPA</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Description</th>
+              <th class="px-4 py-3 text-left text-sm font-medium text-gray-500">Created</th>
+              <th class="px-4 py-3 text-right text-sm font-medium text-gray-500">Actions</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-200">
             <tr v-for="r in store.reworkOrders" :key="r.id" class="hover:bg-gray-50">
-              <td class="px-4 py-3 text-sm font-medium text-orange-600">{{ r.rework_number }}</td>
-              <td class="px-4 py-3 text-sm text-blue-600">{{ r.ncr_number || '-' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-900">{{ r.product_name }}</td>
-              <td class="px-4 py-3 text-sm text-right">{{ r.quantity }}</td>
+              <td class="px-4 py-3 font-medium text-orange-600">{{ r.rework_number }}</td>
+              <td class="px-4 py-3">
+                <router-link v-if="r.ncr_id" :to="`/quality/ncr/${r.ncr_id}`" class="text-blue-600 hover:underline">{{ r.ncr_number || `NCR-${r.ncr_id}` }}</router-link>
+                <span v-else class="text-gray-400">-</span>
+              </td>
+              <td class="px-4 py-3 text-gray-900">{{ r.product_name }}</td>
+              <td class="px-4 py-3 text-right">{{ r.quantity }}</td>
               <td class="px-4 py-3 text-center">
                 <span :class="statusBadge(r.status)" class="px-2 py-1 rounded-full text-xs font-medium">{{ r.status?.replace('_', ' ') }}</span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.description }}</td>
-              <td class="px-4 py-3 text-sm text-gray-400">{{ formatDate(r.created_at) }}</td>
+              <td class="px-4 py-3">
+                <router-link v-if="r.retest_fpa_id" :to="`/qc/fpa/${r.retest_fpa_id}`" class="text-blue-600 hover:underline text-sm">
+                  {{ r.retest_fpa_number || `FPA-${r.retest_fpa_id}` }}
+                </router-link>
+                <span v-else-if="r.status === 'completed'" class="text-gray-400 text-xs italic">No specs found</span>
+                <span v-else class="text-gray-400">-</span>
+              </td>
+              <td class="px-4 py-3 text-gray-600 max-w-xs truncate">{{ r.description }}</td>
+              <td class="px-4 py-3 text-gray-400">{{ formatDate(r.created_at) }}</td>
               <td class="px-4 py-3 text-right space-x-1">
                 <button v-if="r.status === 'pending'" @click="updateStatus(r.id, 'in_progress')" class="text-blue-600 hover:underline text-xs">Start</button>
                 <button v-if="r.status === 'in_progress'" @click="updateStatus(r.id, 'completed')" class="text-green-600 hover:underline text-xs">Complete</button>
                 <button v-if="r.status === 'pending'" @click="updateStatus(r.id, 'cancelled')" class="text-red-600 hover:underline text-xs">Cancel</button>
               </td>
             </tr>
-            <tr v-if="!store.reworkOrders.length"><td colspan="8" class="text-center py-8 text-gray-400">No rework orders</td></tr>
+            <tr v-if="!store.reworkOrders.length"><td colspan="9" class="text-center py-8 text-gray-400">No rework orders</td></tr>
           </tbody>
         </table>
       </div>
@@ -121,6 +137,7 @@ const products = ref<any[]>([]);
 const ncrs = ref<any[]>([]);
 const showCreate = ref(false);
 const form = ref({ product_id: '', ncr_id: '', quantity: 1, description: '', instructions: '' });
+const toast = ref<{ message: string; type: string } | null>(null);
 
 const statusBadge = (s: string) => ({
   'bg-orange-100 text-orange-800': s === 'pending',
@@ -130,6 +147,11 @@ const statusBadge = (s: string) => ({
 });
 
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString() : '-';
+
+const showToast = (message: string, type: string = 'success') => {
+  toast.value = { message, type };
+  setTimeout(() => { toast.value = null; }, 4000);
+};
 
 onMounted(async () => {
   await store.fetchRework();
@@ -144,6 +166,16 @@ const createRework = async () => {
 };
 
 const updateStatus = async (id: number, status: string) => {
-  await store.updateReworkStatus(id, status);
+  try {
+    const result = await store.updateReworkStatus(id, status);
+    await store.fetchRework();
+    if (result.retest_fpa) {
+      showToast(`Re-test FPA ${result.retest_fpa.fpaNumber} created automatically`);
+    } else if (status === 'completed') {
+      showToast('Rework completed (no FG specs found for auto re-test)');
+    }
+  } catch (e: any) {
+    showToast(e.response?.data?.error || 'Failed to update status', 'error');
+  }
 };
 </script>
