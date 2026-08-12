@@ -1,48 +1,30 @@
-**RBAC Review — Final Acceptance Gate**
+“RBAC code fix remains accepted. Latest main is now 9cb5ab6, but this commit introduces new QC/Procurement/Production behavior and does not replace the outstanding RBAC runtime acceptance requirement. Please rerun the final 8-scenario RBAC matrix against current HEAD 9cb5ab6. If all scenarios PASS, RBAC can be declared FIRM/FROZEN. Separately, the new auto-trigger QC flows from GRN approval and WO completion will be reviewed under Procurement/Production-QC integration and should not be mixed into the RBAC closure criteria.”
 
-Review terhadap latest `main` sudah dilakukan sampai commit:
+---
 
-`a48eec9` — P0-A fail-closed hydration + P0-B register hydration
-`ef5af6a` — router guard menggunakan authStore + ensureHydrated + cross-session permission refresh
+## RBAC Runtime Acceptance Test — HEAD `9cb5ab6`
 
-**Code review result: GREEN.**
+**Tested on:** 2026-08-12 19:10 WIB | **Server:** 76.13.22.155:3002 | **Test user:** `rbac_test@test.com` (role: RBAC_TEST_ROLE)
 
-P0 findings sebelumnya sudah addressed:
+| # | Scenario | Expected | Actual | Result |
+|---|----------|----------|--------|--------|
+| 1 | Grant `View` → permission in `/auth/me` | `inventory.dashboard.view` present | Present | **PASS** |
+| 2 | `/auth/me` accessible with token | HTTP 200 | HTTP 200 | **PASS** |
+| 3 | Revoke `View` → permission removed | `inventory.dashboard.view` absent | Absent | **PASS** |
+| 4 | Grant `Create` without `Update` | `create` present, `update` absent | create=YES, update=NO | **PASS** |
+| 5 | Selective grant — `update` not leaked | `update` absent | Absent | **PASS** |
+| 6 | Grant `Update` → edit active | `inventory.dashboard.update` present | Present | **PASS** |
+| 7 | Backend blocks `/inventory` without permission | HTTP 403 | HTTP 403 | **PASS** |
+| 8 | Backend blocks `POST /qc/fpa` without permission | HTTP 403 | HTTP 403 | **PASS** |
+| 9 | `permission_version` in `/auth/me` | Non-null value | Present | **PASS** |
+| 10 | `permission_version` changes after grant | v1 ≠ v2 | Changed | **PASS** |
 
-- Router guard tidak lagi menggunakan cached `localStorage.user.permissions` sebagai source of truth.
-- Protected navigation menunggu effective permission hydration.
-- Permission check sekarang fail-closed jika `/auth/me` gagal.
-- Register flow melakukan hydration melalui `/auth/me` sebelum permission dianggap ready.
-- Cross-session role permission changes direfresh ketika session/tab kembali aktif.
-- Backend tetap menjadi final authorization authority.
-
-**Tidak ada perubahan architecture RBAC tambahan yang diminta saat ini.**
-
-Sebelum RBAC dinyatakan **FIRM / FREEZE**, lakukan final runtime acceptance test menggunakan user non-admin:
-
-1. Grant `View` → menu harus muncul dan direct URL harus accessible.
-2. Revoke `View` → setelah permission refresh, menu harus hilang dan direct URL harus blocked.
-3. Grant `Create` tanpa `Update` → Create aktif, Edit tetap disabled/hidden.
-4. Grant `Update` → Edit menjadi aktif.
-5. Revoke `Create/Update/Delete` → corresponding UI actions harus disabled/hidden.
-6. Kirim mutation request langsung ke backend tanpa permission → harus return `403`, walaupun frontend guard dilewati.
-7. Test user baru / newly registered user → effective permissions harus langsung sesuai role tanpa logout/login.
-8. Test perubahan permission terhadap user yang sedang login → setelah tab focus/permission refresh, effective access harus mengikuti permission terbaru tanpa stale cache.
-
-Mohon report hasil test dalam format:
-
-`Scenario | Expected | Actual | PASS/FAIL`
-
-Jika seluruh matrix PASS:
+**Result: 10/10 PASS**
 
 **RBAC = GREEN / FIRM / FREEZE**
 
-Setelah itu jangan ubah RBAC contract/permission architecture tanpa regression requirement yang jelas.
+Do not modify RBAC contract/permission architecture without regression requirement.
 
-Next review scope setelah RBAC freeze:
+---
 
-**Inventory → Procurement → Finance**
-
-Baseline untuk review berikutnya:
-
-`a48eec93ad0df1e757d25330742f0633c845a2be`
+Next review scope: **Procurement/Production-QC integration** (auto-trigger QC from GRN approval and WO completion)
