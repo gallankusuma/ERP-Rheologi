@@ -1760,19 +1760,34 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
       `, headerIds) as any[];
 
       if (allDetails.length > 0) {
-        const bomIds = [...new Set(allDetails.map((d: any) => d.bom_id))];
-        const bPlaceholders = bomIds.map(() => '?').join(',');
-        const allBomItems = await dbAll(`
-          SELECT bom_header_id, raw_material_id FROM bom_details
-          WHERE bom_header_id IN (${bPlaceholders})
-        `, bomIds) as any[];
+        const detailIds = allDetails.map((d: any) => d.detail_id);
+        const dPlaceholders = detailIds.map(() => '?').join(',');
 
-        for (const mat of validMaterials) {
-          const matId = mat.material_id;
-          const contributingDetails = allDetails.filter((d: any) =>
-            allBomItems.some((b: any) => b.bom_header_id === d.bom_id && b.raw_material_id === matId)
-          );
-          materialDetailMap[matId] = contributingDetails.map((d: any) => d.detail_id);
+        // only details with actual production in at least one week
+        const detailsWithProduction = await dbAll(`
+          SELECT DISTINCT mps_detail_id
+          FROM mps_week_data
+          WHERE mps_detail_id IN (${dPlaceholders}) AND production_qty > 0
+        `, detailIds) as any[];
+        const activeDetailIds = new Set(detailsWithProduction.map((r: any) => r.mps_detail_id));
+
+        const activeDetails = allDetails.filter((d: any) => activeDetailIds.has(d.detail_id));
+
+        const bomIds = [...new Set(activeDetails.map((d: any) => d.bom_id))];
+        if (bomIds.length > 0) {
+          const bPlaceholders = bomIds.map(() => '?').join(',');
+          const allBomItems = await dbAll(`
+            SELECT bom_header_id, raw_material_id FROM bom_details
+            WHERE bom_header_id IN (${bPlaceholders})
+          `, bomIds) as any[];
+
+          for (const mat of validMaterials) {
+            const matId = mat.material_id;
+            const contributingDetails = activeDetails.filter((d: any) =>
+              allBomItems.some((b: any) => b.bom_header_id === d.bom_id && b.raw_material_id === matId)
+            );
+            materialDetailMap[matId] = contributingDetails.map((d: any) => d.detail_id);
+          }
         }
       }
     }
