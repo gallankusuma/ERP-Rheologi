@@ -792,6 +792,17 @@ const ensurePpicSchema = async (connection: any) => {
 
     // P0-5: batch-approve all ACTIVE BOMs for BOM parity with Production
     `UPDATE bom_headers SET approval_status = 2 WHERE status = 'ACTIVE' AND approval_status != 2`,
+
+    // WO provenance: source_type column
+    `ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) DEFAULT 'LEGACY_UNKNOWN'`,
+
+    // WO provenance: migrate existing WOs with mps_detail_id → MPS
+    `UPDATE work_orders SET source_type = 'MPS' WHERE mps_detail_id IS NOT NULL AND source_type = 'LEGACY_UNKNOWN'`,
+
+    // PR lineage: track MRP/MPS origin
+    `ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) DEFAULT NULL`,
+    `ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS mps_header_id INT NULL`,
+    `ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS mps_detail_id INT NULL`,
   ];
 
   for (const statement of statements) {

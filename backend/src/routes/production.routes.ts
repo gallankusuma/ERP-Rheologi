@@ -207,15 +207,31 @@ router.get('/planning/weekly', authMiddleware, requirePermission('production.pla
       }
     }
 
-    // Fetch all WOs (not just active)
+    // status filter params
+    const includeHistorical = req.query.include_historical === '1';
+    const statusFilter = req.query.status ? String(req.query.status) : null;
+
+    // default: operational statuses only; exclude completed/closed/cancelled
+    let statusClause = '';
+    const statusParams: any[] = [];
+    if (statusFilter) {
+      statusClause = 'AND w.status = ?';
+      statusParams.push(statusFilter);
+    } else if (!includeHistorical) {
+      statusClause = "AND w.status NOT IN ('completed', 'COMPLETED', 'closed', 'CLOSED', 'cancelled', 'CANCELLED')";
+    }
+
+    // Fetch WOs with MPS provenance
     const workOrders = await dbAll(
       `SELECT w.id, w.wo_number, w.product_id, w.quantity, w.status,
               w.scheduled_start, w.scheduled_end, w.actual_start, w.actual_end,
               w.notes, w.created_at, w.line_process_id,
+              w.source_type, w.mps_detail_id, w.week_number as wo_week_number,
               p.name AS product_name, p.sku,
               COALESCE(u.full_name, u.username) AS created_by_name,
               lp.name AS line_process_name, lp.code AS line_process_code,
               lp.capacity_per_hour, uom.name AS capacity_unit_name,
+              mh.mps_number,
               (SELECT COUNT(*) FROM wo_qc_checkpoints qc WHERE qc.wo_id = w.id) AS qc_total,
               (SELECT COUNT(*) FROM wo_qc_checkpoints qc WHERE qc.wo_id = w.id AND qc.status = 'passed') AS qc_passed,
               (SELECT COUNT(*) FROM wo_qc_checkpoints qc WHERE qc.wo_id = w.id AND qc.is_mandatory = 1 AND qc.status NOT IN ('passed')) AS qc_pending_mandatory
@@ -224,14 +240,17 @@ router.get('/planning/weekly', authMiddleware, requirePermission('production.pla
        LEFT JOIN users u ON w.created_by = u.id
        LEFT JOIN line_processes lp ON w.line_process_id = lp.id
        LEFT JOIN uom uom ON lp.capacity_unit_id = uom.id
+       LEFT JOIN mps_details md ON w.mps_detail_id = md.id
+       LEFT JOIN mps_headers mh ON md.mps_header_id = mh.id
        WHERE (
          (w.scheduled_start IS NOT NULL AND YEAR(w.scheduled_start) = ? AND MONTH(w.scheduled_start) = ?)
          OR (w.scheduled_end IS NOT NULL AND YEAR(w.scheduled_end) = ? AND MONTH(w.scheduled_end) = ?)
          OR (w.actual_start IS NOT NULL AND YEAR(w.actual_start) = ? AND MONTH(w.actual_start) = ?)
          OR (w.status IN ('in_progress', 'in-progress'))
        )
+       ${statusClause}
        ORDER BY w.scheduled_start ASC, w.created_at ASC`,
-      [year, month, year, month, year, month]
+      [year, month, year, month, year, month, ...statusParams]
     ) as any[];
 
     // For each WO, get process logs and QC checkpoints

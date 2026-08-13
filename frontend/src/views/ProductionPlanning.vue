@@ -16,9 +16,14 @@
           </select>
           <select v-model="filterMps" class="bg-white/20 border border-white/30 rounded px-2 py-1 text-xs text-white">
             <option value="" class="text-gray-900">All WOs</option>
-            <option value="mps" class="text-gray-900">From MPS Only</option>
+            <option value="mps" class="text-gray-900">MPS Only</option>
             <option value="manual" class="text-gray-900">Manual Only</option>
+            <option value="legacy" class="text-gray-900">Legacy/Unknown</option>
           </select>
+          <label class="flex items-center gap-1 text-[10px] text-indigo-200 cursor-pointer">
+            <input type="checkbox" v-model="includeHistorical" @change="loadData" class="rounded" />
+            History
+          </label>
           <div class="h-4 w-px bg-white/30"></div>
           <div class="flex items-center gap-1 text-xs text-indigo-100">
             <span>Cap:</span>
@@ -143,13 +148,17 @@
                         <div class="text-[9px] text-gray-400">{{ wo.sku }}</div>
                         <div v-if="wo.mps_number" class="mt-1">
                           <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-teal-50 border border-teal-200 text-teal-700 text-[9px] font-bold rounded-full">
-                            📋 {{ wo.mps_number }}
+                            MPS · {{ wo.mps_number }}
                           </span>
-                          <div v-if="wo.mps_week_number" class="text-[9px] text-teal-500 mt-0.5">W{{ wo.mps_week_number }}/{{ wo.mps_period_year }}</div>
+                          <div v-if="wo.wo_week_number" class="text-[9px] text-teal-500 mt-0.5">W{{ wo.wo_week_number }}</div>
+                        </div>
+                        <div v-else-if="wo.source_type === 'MANUAL'" class="mt-1">
+                          <span class="inline-flex items-center px-1.5 py-0.5 bg-amber-50 border border-amber-200 text-amber-600 text-[9px] font-bold rounded-full">Manual</span>
                         </div>
                         <div v-else class="mt-1">
-                          <span class="inline-flex items-center px-1.5 py-0.5 bg-gray-50 border border-gray-200 text-gray-400 text-[9px] rounded-full">Manual</span>
+                          <span class="inline-flex items-center px-1.5 py-0.5 bg-gray-50 border border-gray-200 text-gray-400 text-[9px] rounded-full">Legacy</span>
                         </div>
+                        <button @click.stop="showTrace(wo)" class="mt-1 text-[8px] text-indigo-400 hover:text-indigo-600 underline">Trace</button>
                         <div class="mt-1 text-[9px] font-bold text-indigo-600">
                           Qty: {{ formatN(wo.quantity) }}
                         </div>
@@ -287,6 +296,71 @@
         </div>
       </template>
     </div>
+
+    <!-- Trace Modal -->
+    <div v-if="traceVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="traceVisible = false">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+        <div class="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-700 text-white flex justify-between items-center">
+          <h3 class="font-bold text-sm">WO Demand Trace</h3>
+          <button @click="traceVisible = false" class="text-white/80 hover:text-white text-lg">&times;</button>
+        </div>
+        <div class="p-5">
+          <div v-if="traceLoading" class="text-center py-8">
+            <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
+          </div>
+          <div v-else-if="traceData">
+            <!-- WO header -->
+            <div class="mb-3">
+              <span class="font-bold text-indigo-700">{{ traceData.wo?.wo_number }}</span>
+              <span class="ml-2 px-2 py-0.5 text-xs rounded-full font-bold"
+                :class="traceData.wo?.source_type === 'MPS' ? 'bg-teal-100 text-teal-700' : traceData.wo?.source_type === 'MANUAL' ? 'bg-amber-100 text-amber-600' : 'bg-gray-100 text-gray-500'">
+                {{ traceData.wo?.source_type || 'LEGACY_UNKNOWN' }}
+              </span>
+            </div>
+
+            <!-- MPS chain -->
+            <div v-if="traceData.mps" class="space-y-2">
+              <div class="flex items-center gap-2 text-sm">
+                <span class="text-gray-400">&rarr;</span>
+                <span class="font-semibold text-teal-700">{{ traceData.mps.mps_number }}</span>
+                <span class="text-xs text-gray-400">{{ traceData.mps.period }} &middot; W{{ traceData.mps.week_number }}</span>
+              </div>
+              <div v-if="traceData.demand_sources?.length" class="ml-6 space-y-1.5">
+                <div v-for="(src, i) in traceData.demand_sources" :key="i"
+                  class="flex items-center gap-2 text-sm bg-slate-50 rounded px-3 py-1.5">
+                  <span class="text-gray-400">&rarr;</span>
+                  <span v-if="src.type === 'SO_ITEM'" class="text-blue-700 font-semibold">{{ src.ref }}</span>
+                  <span v-else-if="src.type === 'PROJECT'" class="text-purple-700 font-semibold">{{ src.ref }}</span>
+                  <span v-else class="text-orange-600 font-semibold">Forecast</span>
+                  <span v-if="src.customer" class="text-xs text-gray-500">&middot; {{ src.customer }}</span>
+                  <span v-if="src.name" class="text-xs text-gray-500">&middot; {{ src.name }}</span>
+                  <span v-if="src.quantity" class="ml-auto text-xs font-bold text-gray-600">{{ Number(src.quantity).toLocaleString('id') }}</span>
+                </div>
+              </div>
+              <div v-else class="ml-6 text-xs text-gray-400 italic">No demand sources linked</div>
+            </div>
+
+            <!-- Manual -->
+            <div v-else-if="traceData.manual" class="space-y-2">
+              <div class="text-sm">
+                <span class="font-semibold text-gray-700">Reason:</span>
+                <span class="ml-1 text-gray-600">{{ traceData.manual.source_reason || '—' }}</span>
+              </div>
+              <div class="text-sm">
+                <span class="font-semibold text-gray-700">Created by:</span>
+                <span class="ml-1 text-gray-600">{{ traceData.manual.created_by || '—' }}</span>
+              </div>
+              <div class="text-xs text-gray-400">{{ traceData.manual.created_at }}</div>
+            </div>
+
+            <!-- Legacy -->
+            <div v-else-if="traceData.note" class="text-sm text-gray-400 italic py-4">
+              {{ traceData.note }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -304,14 +378,35 @@ const yearOptions = [now.getFullYear() - 1, now.getFullYear(), now.getFullYear()
 const loading = ref(false);
 const workOrders = ref<any[]>([]);
 const filteredWorkOrders = computed(() => {
-  if (filterMps.value === 'mps') return workOrders.value.filter((wo: any) => !!wo.mps_number);
-  if (filterMps.value === 'manual') return workOrders.value.filter((wo: any) => !wo.mps_number);
+  if (filterMps.value === 'mps') return workOrders.value.filter((wo: any) => wo.source_type === 'MPS');
+  if (filterMps.value === 'manual') return workOrders.value.filter((wo: any) => wo.source_type === 'MANUAL');
+  if (filterMps.value === 'legacy') return workOrders.value.filter((wo: any) => !wo.source_type || wo.source_type === 'LEGACY_UNKNOWN');
   return workOrders.value;
 });
 const dayColumns = ref<any[]>([]);
 const machineCapacity = ref(8);
 const filterMps = ref('');
 const utilZoomed = ref(false);
+const includeHistorical = ref(false);
+
+// trace panel
+const traceVisible = ref(false);
+const traceData = ref<any>(null);
+const traceLoading = ref(false);
+
+const showTrace = async (wo: any) => {
+  traceVisible.value = true;
+  traceLoading.value = true;
+  traceData.value = null;
+  try {
+    const res = await api.get(`/workorders/${wo.id}/trace`);
+    traceData.value = res.data.data;
+  } catch (e) {
+    traceData.value = { wo: { wo_number: wo.wo_number, source_type: wo.source_type }, note: 'Failed to load trace data' };
+  } finally {
+    traceLoading.value = false;
+  }
+};
 
 // Day data map for editable cells
 const dayDataMap = reactive<Record<string, any>>({});
@@ -484,9 +579,9 @@ const loadData = async () => {
   // edit flag.
   dirtyWoIds.value = [];
   try {
-    const res = await api.get('/production/planning/weekly', {
-      params: { year: selectedYear.value, month: selectedMonth.value }
-    });
+    const params: any = { year: selectedYear.value, month: selectedMonth.value };
+    if (includeHistorical.value) params.include_historical = '1';
+    const res = await api.get('/production/planning/weekly', { params });
     const wos = res.data.data.workOrders || [];
     for (const wo of wos) {
       wo._machine = wo.line_process_name || '';

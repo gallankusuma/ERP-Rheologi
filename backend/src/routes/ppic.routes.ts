@@ -909,8 +909,8 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePer
       const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
       await dbRun(`
-        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes)
-        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes, source_type)
+        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, 'MPS')
       `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number}`]);
 
       created.push({ week_number: w.week_number, wo_number: woNumber, quantity: qty });
@@ -1024,8 +1024,8 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
       const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
       await dbRun(`
-        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes)
-        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes, source_type)
+        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, 'MPS')
       `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
 
       created.push({ wo_number: woNumber, week_number: w.week_number, quantity: qty });
@@ -1375,8 +1375,8 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
 
     const result = await dbTransaction(async (conn: any) => {
       const [prInsert] = await conn.execute(
-        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by) VALUES (?, ?, 'DRAFT', ?, ?, ?)`,
-        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededByDate]
+        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type, mps_header_id, mps_detail_id) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP', ?, ?)`,
+        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededByDate, id, detailId]
       );
       const prId = prInsert.insertId;
 
@@ -1744,7 +1744,7 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
     // transactional: PR header + all items, rollback if any item fails
     const result = await dbTransaction(async (conn: any) => {
       const [prInsert] = await conn.execute(
-        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by) VALUES (?, ?, 'DRAFT', ?, ?, ?)`,
+        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP')`,
         [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededBy.toISOString().slice(0, 10)]
       );
       const prId = prInsert.insertId;

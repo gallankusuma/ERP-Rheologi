@@ -6,17 +6,22 @@ import { validateTransition } from '../utils/wo-transitions';
 
 const router = Router();
 
-// GET /api/workorders
+// GET /api/workorders — enriched with MPS provenance
 router.get('/', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
   try {
     const workOrders = await dbAll(
       `SELECT w.*, p.name as product_name, p.sku,
               lp.name as line_process_name, lp.code as line_process_code,
-              lp.capacity_per_hour, u.name as capacity_unit_name
+              lp.capacity_per_hour, u.name as capacity_unit_name,
+              mh.mps_number,
+              COALESCE(cu.full_name, cu.username) as created_by_name
        FROM work_orders w 
        JOIN products p ON w.product_id = p.id
        LEFT JOIN line_processes lp ON w.line_process_id = lp.id
        LEFT JOIN uom u ON lp.capacity_unit_id = u.id
+       LEFT JOIN mps_details md ON w.mps_detail_id = md.id
+       LEFT JOIN mps_headers mh ON md.mps_header_id = mh.id
+       LEFT JOIN users cu ON w.created_by = cu.id
        ORDER BY w.created_at DESC`
     );
     res.json({ data: workOrders });
@@ -26,23 +31,44 @@ router.get('/', authMiddleware, requirePermission('production.workorders', 'view
   }
 });
 
-// GET /api/workorders/:id
+// GET /api/workorders/:id — enriched with MPS provenance + demand sources
 router.get('/:id', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {
     const workOrder = await dbGet(
       `SELECT w.*, p.name as product_name, p.sku,
               lp.name as line_process_name, lp.code as line_process_code,
-              lp.capacity_per_hour, u.name as capacity_unit_name
+              lp.capacity_per_hour, u.name as capacity_unit_name,
+              mh.mps_number, mh.period_year as mps_year, mh.period_month as mps_month,
+              COALESCE(cu.full_name, cu.username) as created_by_name
        FROM work_orders w 
        JOIN products p ON w.product_id = p.id
        LEFT JOIN line_processes lp ON w.line_process_id = lp.id
        LEFT JOIN uom u ON lp.capacity_unit_id = u.id
-       WHERE w.id = ? `,
+       LEFT JOIN mps_details md ON w.mps_detail_id = md.id
+       LEFT JOIN mps_headers mh ON md.mps_header_id = mh.id
+       LEFT JOIN users cu ON w.created_by = cu.id
+       WHERE w.id = ?`,
       [req.params.id]
     );
 
     if (!workOrder) {
       return res.status(404).json({ error: 'Work order not found' });
+    }
+
+    // load demand sources if MPS-linked
+    if (workOrder.mps_detail_id) {
+      workOrder.demand_sources = await dbAll(
+        `SELECT ds.source_type, ds.quantity,
+                si.id as so_item_id, so.so_number, c.name as customer_name,
+                cp.id as project_id, CONCAT('PRJ-', cp.project_number) as project_ref, cp.project_name
+         FROM mps_detail_sources ds
+         LEFT JOIN so_items si ON ds.so_item_id = si.id
+         LEFT JOIN sales_orders so ON si.so_id = so.id
+         LEFT JOIN customers c ON so.customer_id = c.id
+         LEFT JOIN client_projects cp ON ds.project_id = cp.id
+         WHERE ds.mps_detail_id = ?`,
+        [workOrder.mps_detail_id]
+      );
     }
 
     res.json({ data: workOrder });
@@ -52,13 +78,19 @@ router.get('/:id', authMiddleware, requirePermission('production.workorders', 'v
   }
 });
 
-// POST /api/workorders — always creates in 'draft' status
+// POST /api/workorders — manual creation, requires source_reason
 router.post('/', authMiddleware, requirePermission('production.workorders', 'create'), async (req: Request, res: Response) => {
   try {
-    const { product_id, quantity, priority, scheduled_start, scheduled_end, line_process_id } = req.body;
+    const { product_id, quantity, priority, scheduled_start, scheduled_end, line_process_id, source_reason } = req.body;
+    const userId = (req as any).user?.userId || null;
 
     if (!product_id || !quantity) {
       return res.status(400).json({ error: 'product_id and quantity are required' });
+    }
+
+    // manual WO must have a reason explaining why it exists
+    if (!source_reason || !String(source_reason).trim()) {
+      return res.status(400).json({ error: 'source_reason is required for manual WO creation' });
     }
 
     // Auto-generate wo_number: WO-YYYYMMDD-NNN
@@ -71,7 +103,7 @@ router.post('/', authMiddleware, requirePermission('production.workorders', 'cre
     const seq = String((existing?.cnt || 0) + 1).padStart(3, '0');
     const woNumber = `WO-${dateStr}-${seq}`;
 
-    // auto-pin BOM at creation — locks the recipe so later BOM changes don't affect this WO
+    // auto-pin BOM at creation
     const bom = await dbGet(
       `SELECT id FROM bom_headers WHERE product_id = ? AND status = 'ACTIVE' AND approval_status = 2 ORDER BY id DESC LIMIT 1`,
       [product_id]
@@ -79,14 +111,14 @@ router.post('/', authMiddleware, requirePermission('production.workorders', 'cre
     const bomId = bom?.id || null;
 
     const result = await dbRun(
-      `INSERT INTO work_orders(wo_number, product_id, bom_id, quantity, status, priority, scheduled_start, scheduled_end, line_process_id) 
-       VALUES(?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
-      [woNumber, product_id, bomId, quantity, priority || 'normal', scheduled_start || null, scheduled_end || null, line_process_id || null]
+      `INSERT INTO work_orders(wo_number, product_id, bom_id, quantity, status, priority, scheduled_start, scheduled_end, line_process_id, source_type, notes, created_by) 
+       VALUES(?, ?, ?, ?, 'draft', ?, ?, ?, ?, 'MANUAL', ?, ?)`,
+      [woNumber, product_id, bomId, quantity, priority || 'normal', scheduled_start || null, scheduled_end || null, line_process_id || null, String(source_reason).trim(), userId]
     );
 
     res.status(201).json({
       message: 'Work order created successfully',
-      data: { id: result.insertId, wo_number: woNumber, product_id, bom_id: bomId, quantity, status: 'draft', priority },
+      data: { id: result.insertId, wo_number: woNumber, product_id, bom_id: bomId, quantity, status: 'draft', priority, source_type: 'MANUAL' },
     });
   } catch (error) {
     console.error('Error creating work order:', error);
@@ -269,6 +301,86 @@ router.get('/summary', authMiddleware, requirePermission('production.workorders'
   } catch (error) {
     console.error('Error fetching WO summary:', error);
     res.status(500).json({ error: 'Failed to fetch summary' });
+  }
+});
+
+// GET /api/workorders/:id/trace — full demand lineage for a WO
+router.get('/:id/trace', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
+  try {
+    const wo = await dbGet(
+      `SELECT w.id, w.wo_number, w.source_type, w.mps_detail_id, w.week_number, w.notes,
+              COALESCE(cu.full_name, cu.username) as created_by_name, w.created_at
+       FROM work_orders w
+       LEFT JOIN users cu ON w.created_by = cu.id
+       WHERE w.id = ?`,
+      [req.params.id]
+    ) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+
+    const trace: any = {
+      wo: { id: wo.id, wo_number: wo.wo_number, source_type: wo.source_type || 'LEGACY_UNKNOWN' }
+    };
+
+    if (wo.source_type === 'MPS' && wo.mps_detail_id) {
+      // MPS lineage
+      const mpsDetail = await dbGet(
+        `SELECT md.id, md.mps_header_id, md.product_id,
+                mh.mps_number, mh.period_year, mh.period_month
+         FROM mps_details md
+         JOIN mps_headers mh ON md.mps_header_id = mh.id
+         WHERE md.id = ?`,
+        [wo.mps_detail_id]
+      ) as any;
+
+      if (mpsDetail) {
+        trace.mps = {
+          mps_number: mpsDetail.mps_number,
+          period: `${mpsDetail.period_year}-${String(mpsDetail.period_month).padStart(2, '0')}`,
+          week_number: wo.week_number
+        };
+
+        // demand sources from mps_detail_sources
+        const sources = await dbAll(
+          `SELECT ds.source_type, ds.quantity,
+                  si.id as so_item_id, so.so_number, c.name as customer_name,
+                  soi_p.name as so_product_name, si.quantity as so_qty,
+                  cp.id as project_id, CONCAT('PRJ-', cp.project_number) as project_ref,
+                  cp.project_name, cp.quantity as project_qty
+           FROM mps_detail_sources ds
+           LEFT JOIN so_items si ON ds.so_item_id = si.id
+           LEFT JOIN sales_orders so ON si.so_id = so.id
+           LEFT JOIN customers c ON so.customer_id = c.id
+           LEFT JOIN products soi_p ON si.product_id = soi_p.id
+           LEFT JOIN client_projects cp ON ds.project_id = cp.id
+           WHERE ds.mps_detail_id = ?`,
+          [wo.mps_detail_id]
+        ) as any[];
+
+        trace.demand_sources = sources.map((s: any) => {
+          if (s.source_type === 'SO_ITEM') {
+            return { type: 'SO_ITEM', ref: s.so_number, customer: s.customer_name, product: s.so_product_name, quantity: s.quantity || s.so_qty };
+          } else if (s.source_type === 'PROJECT') {
+            return { type: 'PROJECT', ref: s.project_ref, name: s.project_name, quantity: s.quantity || s.project_qty };
+          } else if (s.source_type === 'FORECAST') {
+            return { type: 'FORECAST', quantity: s.quantity };
+          }
+          return { type: s.source_type, quantity: s.quantity };
+        });
+      }
+    } else if (wo.source_type === 'MANUAL') {
+      trace.manual = {
+        source_reason: wo.notes,
+        created_by: wo.created_by_name,
+        created_at: wo.created_at
+      };
+    } else {
+      trace.note = 'Provenance not available — created before lineage tracking was implemented';
+    }
+
+    res.json({ data: trace });
+  } catch (error) {
+    console.error('Error fetching WO trace:', error);
+    res.status(500).json({ error: 'Failed to fetch WO trace' });
   }
 });
 

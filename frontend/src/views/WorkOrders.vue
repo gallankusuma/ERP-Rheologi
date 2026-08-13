@@ -73,7 +73,18 @@
             <!-- WO Number -->
             <td class="px-5 py-4">
               <div class="font-mono font-bold text-indigo-700 text-base">{{ wo.wo_number }}</div>
-              <div v-if="wo.mps_number" class="text-sm text-gray-400 mt-0.5">{{ wo.mps_number }}</div>
+              <div class="flex items-center gap-1.5 mt-0.5">
+                <span v-if="wo.source_type === 'MPS'" class="inline-flex items-center px-1.5 py-0.5 bg-teal-50 border border-teal-200 text-teal-700 text-[10px] font-bold rounded-full">
+                  MPS
+                </span>
+                <span v-else-if="wo.source_type === 'MANUAL'" class="inline-flex items-center px-1.5 py-0.5 bg-amber-50 border border-amber-200 text-amber-600 text-[10px] font-bold rounded-full">
+                  Manual
+                </span>
+                <span v-else class="inline-flex items-center px-1.5 py-0.5 bg-gray-50 border border-gray-200 text-gray-400 text-[10px] rounded-full">
+                  Legacy
+                </span>
+                <span v-if="wo.mps_number" class="text-sm text-teal-600">{{ wo.mps_number }}</span>
+              </div>
             </td>
             <!-- Produk -->
             <td class="px-5 py-4">
@@ -234,8 +245,15 @@
                 class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
             </div>
           </template>
-          <!-- Notes -->
-          <div>
+          <!-- Source Reason (create mode only) -->
+          <div v-if="!editingWo">
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Alasan Pembuatan WO <span class="text-red-500">*</span></label>
+            <textarea v-model="form.source_reason" rows="2"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+              placeholder="Jelaskan alasan pembuatan WO manual ini (wajib)..."></textarea>
+          </div>
+          <!-- Notes (edit mode only) -->
+          <div v-if="editingWo">
             <label class="block text-xs font-semibold text-gray-600 mb-1">Catatan</label>
             <textarea v-model="form.notes" rows="2"
               class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
@@ -337,6 +355,7 @@ const defaultForm = () => ({
   completed_quantity: 0,
   notes: '',
   bom_id: null as any,
+  source_reason: '',
 });
 const form = ref(defaultForm());
 
@@ -474,10 +493,12 @@ const saveWO = async () => {
     };
     if (editingWo.value) {
       await api.put(`/workorders/${editingWo.value.id}`, payload);
-      showToast('WO berhasil diupdate ✅', 'ok');
+      showToast('WO berhasil diupdate', 'ok');
     } else {
+      // manual create: include source_reason
+      (payload as any).source_reason = form.value.source_reason;
       await api.post('/workorders', payload);
-      showToast('WO berhasil dibuat ✅', 'ok');
+      showToast('WO berhasil dibuat', 'ok');
     }
     showModal.value = false;
     await loadWOs();
