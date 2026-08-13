@@ -1,179 +1,47 @@
-Yang paling parah: Production Planning sekarang seolah-olah sudah bisa membedakan WO dari MPS vs Manual, padahal backend-nya tidak memberikan data sumber tersebut.
+Yang sudah gue accept: WO dari MPS sekarang eksplisit source_type='MPS', existing WO yang punya mps_detail_id dibackfill menjadi MPS, dan sisanya tetap LEGACY_UNKNOWN — jadi tidak lagi asal dicap Manual. Manual WO juga sekarang wajib punya alasan, menyimpan creator, dan diberi source_type='MANUAL'. Production Planning juga sekarang join ke MPS, mengembalikan mps_number, mps_detail_id, week, dan secara default menyembunyikan completed/closed/cancelled. Trace modal juga sudah ada di Production Planning.
 
-Frontend punya filter:
+Tapi gue nemu beberapa masalah yang harus dibalikin ke development:
 
-All WOs | From MPS Only | Manual Only
+P0 — Forecast lineage masih putus. mps_detail_sources sebenarnya sudah menyimpan forecast_header_id, week, year, dan quantity. Bahkan endpoint MPS existing sudah join forecast_headers dan punya forecast_number. Tetapi endpoint WO Trace cuma mengembalikan Forecast sebagai { type: 'FORECAST', quantity }; tidak join forecast_headers, tidak kasih forecast_number, week atau year. Jadi pertanyaan “WO ini berasal dari Forecast yang mana?” masih belum bisa dijawab.
+P0 — Filter bulan Work Orders ternyata tidak bekerja. Frontend mengirim month dan year ke /workorders. Tetapi backend GET /workorders memakai \_req dan query-nya tidak punya WHERE month/year sama sekali — langsung return seluruh work_orders ORDER BY created_at DESC. Ini bisa menjadi salah satu alasan kenapa lo melihat WO sangat banyak: pilih bulan di UI, backend tetap kirim semua periode.
+P0 runtime — /workorders/summary berpotensi ketabrak /:id. Di router saat ini router.get('/:id') didefinisikan sebelum router.get('/summary'). Frontend memanggil /workorders dan /workorders/summary bersamaan dengan Promise.all. Karena /summary adalah satu segment, Express dapat menangkap "summary" sebagai :id, lalu query WO id summary dan return 404. Route statis /summary harus diletakkan sebelum /:id.
+P1 — Quick Status UI memanggil endpoint yang tidak ada. Work Orders memanggil PATCH /workorders/:id/status. Tapi router Work Order current tidak punya router.patch(...); update status yang tersedia adalah bagian dari PUT /:id. Jadi dropdown status berpotensi selalu gagal.
+P1 — Manual reason belum punya field canonical. Requirement kita sebenarnya source_reason. Development sekarang menyimpan reason itu ke kolom notes. Gue lebih prefer buat dedicated source_reason column, karena notes adalah catatan operasional WO dan jangan dicampur dengan alasan business kenapa WO itu dibuat.
 
-dan badge-nya memakai:
+Ada satu lagi yang jangan dilewatkan: mereka mulai memperbaiki MRP → PR lineage, bagus. PR detail-specific sekarang membawa source_type='MRP', mps_header_id, dan mps_detail_id. Tetapi standalone /mrp/generate-pr cuma diberi source_type='MRP' tanpa MPS reference. Jadi kalau PR dibuat dari aggregate MRP, pertanyaan “PR ini procurement untuk demand/MPS yang mana?” masih belum bisa dijawab penuh.
 
-wo.mps_number ? MPS : Manual.
+Jadi comment gue ke development sekarang:
 
-Tapi endpoint yang dipakai halaman itu, /production/planning/weekly, tidak SELECT mps_detail_id, tidak JOIN mps_details, tidak JOIN mps_headers, dan tidak return mps_number sama sekali.
+WO Provenance Review — Cycle #2 / f1b9d4f
 
-Artinya secara actual:
+Direction accepted. Do not redesign the new MPS / MANUAL / LEGACY_UNKNOWN model.
 
-WO yang benar-benar berasal dari MPS pun bisa ditampilkan sebagai “Manual”.
+Before declaring WO lineage FIRM, close these remaining gaps:
 
-Jadi concern lo valid. Itu bukan sekadar kurang informasi di UI — contract backend ↔ frontend memang mismatch.
+P0-1: /workorders must honor month/year/status filters. Current frontend sends month/year but backend returns all WOs, which is one reason Production/WO screens can appear overloaded.
 
-Gue trace sumber pembentukan WO sekarang
+P0-2: Complete Forecast provenance in /workorders/:id/trace: join forecast_headers through forecast_header_id and return forecast_number, week, year and quantity. FORECAST + quantity alone is not traceable.
 
-Ada minimal dua jalur resmi:
+P0-3: Move static /summary route before /:id so /workorders/summary cannot be interpreted as work-order ID "summary".
 
-PPIC MPS → Generate WO.
-Jalur ini sebenarnya bagus secara data lineage. Saat WO dibuat, backend menyimpan mps_detail_id, week_number, created_by, dan notes MPS <number> W<week>.
+P1-1: Align quick status UI/API. Frontend currently calls PATCH /workorders/:id/status, but backend does not expose that contract.
 
-Artinya secara database sebenarnya kita bisa trace:
+P1-2: Store manual WO business reason in dedicated source_reason, not generic notes.
 
-WO → MPS Detail → MPS Header → Demand Source → SO / Project / Forecast.
+P1-3: Complete MRP→PR lineage for aggregate PR generation. source_type='MRP' alone is insufficient; every PR/PR item must be traceable to the MPS detail(s) / demand source(s) that created the requirement.
 
-Production → Work Orders → “Buat WO Manual”.
-UI memang secara eksplisit menyediakan tombol Buat WO Manual.
+Acceptance test must use real records:
 
-Tapi backend manual-create cuma insert:
+SO → MPS → WO → Trace
 
-wo_number, product_id, bom_id, quantity, status, priority, scheduled_start/end, line_process_id
+Forecast → MPS → WO → Trace
 
-Tidak menyimpan:
-source_type, source_reference, source_reason, bahkan created_by tidak ikut di INSERT.
+Project → MPS → WO → Trace
 
-Lebih parah lagi, frontend mengirim notes, tetapi POST backend tidak mengambil notes, sehingga alasan WO manual juga hilang.
+Manual WO → Reason + Creator
 
-Nah, ini sumber masalah sebenarnya bro.
+and verify that changing the Work Orders month actually changes the dataset returned by the API.
 
-Kita punya WO yang kaya lineage kalau dibuat MPS, dan WO yang hampir orphan secara business provenance kalau dibuat manual.
+Do not mark lineage FIRM until every displayed WO can answer: why it exists, where demand came from, who created it, and which period/week owns it.
 
-Kenapa Production Planning terlihat penuh banget?
-
-Ada masalah kedua.
-
-Query /production/planning/weekly secara eksplisit diberi comment:
-
-“Fetch all WOs (not just active)”
-
-dan memang tidak memfilter status operasional. Selama scheduled/actual date jatuh di bulan tersebut, WO draft, released, completed, closed, bahkan cancelled berpotensi ikut tampil. Ditambah lagi semua in_progress ikut diambil walaupun berasal dari periode lain.
-
-Jadi halaman yang seharusnya menjadi operational production schedule bercampur antara:
-
-current executable WO + completed WO + cancelled/closed historical WO + manual WO + MPS WO.
-
-Wajar ketika lo buka terlihat seperti banyak WO “entah dari mana”.
-
-Dan problem yang sama ada di menu Work Orders. Frontend mau menampilkan mps_number, tetapi backend /workorders hanya mengambil w.\* + product + line; tidak melakukan join ke MPS header.
-
-Jadi ini bukan masalah satu halaman.
-
-Yang gue mau minta development sekarang
-
-P0 — Work Order Provenance / Source-of-Truth
-
-Before continuing cross-module stabilization, make every Work Order traceable to its business origin.
-
-Current Production Planning UI attempts to classify WOs as MPS vs Manual using mps_number, but /production/planning/weekly does not return any MPS provenance. Therefore the current MPS/Manual classification is not reliable.
-
-Required canonical behavior:
-
-MPS-generated WO
-
-WO → MPS Detail → MPS Header → Demand Sources → SO / Project / Forecast
-
-Production Planning and Work Orders APIs must return at minimum:
-
-source_type
-mps_detail_id
-mps_number
-mps_week_number
-demand_sources[]
-
-Demand source should expose document references such as:
-
-SO-xxxx / Customer
-Project-xxxx
-Forecast-xxxx
-
-Do not derive MPS provenance from WO notes. Use relational linkage.
-
-Manual WO
-
-Manual creation remains allowed only as an explicit exception.
-
-Persist:
-
-source_type = MANUAL
-source_reason — required
-created_by — required
-created_at
-
-A manually created WO without a reason must be rejected.
-
-Existing WO records with mps_detail_id IS NULL and no deterministic upstream relation must be classified as:
-
-LEGACY_UNKNOWN
-
-Do not silently label them Manual because provenance is not proven.
-
-Production Planning
-
-Default operational view should not mix historical/cancelled WOs into the active planning board.
-
-Default:
-
-DRAFT / APPROVED / RELEASED / IN_PROGRESS / ON_HOLD
-
-Historical statuses:
-
-COMPLETED / CLOSED / CANCELLED
-
-should be accessible through a separate status filter/history view.
-
-Clicking a WO must expose a Source / Demand Trace, for example:
-
-WO-20260812-012
-→ MPS-2026-08
-→ W33
-→ SO-2026-0812-004
-→ Customer ABC
-→ Demand 5,000 KG
-
-Acceptance condition:
-
-For every WO displayed in Production Planning, reviewer must be able to answer:
-
-Why does this WO exist?
-
-Who/what created it?
-
-Which demand document caused it?
-
-Which MPS period/week owns it?
-
-If any of these cannot be answered, that WO provenance is not accepted.
-
-Dan gue nemu pola yang sama mulai muncul di MRP → PR. PR hasil MRP sekarang insert header/item dan source-nya pada dasarnya cuma text seperti "MRP Net Req" di notes. Itu berarti setelah masuk Procurement, kita bisa punya PR yang tahu “ini dari MRP”, tetapi belum tentu tahu MRP untuk MPS/SO/Forecast mana. PO memang punya pr_id, dan GRN punya po_id, jadi chain bagian hilir cukup bagus. Tapi chain awalnya masih putus.
-
-Jadi review lens gue sekarang gue ubah:
-
-Demand → Planning → Execution → Procurement → Inventory
-
-tidak cukup cuma “angkanya nyambung”.
-
-Setiap document wajib punya lineage yang bisa diklik balik.
-
-Contohnya:
-
-WO
-WO → MPS → SO/Forecast/Project
-
-PR
-PR Item → MRP Requirement → MPS → WO/Demand
-
-PO
-PO → PR → MRP → MPS/Demand
-
-GRN
-GRN → PO → PR → demand
-
-Stock
-Stock Movement → GRN / WO Issue / FG Receipt / Transfer
-
-Nah bro, ini level ketajaman yang menurut gue lebih cocok sama yang lo cari. Kalau di layar ada 50 WO, kita bukan cuma cek “50 WO muncul dengan benar”; kita harus bisa audit kenapa ada 50, siapa pembuatnya, demand-nya berapa, dan apakah seharusnya memang ada 50.
+Jadi sekarang gue belum suruh mereka lanjut feature lain. Khususnya temuan filter bulan itu menurut gue penting banget terhadap concern awal lo: banyak WO bukan hanya masalah provenance — list API-nya sendiri saat ini memang tidak menghormati filter periode. Itu harus dibereskan dulu bro

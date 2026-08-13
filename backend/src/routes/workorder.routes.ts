@@ -6,9 +6,24 @@ import { validateTransition } from '../utils/wo-transitions';
 
 const router = Router();
 
-// GET /api/workorders — enriched with MPS provenance
-router.get('/', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
+// GET /api/workorders — enriched with MPS provenance, supports month/year/status filters
+router.get('/', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {
+    const { month, year, status } = req.query;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (month && year) {
+      conditions.push('(MONTH(w.scheduled_start) = ? AND YEAR(w.scheduled_start) = ?) OR (MONTH(w.scheduled_end) = ? AND YEAR(w.scheduled_end) = ?)');
+      params.push(Number(month), Number(year), Number(month), Number(year));
+    }
+    if (status) {
+      conditions.push('w.status = ?');
+      params.push(String(status));
+    }
+
+    const whereClause = conditions.length ? 'WHERE ' + conditions.map(c => `(${c})`).join(' AND ') : '';
+
     const workOrders = await dbAll(
       `SELECT w.*, p.name as product_name, p.sku,
               lp.name as line_process_name, lp.code as line_process_code,
@@ -22,12 +37,29 @@ router.get('/', authMiddleware, requirePermission('production.workorders', 'view
        LEFT JOIN mps_details md ON w.mps_detail_id = md.id
        LEFT JOIN mps_headers mh ON md.mps_header_id = mh.id
        LEFT JOIN users cu ON w.created_by = cu.id
-       ORDER BY w.created_at DESC`
+       ${whereClause}
+       ORDER BY w.created_at DESC`,
+      params
     );
     res.json({ data: workOrders });
   } catch (error) {
     console.error('Error fetching work orders:', error);
     res.status(500).json({ error: 'Failed to fetch work orders' });
+  }
+});
+
+// GET /summary - WO status summary for dashboard (must be before /:id)
+router.get('/summary', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
+  try {
+    const summary = await dbAll(`
+      SELECT status, COUNT(*) as count
+      FROM work_orders
+      GROUP BY status
+    `, []);
+    res.json({ data: summary });
+  } catch (error) {
+    console.error('Error fetching WO summary:', error);
+    res.status(500).json({ error: 'Failed to fetch summary' });
   }
 });
 
@@ -111,7 +143,7 @@ router.post('/', authMiddleware, requirePermission('production.workorders', 'cre
     const bomId = bom?.id || null;
 
     const result = await dbRun(
-      `INSERT INTO work_orders(wo_number, product_id, bom_id, quantity, status, priority, scheduled_start, scheduled_end, line_process_id, source_type, notes, created_by) 
+      `INSERT INTO work_orders(wo_number, product_id, bom_id, quantity, status, priority, scheduled_start, scheduled_end, line_process_id, source_type, source_reason, created_by) 
        VALUES(?, ?, ?, ?, 'draft', ?, ?, ?, ?, 'MANUAL', ?, ?)`,
       [woNumber, product_id, bomId, quantity, priority || 'normal', scheduled_start || null, scheduled_end || null, line_process_id || null, String(source_reason).trim(), userId]
     );
@@ -251,6 +283,60 @@ router.put('/:id', authMiddleware, requirePermission('production.workorders', 'u
   }
 });
 
+// PATCH /api/workorders/:id/status — lightweight status-only update
+router.patch('/:id/status', authMiddleware, requirePermission('production.workorders', 'update'), async (req: Request, res: Response) => {
+  try {
+    const woId = req.params.id;
+    const { status, actual_start, actual_end } = req.body;
+    if (!status) return res.status(400).json({ error: 'status is required' });
+
+    const current = await dbGet('SELECT * FROM work_orders WHERE id = ?', [woId]) as any;
+    if (!current) return res.status(404).json({ error: 'Work order not found' });
+
+    if (status === current.status) return res.json({ message: 'No change' });
+
+    const transition = validateTransition(current.status, status);
+    if (!transition.valid) return res.status(400).json({ error: transition.error });
+
+    // prerequisite checks
+    if (status === 'released') {
+      if (!current.line_process_id) return res.status(400).json({ error: 'Cannot release WO without a line process assigned' });
+      if (!current.bom_id) return res.status(400).json({ error: 'Cannot release WO without a BOM assigned' });
+      const bomCheck = await dbGet('SELECT id, status, approval_status, product_id FROM bom_headers WHERE id = ?', [current.bom_id]) as any;
+      if (!bomCheck || bomCheck.status !== 'ACTIVE' || Number(bomCheck.approval_status) !== 2) {
+        return res.status(400).json({ error: 'Cannot release WO: BOM must be ACTIVE and fully approved' });
+      }
+    }
+    if (status === 'in_progress' && !current.line_process_id) {
+      return res.status(400).json({ error: 'Cannot start WO without a line process assigned' });
+    }
+    if (status === 'completed') {
+      const pendingQC = await dbAll(
+        `SELECT id, process_stage, status FROM wo_qc_checkpoints WHERE wo_id = ? AND is_mandatory = 1 AND status NOT IN ('passed')`,
+        [woId]
+      ) as any[];
+      if (pendingQC.length > 0) {
+        return res.status(400).json({ error: `Cannot complete WO: ${pendingQC.length} mandatory QC checkpoint(s) not passed` });
+      }
+    }
+
+    const updates: string[] = ['status = ?'];
+    const params: any[] = [status];
+    if (status === 'in_progress' && !actual_start && !current.actual_start) { updates.push('actual_start = NOW()'); }
+    if (status === 'completed' && !actual_end && !current.actual_end) { updates.push('actual_end = NOW()'); }
+    if (actual_start) { updates.push('actual_start = ?'); params.push(actual_start); }
+    if (actual_end) { updates.push('actual_end = ?'); params.push(actual_end); }
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(woId);
+
+    await dbRun(`UPDATE work_orders SET ${updates.join(', ')} WHERE id = ?`, params);
+    res.json({ message: `Status updated to ${status}` });
+  } catch (error) {
+    console.error('Error updating WO status:', error);
+    res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
 // DELETE /api/workorders/:id — soft-delete for WOs with transactions
 router.delete('/:id', authMiddleware, requirePermission('production.workorders', 'delete'), async (req: Request, res: Response) => {
   try {
@@ -289,26 +375,11 @@ router.delete('/:id', authMiddleware, requirePermission('production.workorders',
   }
 });
 
-// GET /summary - WO status summary for dashboard
-router.get('/summary', authMiddleware, requirePermission('production.workorders', 'view'), async (_req: Request, res: Response) => {
-  try {
-    const summary = await dbAll(`
-      SELECT status, COUNT(*) as count
-      FROM work_orders
-      GROUP BY status
-    `, []);
-    res.json({ data: summary });
-  } catch (error) {
-    console.error('Error fetching WO summary:', error);
-    res.status(500).json({ error: 'Failed to fetch summary' });
-  }
-});
-
 // GET /api/workorders/:id/trace — full demand lineage for a WO
 router.get('/:id/trace', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {
     const wo = await dbGet(
-      `SELECT w.id, w.wo_number, w.source_type, w.mps_detail_id, w.week_number, w.notes,
+      `SELECT w.id, w.wo_number, w.source_type, w.mps_detail_id, w.week_number, w.notes, w.source_reason,
               COALESCE(cu.full_name, cu.username) as created_by_name, w.created_at
        FROM work_orders w
        LEFT JOIN users cu ON w.created_by = cu.id
@@ -345,13 +416,16 @@ router.get('/:id/trace', authMiddleware, requirePermission('production.workorder
                   si.id as so_item_id, so.so_number, c.name as customer_name,
                   soi_p.name as so_product_name, si.quantity as so_qty,
                   cp.id as project_id, CONCAT('PRJ-', cp.project_number) as project_ref,
-                  cp.project_name, cp.quantity as project_qty
+                  cp.project_name, cp.quantity as project_qty,
+                  fh.forecast_number, fh.period_year as forecast_year, fh.period_month as forecast_month,
+                  ds.week_number as forecast_week, ds.year as forecast_source_year
            FROM mps_detail_sources ds
            LEFT JOIN so_items si ON ds.so_item_id = si.id
            LEFT JOIN sales_orders so ON si.so_id = so.id
            LEFT JOIN customers c ON so.customer_id = c.id
            LEFT JOIN products soi_p ON si.product_id = soi_p.id
            LEFT JOIN client_projects cp ON ds.project_id = cp.id
+           LEFT JOIN forecast_headers fh ON ds.forecast_header_id = fh.id
            WHERE ds.mps_detail_id = ?`,
           [wo.mps_detail_id]
         ) as any[];
@@ -362,14 +436,14 @@ router.get('/:id/trace', authMiddleware, requirePermission('production.workorder
           } else if (s.source_type === 'PROJECT') {
             return { type: 'PROJECT', ref: s.project_ref, name: s.project_name, quantity: s.quantity || s.project_qty };
           } else if (s.source_type === 'FORECAST') {
-            return { type: 'FORECAST', quantity: s.quantity };
+            return { type: 'FORECAST', ref: s.forecast_number, period: `${s.forecast_year}-${String(s.forecast_month).padStart(2, '0')}`, week: s.forecast_week, year: s.forecast_source_year, quantity: s.quantity };
           }
           return { type: s.source_type, quantity: s.quantity };
         });
       }
     } else if (wo.source_type === 'MANUAL') {
       trace.manual = {
-        source_reason: wo.notes,
+        source_reason: wo.source_reason || wo.notes,
         created_by: wo.created_by_name,
         created_at: wo.created_at
       };

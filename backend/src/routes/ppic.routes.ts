@@ -1741,11 +1741,18 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
       }));
     const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
 
+    // P1-3: resolve MPS header(s) from the year for lineage
+    const mpsHeaders = await dbAll(
+      `SELECT id FROM mps_headers WHERE status = 'Confirmed' AND period_year = ?`,
+      [year || now.getFullYear()]
+    ) as any[];
+    const mpsHeaderId = mpsHeaders.length === 1 ? mpsHeaders[0].id : (mpsHeaders[0]?.id || null);
+
     // transactional: PR header + all items, rollback if any item fails
     const result = await dbTransaction(async (conn: any) => {
       const [prInsert] = await conn.execute(
-        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP')`,
-        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededBy.toISOString().slice(0, 10)]
+        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type, mps_header_id) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP', ?)`,
+        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededBy.toISOString().slice(0, 10), mpsHeaderId]
       );
       const prId = prInsert.insertId;
 
