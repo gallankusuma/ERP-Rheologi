@@ -808,6 +808,9 @@ const ensurePpicSchema = async (connection: any) => {
     `ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS source_reason TEXT NULL`,
     // migrate: MANUAL WOs had reason stored in notes — move to source_reason
     `UPDATE work_orders SET source_reason = notes, notes = NULL WHERE source_type = 'MANUAL' AND source_reason IS NULL AND notes IS NOT NULL AND notes != ''`,
+
+    // P0-cycle3: many-to-many MRP→PR lineage per item
+    `ALTER TABLE purchase_request_items ADD COLUMN IF NOT EXISTS mps_detail_ids JSON NULL`,
   ];
 
   for (const statement of statements) {

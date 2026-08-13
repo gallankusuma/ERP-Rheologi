@@ -28,7 +28,7 @@ router.get('/', authMiddleware, requirePermission('production.workorders', 'view
       `SELECT w.*, p.name as product_name, p.sku,
               lp.name as line_process_name, lp.code as line_process_code,
               lp.capacity_per_hour, u.name as capacity_unit_name,
-              mh.mps_number,
+              mh.mps_number, w.week_number as mps_week_number,
               COALESCE(cu.full_name, cu.username) as created_by_name
        FROM work_orders w 
        JOIN products p ON w.product_id = p.id

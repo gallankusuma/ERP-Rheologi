@@ -305,7 +305,6 @@ import { ref, computed, onMounted } from 'vue';
 import { api } from '../lib/api';
 
 const wos = ref<any[]>([]);
-const summary = ref<any[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const searchQ = ref('');
@@ -373,8 +372,12 @@ const summaryMap: Record<string, string> = {
 const summaryWithAll = computed(() => {
   const total = wos.value.length;
   const all = [{ status: 'all', label: 'Semua', count: total }];
-  const grouped = summary.value.map((s: any) => ({
-    status: s.status, label: summaryMap[s.status] || s.status, count: Number(s.count)
+  const counts: Record<string, number> = {};
+  for (const w of wos.value) {
+    counts[w.status] = (counts[w.status] || 0) + 1;
+  }
+  const grouped = Object.entries(counts).map(([status, count]) => ({
+    status, label: summaryMap[status] || status, count
   }));
   return [...all, ...grouped];
 });
@@ -415,12 +418,8 @@ const loadWOs = async () => {
   try {
     const params: any = {};
     if (filterMonth.value && filterYear.value) { params.month = filterMonth.value; params.year = filterYear.value; }
-    const [woRes, sumRes] = await Promise.all([
-      api.get('/workorders', { params }),
-      api.get('/workorders/summary'),
-    ]);
+    const woRes = await api.get('/workorders', { params });
     wos.value = woRes.data.data || [];
-    summary.value = sumRes.data.data || [];
   } catch (e) { showToast('Gagal memuat WO', 'error'); }
   loading.value = false;
 };

@@ -331,9 +331,11 @@
                   <span class="text-gray-400">&rarr;</span>
                   <span v-if="src.type === 'SO_ITEM'" class="text-blue-700 font-semibold">{{ src.ref }}</span>
                   <span v-else-if="src.type === 'PROJECT'" class="text-purple-700 font-semibold">{{ src.ref }}</span>
-                  <span v-else class="text-orange-600 font-semibold">Forecast</span>
+                  <span v-else class="text-orange-600 font-semibold">{{ src.ref || 'Forecast' }}</span>
                   <span v-if="src.customer" class="text-xs text-gray-500">&middot; {{ src.customer }}</span>
                   <span v-if="src.name" class="text-xs text-gray-500">&middot; {{ src.name }}</span>
+                  <span v-if="src.period" class="text-xs text-gray-500">&middot; {{ src.period }}</span>
+                  <span v-if="src.week" class="text-xs text-gray-500">&middot; W{{ src.week }}</span>
                   <span v-if="src.quantity" class="ml-auto text-xs font-bold text-gray-600">{{ Number(src.quantity).toLocaleString('id') }}</span>
                 </div>
               </div>

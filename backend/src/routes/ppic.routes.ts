@@ -1741,18 +1741,47 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
       }));
     const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
 
-    // P1-3: resolve MPS header(s) from the year for lineage
+    // resolve confirmed MPS details + BOM mapping for per-item lineage
+    const mrpYear = year || now.getFullYear();
     const mpsHeaders = await dbAll(
       `SELECT id FROM mps_headers WHERE status = 'Confirmed' AND period_year = ?`,
-      [year || now.getFullYear()]
+      [mrpYear]
     ) as any[];
-    const mpsHeaderId = mpsHeaders.length === 1 ? mpsHeaders[0].id : (mpsHeaders[0]?.id || null);
+    const headerIds = mpsHeaders.map((h: any) => h.id);
+
+    // build material→contributing mps_detail_ids map
+    const materialDetailMap: Record<number, number[]> = {};
+    if (headerIds.length > 0) {
+      const hPlaceholders = headerIds.map(() => '?').join(',');
+      const allDetails = await dbAll(`
+        SELECT d.id as detail_id, d.bom_id
+        FROM mps_details d
+        WHERE d.mps_header_id IN (${hPlaceholders}) AND d.bom_id IS NOT NULL
+      `, headerIds) as any[];
+
+      if (allDetails.length > 0) {
+        const bomIds = [...new Set(allDetails.map((d: any) => d.bom_id))];
+        const bPlaceholders = bomIds.map(() => '?').join(',');
+        const allBomItems = await dbAll(`
+          SELECT bom_header_id, raw_material_id FROM bom_details
+          WHERE bom_header_id IN (${bPlaceholders})
+        `, bomIds) as any[];
+
+        for (const mat of validMaterials) {
+          const matId = mat.material_id;
+          const contributingDetails = allDetails.filter((d: any) =>
+            allBomItems.some((b: any) => b.bom_header_id === d.bom_id && b.raw_material_id === matId)
+          );
+          materialDetailMap[matId] = contributingDetails.map((d: any) => d.detail_id);
+        }
+      }
+    }
 
     // transactional: PR header + all items, rollback if any item fails
     const result = await dbTransaction(async (conn: any) => {
       const [prInsert] = await conn.execute(
-        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type, mps_header_id) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP', ?)`,
-        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededBy.toISOString().slice(0, 10), mpsHeaderId]
+        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP')`,
+        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededBy.toISOString().slice(0, 10)]
       );
       const prId = prInsert.insertId;
 
@@ -1760,9 +1789,11 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
       for (const mat of validMaterials) {
         const qty = Number(mat.total_net_requirement) || 0;
         if (qty <= 0) continue;
+        const detailIds = materialDetailMap[mat.material_id] || [];
+        const detailIdsJson = detailIds.length > 0 ? JSON.stringify(detailIds) : null;
         await conn.execute(
-          `INSERT INTO purchase_request_items (purchase_request_id, product_id, quantity, notes) VALUES (?, ?, ?, ?)`,
-          [prId, mat.material_id, qty, `MRP Net Req | Lead Time: ${mat.lead_time || 2} weeks | UOM: ${mat.uom_name || '-'}`]
+          `INSERT INTO purchase_request_items (purchase_request_id, product_id, quantity, notes, mps_detail_ids) VALUES (?, ?, ?, ?, ?)`,
+          [prId, mat.material_id, qty, `MRP Net Req | Lead Time: ${mat.lead_time || 2} weeks | UOM: ${mat.uom_name || '-'}`, detailIdsJson]
         );
         itemCount++;
       }
