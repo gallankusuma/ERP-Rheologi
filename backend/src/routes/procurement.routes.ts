@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission, checkUserPermission } from '../middleware/permission';
 import { autoCreateFpa } from '../services/qc.service';
@@ -530,6 +530,12 @@ router.post('/purchase-requests', authMiddleware, requirePermission('procurement
 
 router.put('/purchase-requests/:id', authMiddleware, requirePermission('procurement.purchase-requests', 'update'), async (req: Request, res: Response) => {
   try {
+    // P0-8: approved PR is immutable
+    const existingPr = await dbGet('SELECT approval_status FROM purchase_requests WHERE id = ?', [req.params.id]) as any;
+    if (existingPr && Number(existingPr.approval_status || 0) >= 1) {
+      return res.status(400).json({ error: 'Cannot modify approved PR. Reset approval first.' });
+    }
+
     const { status, notes, department, request_date, needed_by, reason, project_id, vendor_comparisons, selected_vendor_id } = req.body;
     await dbRun(
       'UPDATE purchase_requests SET status = ?, notes = ?, project_id = ?, request_date = ?, needed_by = ?, vendor_comparisons = ?, selected_vendor_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -1399,6 +1405,12 @@ router.post('/purchase-orders', authMiddleware, requirePermission('procurement.p
 
 router.put('/purchase-orders/:id', authMiddleware, requirePermission('procurement.purchase-orders', 'update'), async (req: Request, res: Response) => {
   try {
+    // P0-8: approved PO is immutable
+    const existingPo = await dbGet('SELECT approval_status FROM purchase_orders WHERE id = ?', [req.params.id]) as any;
+    if (existingPo && Number(existingPo.approval_status || 0) >= 1) {
+      return res.status(400).json({ error: 'Cannot modify approved PO. Reset approval first.' });
+    }
+
     const {
       vendor_id,
       pr_id,
@@ -1528,7 +1540,9 @@ router.post('/purchase-orders/:id/approve', authMiddleware, async (req: Request,
 
     if (hasApprove && currentStatus < 2) {
       await dbRun(
-        'UPDATE purchase_orders SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
+        `UPDATE purchase_orders SET approval_status = 2, status = 'APPROVED',
+         approved_by_supervisor_id = ?, approved_by_manager_id = ?,
+         approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?`,
         [userId, userId, poId]
       );
       return res.json({ message: 'PO fully approved (DIRECT)', approval_status: 2 });
@@ -1542,7 +1556,8 @@ router.post('/purchase-orders/:id/approve', authMiddleware, async (req: Request,
     }
     if (hasApprove2 && currentStatus === 1) {
       await dbRun(
-        'UPDATE purchase_orders SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
+        `UPDATE purchase_orders SET approval_status = 2, status = 'APPROVED',
+         approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?`,
         [userId, poId]
       );
       return res.json({ message: 'PO approved (2/2)', approval_status: 2 });
@@ -1566,7 +1581,9 @@ router.post('/purchase-orders/:id/reject', authMiddleware, async (req: Request, 
       || await checkUserPermission(userId, 'procurement.purchase-orders', 'approve');
     if (canReject) {
       await dbRun(
-        'UPDATE purchase_orders SET approval_status = 0, approved_by_supervisor_id = NULL, approved_by_manager_id = NULL, approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?',
+        `UPDATE purchase_orders SET approval_status = 0, status = 'submitted',
+         approved_by_supervisor_id = NULL, approved_by_manager_id = NULL,
+         approved_at_supervisor = NULL, approved_at_manager = NULL WHERE id = ?`,
         [poId]
       );
       return res.json({ message: 'PO rejected and reset to pending', approval_status: 0 });
@@ -1697,16 +1714,21 @@ router.post('/goods-receipts', authMiddleware, requirePermission('procurement.gr
       receiver = 1;
     }
     
-    // Universal Rule: Prevent creating a new GRN if an active (non-rejected) GRN already exists for this PO
-    const activeGRN = await dbGet(
-      'SELECT id, grn_number FROM goods_receipts WHERE po_id = ? AND (approval_status IS NULL OR approval_status != -1)',
+    // P0-2: allow multiple GRNs per PO — only require PO to be approved with outstanding items
+    const po = await dbGet('SELECT id, approval_status, status FROM purchase_orders WHERE id = ?', [po_id]) as any;
+    if (!po) return res.status(400).json({ error: 'PO not found' });
+    if (Number(po.approval_status || 0) < 2) {
+      return res.status(400).json({ error: 'PO must be fully approved before creating GRN' });
+    }
+
+    // check if PO still has outstanding items
+    const poItems = await dbAll(
+      'SELECT id, quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
       [po_id]
-    ) as any;
-    
-    if (activeGRN) {
-      return res.status(400).json({ 
-        error: `PO ini sudah terikat dengan GRN (${activeGRN.grn_number}). Anda tidak dapat membuat GRN baru untuk PO ini kecuali GRN sebelumnya di-reject.` 
-      });
+    ) as any[];
+    const hasOutstanding = poItems.some((i: any) => Number(i.quantity) > Number(i.received_qty));
+    if (!hasOutstanding) {
+      return res.status(400).json({ error: 'All PO items have been fully received. No outstanding quantity.' });
     }
 
     console.log('🔍 GRN Create Debug:', { po_id, warehouse_id, receiver, date: normalizedDate });
@@ -1759,35 +1781,74 @@ router.delete('/goods-receipts/:id', authMiddleware, requirePermission('procurem
     const grn = await dbGet(`SELECT * FROM goods_receipts WHERE id = ?`, [id]) as any;
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
 
-    // Safe cleanup helper
     const safeCleanup = async (sql: string, params: any[], label: string) => {
       try { await dbRun(sql, params); } catch (e: any) {
         console.warn(`Warning cleaning ${label}:`, e.message?.substring(0, 120));
       }
     };
 
-    // if GRN was approved (inventory was updated), reverse the inventory_stocks balance
+    // if GRN was approved (inventory was updated), reverse
     if (Number(grn.approval_status) === 2) {
       const grnItems = await dbAll(
         'SELECT * FROM grn_items WHERE grn_id = ?', [id]
       ) as any[];
 
       for (const item of grnItems) {
-        if (item.product_id && (item.received_quantity || 0) > 0) {
-          // reverse canonical inventory_stocks (keyed by product + warehouse)
+        const qty = Number(item.quantity_received || 0);
+        if (!item.product_id || qty <= 0) continue;
+
+        // P0-6: reverse grn_id-specific qc_hold row
+        await safeCleanup(
+          'UPDATE inventory_stocks SET quantity = GREATEST(0, quantity - ?), last_updated = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id = ?',
+          [qty, item.product_id, grn.warehouse_id || 1, 'qc_hold', id],
+          'inventory_stocks_reverse'
+        );
+
+        // also try legacy rows without grn_id (for GRNs approved before migration)
+        await safeCleanup(
+          'UPDATE inventory_stocks SET quantity = GREATEST(0, quantity - ?), last_updated = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id IS NULL',
+          [qty, item.product_id, grn.warehouse_id || 1, 'qc_hold'],
+          'inventory_stocks_reverse_legacy'
+        );
+
+        // P0-2: reverse PO received_qty
+        if (item.po_item_id) {
           await safeCleanup(
-            'UPDATE inventory_stocks SET quantity = GREATEST(0, quantity - ?), last_updated = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?',
-            [item.received_quantity, item.product_id, grn.warehouse_id || 1],
-            'inventory_stocks_reverse'
+            'UPDATE purchase_order_items SET received_qty = GREATEST(0, COALESCE(received_qty, 0) - ?) WHERE id = ?',
+            [qty, item.po_item_id],
+            'po_item_received_qty_reverse'
           );
         }
       }
 
-      // also delete inventory_transactions for this GRN
+      // clean up zero-qty inventory rows
+      await safeCleanup(
+        'DELETE FROM inventory_stocks WHERE quantity <= 0 AND status = ? AND grn_id = ?',
+        ['qc_hold', id],
+        'inventory_stocks_cleanup'
+      );
+
+      // delete inventory_transactions for this GRN
       await safeCleanup(
         'DELETE FROM inventory_transactions WHERE reference_type = ? AND reference_id = ?',
         ['GRN', id],
         'inventory_transactions_reverse'
+      );
+
+      // P0-2: recalculate PO status after reversal
+      const poItems = await dbAll(
+        'SELECT quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
+        [grn.po_id]
+      ) as any[];
+      const allReceived = poItems.every((i: any) => Number(i.received_qty) >= Number(i.quantity));
+      const someReceived = poItems.some((i: any) => Number(i.received_qty) > 0);
+      let newPoStatus = 'APPROVED';
+      if (allReceived) newPoStatus = 'RECEIVED';
+      else if (someReceived) newPoStatus = 'PARTIAL';
+      await safeCleanup(
+        'UPDATE purchase_orders SET status = ? WHERE id = ?',
+        [newPoStatus, grn.po_id],
+        'po_status_reverse'
       );
     }
 
@@ -1816,7 +1877,6 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
     let userId = (req as any).user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Verify user exists in database
     const userExists = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
     if (!userExists) {
       console.warn(`Approve user ID ${userId} not found, using default admin (ID: 1)`);
@@ -1828,7 +1888,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
 
     let currentStatus = Number(grn.approval_status || 0);
 
-    // Parse items from notes
+    // parse items from notes JSON (frontend stores items here)
     let items: any[] = [];
     try {
       const parsedNotes = JSON.parse(grn.notes || '{}');
@@ -1837,7 +1897,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
       items = [];
     }
 
-    // If rejected (-1), reset to pending (0) first
+    // if rejected (-1), reset to pending (0) first
     if (currentStatus === -1) {
       await dbRun(
         `UPDATE goods_receipts
@@ -1856,18 +1916,20 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
     const hasApprove1 = await checkUserPermission(userId, 'procurement.grn', 'approve_1');
     const hasApprove2 = await checkUserPermission(userId, 'procurement.grn', 'approve_2');
 
+    // determine if this step reaches final approval (approval_status = 2)
+    let newApprovalStatus = currentStatus;
     if (hasApprove && currentStatus < 2) {
-      await dbRun(
-        `UPDATE goods_receipts
-         SET approval_status = 2, status = 'approved',
-             approved_by_supervisor_id = ?,
-             approved_by_manager_id = ?,
-             approved_at_supervisor = CURRENT_TIMESTAMP,
-             approved_at_manager = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [userId, userId, id]
-      );
+      newApprovalStatus = 2;
     } else if (hasApprove1 && currentStatus === 0) {
+      newApprovalStatus = 1;
+    } else if (hasApprove2 && currentStatus === 1) {
+      newApprovalStatus = 2;
+    } else {
+      return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
+    }
+
+    // partial approval (0 -> 1): just update approval_status, no inventory
+    if (newApprovalStatus === 1) {
       await dbRun(
         `UPDATE goods_receipts
          SET approval_status = 1, status = 'received',
@@ -1876,82 +1938,161 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
          WHERE id = ?`,
         [userId, id]
       );
-    } else if (hasApprove2 && currentStatus === 1) {
-      await dbRun(
-        `UPDATE goods_receipts
-         SET approval_status = 2, status = 'approved',
-             approved_by_manager_id = ?,
-             approved_at_manager = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [userId, id]
+      const finalData = await dbGet(
+        `SELECT gr.*, po.po_number, w.name as warehouse_name, u.full_name as received_by_name
+         FROM goods_receipts gr
+         LEFT JOIN purchase_orders po ON gr.po_id = po.id
+         LEFT JOIN warehouses w ON gr.warehouse_id = w.id
+         LEFT JOIN users u ON gr.received_by = u.id
+         WHERE gr.id = ?`,
+        [id]
       );
-    } else {
-      return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
+      return res.json({ message: 'GRN approved (1/2)', data: finalData });
     }
 
-    // If now fully approved, create stock movements and update inventory
-    const updated = await dbGet('SELECT * FROM goods_receipts WHERE id = ?', [id]) as any;
-    if (Number(updated.approval_status) === 2) {
-      const grnId = Number(updated.id);
-      const grnNumber = updated.grn_number || updated.gr_number || `GRN-${grnId}`;
-      const alreadyPostedStock = await dbGet(
-        'SELECT COUNT(*) as cnt FROM stock_movements WHERE reference_type = ? AND reference_id = ?',
-        ['GRN', grnId]
-      ) as any;
+    // final approval (-> 2): atomic transaction for everything
+    const grnId = Number(grn.id);
+    const grnNumber = grn.grn_number || `GRN-${grnId}`;
 
-      if ((alreadyPostedStock?.cnt || 0) === 0) {
-        for (const item of items) {
-          if ((item.received_quantity || 0) > 0 && item.product_id) {
-            await dbRun(
-              `INSERT INTO stock_movements 
-              (product_id, warehouse_id, reference_type, reference_id, quantity, movement_type, notes, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-              [
-                item.product_id,
-                updated.warehouse_id,
-                'GRN',
-                grnId,
-                item.received_quantity,
-                'inbound',
-                `${grnNumber} - Receipt from PO ${updated.po_id}: ${item.remarks || 'OK'}`
-              ]
-            );
-          }
-        }
-      } else {
-        console.log('[GRN Approve] Stock movements already recorded, skipping duplicate insert');
+    // idempotency: check if already posted
+    const alreadyPosted = await dbGet(
+      'SELECT COUNT(*) as cnt FROM stock_movements WHERE reference_type = ? AND reference_id = ?',
+      ['GRN', grnId]
+    ) as any;
+
+    if ((alreadyPosted?.cnt || 0) > 0) {
+      // already posted — just ensure status is correct and return
+      await dbRun(
+        `UPDATE goods_receipts SET approval_status = 2, status = 'approved' WHERE id = ?`,
+        [id]
+      );
+      const finalData = await dbGet(
+        `SELECT gr.*, po.po_number FROM goods_receipts gr LEFT JOIN purchase_orders po ON gr.po_id = po.id WHERE gr.id = ?`,
+        [id]
+      );
+      return res.json({ message: 'GRN already posted (idempotent)', data: finalData });
+    }
+
+    // P0-3: all inventory posting inside one transaction
+    await dbTransaction(async (conn: any) => {
+      // 1. mark GRN as approved
+      const approveFields = hasApprove
+        ? `approval_status = 2, status = 'approved',
+           approved_by_supervisor_id = ?, approved_by_manager_id = ?,
+           approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP`
+        : `approval_status = 2, status = 'approved',
+           approved_by_manager_id = ?,
+           approved_at_manager = CURRENT_TIMESTAMP`;
+      const approveParams = hasApprove ? [userId, userId, id] : [userId, id];
+      await conn.execute(
+        `UPDATE goods_receipts SET ${approveFields} WHERE id = ?`,
+        approveParams
+      );
+
+      // 2. load PO items for cross-referencing
+      const [poItems] = await conn.execute(
+        'SELECT id, product_id, quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
+        [grn.po_id]
+      );
+      const poItemMap = new Map<number, any>();
+      for (const poi of poItems) {
+        poItemMap.set(Number(poi.product_id), poi);
       }
 
-      await applyGrnToInventory(updated, items);
+      // 3. persist items into grn_items (P0-4: canonical relational table)
+      //    and create inventory entries (P0-5: single posting, no double)
+      for (const item of items) {
+        const qty = Number(item.received_quantity || 0);
+        if (!item.product_id || qty <= 0) continue;
 
-      // auto-trigger Incoming QC: create FPA for each GRN item with Incoming specs
-      const createdFpas: Array<{ productId: number; fpaNumber: string }> = [];
-      try {
-        const uniqueProducts = new Map<number, any>();
-        for (const item of items) {
-          if (item.product_id && !uniqueProducts.has(item.product_id)) {
-            uniqueProducts.set(item.product_id, item);
-          }
+        // find matching PO item
+        const poItem = poItemMap.get(Number(item.product_id));
+        const poItemId = poItem?.id || null;
+
+        // P0-4: insert into grn_items
+        await conn.execute(
+          `INSERT INTO grn_items (grn_id, po_item_id, product_id, quantity_received, batch_number, notes)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [grnId, poItemId, item.product_id, qty, item.batch_number || null, item.remarks || null]
+        );
+
+        // P0-6: create qc_hold inventory with grn_id for lot-specific tracking
+        await conn.execute(
+          `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, grn_id, reorder_point)
+           VALUES (?, ?, ?, 'qc_hold', ?, 0)
+           ON DUPLICATE KEY UPDATE quantity = quantity + ?`,
+          [grn.warehouse_id || 1, item.product_id, qty, grnId, qty]
+        );
+
+        // P0-5: single stock_movement per item (not double)
+        await conn.execute(
+          `INSERT INTO stock_movements
+           (product_id, warehouse_id, reference_type, reference_id, quantity, movement_type, notes, created_at)
+           VALUES (?, ?, 'GRN', ?, ?, 'inbound', ?, CURRENT_TIMESTAMP)`,
+          [
+            item.product_id,
+            grn.warehouse_id,
+            grnId,
+            qty,
+            `${grnNumber} - Receipt from PO ${grn.po_id} [QC_HOLD]${item.remarks ? ' - ' + item.remarks : ''}`
+          ]
+        );
+
+        // P0-2: update PO item received_qty
+        if (poItemId) {
+          await conn.execute(
+            'UPDATE purchase_order_items SET received_qty = COALESCE(received_qty, 0) + ? WHERE id = ?',
+            [qty, poItemId]
+          );
         }
-        for (const [productId, item] of uniqueProducts) {
-          const fpaResult = await autoCreateFpa({
-            type: 'Incoming',
-            productId,
-            batchNo: item.batch_number || null,
-            supplierId: updated.vendor_id || null,
-            referenceId: grnId,
-            referenceNumber: grnNumber,
-            notes: `Auto-generated Incoming QC from GRN ${grnNumber}`,
-            createdBy: userId,
-            quantity: item.received_quantity || null
-          });
-          if (fpaResult) {
-            createdFpas.push({ productId, fpaNumber: fpaResult.fpaNumber });
-          }
-        }
-      } catch (incomingErr: any) {
-        console.error('[GRN Approve] Failed to auto-create Incoming QC FPA:', incomingErr.message);
       }
+
+      // P0-2: update PO status based on received vs ordered
+      const [updatedPoItems] = await conn.execute(
+        'SELECT quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
+        [grn.po_id]
+      );
+      const allFullyReceived = updatedPoItems.every(
+        (i: any) => Number(i.received_qty) >= Number(i.quantity)
+      );
+      const someReceived = updatedPoItems.some(
+        (i: any) => Number(i.received_qty) > 0
+      );
+      let newPoStatus = 'APPROVED';
+      if (allFullyReceived) newPoStatus = 'RECEIVED';
+      else if (someReceived) newPoStatus = 'PARTIAL';
+
+      await conn.execute(
+        'UPDATE purchase_orders SET status = ? WHERE id = ?',
+        [newPoStatus, grn.po_id]
+      );
+    });
+
+    console.log('[GRN Approve] Transaction committed', { grnId, items: items.length });
+
+    // auto-trigger Incoming QC (outside transaction — FPA creation is non-critical)
+    try {
+      const uniqueProducts = new Map<number, any>();
+      for (const item of items) {
+        if (item.product_id && !uniqueProducts.has(item.product_id)) {
+          uniqueProducts.set(item.product_id, item);
+        }
+      }
+      for (const [productId, item] of uniqueProducts) {
+        await autoCreateFpa({
+          type: 'Incoming',
+          productId,
+          batchNo: item.batch_number || null,
+          supplierId: grn.vendor_id || null,
+          referenceId: grnId,
+          referenceNumber: grnNumber,
+          notes: `Auto-generated Incoming QC from GRN ${grnNumber}`,
+          createdBy: userId,
+          quantity: item.received_quantity || null
+        });
+      }
+    } catch (incomingErr: any) {
+      console.error('[GRN Approve] Failed to auto-create Incoming QC FPA:', incomingErr.message);
     }
 
     const finalData = await dbGet(
@@ -1967,7 +2108,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
     res.json({ message: 'GRN approval updated', data: finalData });
   } catch (error: any) {
     console.error('Error approving GRN:', error);
-    res.status(500).json({ error: 'Failed to approve GRN' });
+    res.status(500).json({ error: 'Failed to approve GRN: ' + (error.message || 'Unknown error') });
   }
 });
 
@@ -1997,61 +2138,6 @@ router.post('/goods-receipts/:id/reject', authMiddleware, async (req: Request, r
   }
 });
 
-// sync approved GRN into inventory (as qc_hold) and log inventory transactions
-// stock is held until Incoming QC passes, then released to 'available'
-// errors propagate to caller — GRN approval must fail if inventory posting fails
-async function applyGrnToInventory(grn: any, items: any[]) {
-  const alreadyPosted = await dbGet(
-    'SELECT COUNT(*) as cnt FROM inventory_transactions WHERE reference_type = ? AND reference_id = ?',
-    ['GRN', grn.id]
-  ) as any;
-
-  if ((alreadyPosted?.cnt || 0) > 0) {
-    console.log('[GRN Approve] Inventory already updated for this GRN, skipping duplicate apply');
-    return;
-  }
-
-  for (const item of items) {
-    const qty = Number(item.received_quantity || 0);
-    if (!item.product_id || qty <= 0) continue;
-
-    // look for existing qc_hold row for same product+warehouse
-    const existingHold = await dbGet(
-      'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-      [item.product_id, grn.warehouse_id || 1, 'qc_hold']
-    ) as any;
-
-    if (existingHold) {
-      await dbRun(
-        `UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
-        [qty, existingHold.id]
-      );
-    } else {
-      await dbRun(
-        `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, reorder_point)
-        VALUES (?, ?, ?, 'qc_hold', 0)`,
-        [grn.warehouse_id || 1, item.product_id, qty]
-      );
-    }
-
-    const grnLabel = grn.grn_number || grn.gr_number || `GRN-${grn.id}`;
-    await dbRun(
-      `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
-      VALUES (?, ?, ?, 'inbound', 'GRN', ?, ?, CURRENT_TIMESTAMP)`,
-      [
-        item.product_id,
-        grn.warehouse_id,
-        qty,
-        grn.id,
-        `${grnLabel} [QC_HOLD]${item.remarks ? ' - ' + item.remarks : ''}`
-      ]
-    );
-  }
-
-  console.log('[GRN Approve] Inventory updated from GRN (qc_hold)', { grnId: grn.id, items: items.length });
-}
-
-// ── Manual Price Search ─────────────────────────────────────────────────────
 // Search prices by product name/SKU — returns vendor_prices + PO history + standard cost
 router.get('/price-search', authMiddleware, async (req: Request, res: Response) => {
   try {

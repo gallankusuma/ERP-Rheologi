@@ -494,12 +494,21 @@ router.put('/fpa/:id/submit', authMiddleware, requirePermission('quality.qc-fpa'
   }
 });
 
-// P0-A: approve guards with result evaluation first
+// P0-7: single approval path — /approve now delegates to the same logic as approve-2
+// this ensures qc_hold inventory is always released on approval
 router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const fpaId = Number(req.params.id);
     const { review_notes } = req.body;
+
+    const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
+    if (!fpa) return res.status(404).json({ success: false, error: 'FPA not found' });
+
+    // guard: approve-1 must be done first
+    if (!fpa.approved_by_1) {
+      return res.status(400).json({ success: false, error: 'Approve #1 must be completed before final approval' });
+    }
 
     // guard: all required pinned results must pass
     const analysis = await evaluateAllResults(fpaId);
@@ -510,17 +519,71 @@ router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa
       });
     }
 
+    // release qc_hold inventory for Incoming FPAs
+    if (fpa.type === 'Incoming' && fpa.reference_id) {
+      const grn = await dbGet('SELECT warehouse_id FROM goods_receipts WHERE id = ?', [fpa.reference_id]) as any;
+      const warehouseId = grn?.warehouse_id || 1;
+
+      // P0-6: find qc_hold row by grn_id first, fall back to legacy
+      let holdRow = await dbGet(
+        'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id = ?',
+        [fpa.product_id, warehouseId, 'qc_hold', fpa.reference_id]
+      ) as any;
+      if (!holdRow) {
+        holdRow = await dbGet(
+          'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+          [fpa.product_id, warehouseId, 'qc_hold']
+        ) as any;
+      }
+
+      if (holdRow) {
+        const releaseQty = Number(fpa.quantity) || Number(holdRow.quantity);
+
+        const availRow = await dbGet(
+          'SELECT id FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+          [fpa.product_id, warehouseId, 'available']
+        ) as any;
+
+        if (availRow) {
+          await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, availRow.id]);
+          const remaining = Number(holdRow.quantity) - releaseQty;
+          if (remaining <= 0) {
+            await dbRun('DELETE FROM inventory_stocks WHERE id = ?', [holdRow.id]);
+          } else {
+            await dbRun('UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [remaining, holdRow.id]);
+          }
+        } else {
+          if (releaseQty >= Number(holdRow.quantity)) {
+            await dbRun('UPDATE inventory_stocks SET status = ?, grn_id = NULL, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
+          } else {
+            await dbRun('UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, holdRow.id]);
+            await dbRun(
+              'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+              [warehouseId, fpa.product_id, releaseQty, 'available']
+            );
+          }
+        }
+
+        await dbRun(
+          `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
+           VALUES (?, ?, ?, 'qc_release', 'FPA', ?, ?, CURRENT_TIMESTAMP)`,
+          [fpa.product_id, warehouseId, releaseQty, fpaId, `QC PASS - ${fpa.fpa_number} released to available`]
+        );
+        console.log(`[QC Release] Released ${releaseQty} of product ${fpa.product_id} from qc_hold to available`);
+      }
+    }
+
+    // mark FPA as approved
     await dbRun(
       `UPDATE qc_analysis_requests SET status = 'Approved', result = 'Passed',
+       approved_by_2 = ?, approved_at_2 = CURRENT_TIMESTAMP,
        reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [userId, review_notes || null, fpaId]
+      [userId, userId, review_notes || null, fpaId]
     );
-    // sync batch qc_status
-    const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
-    if (fpa && fpa.batch_no) {
+
+    if (fpa.batch_no) {
       await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
     }
-    // sync checkpoint explicitly passed
     await syncCheckpoint(fpaId, 'passed');
     res.json({ success: true, message: 'FPA approved' });
   } catch (error) {
@@ -637,16 +700,22 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
       });
     }
 
-    // P0-3: release qc_hold inventory BEFORE marking FPA as approved
-    // if release fails, FPA stays unapproved — errors propagate to caller
+    // release qc_hold inventory BEFORE marking FPA as approved
     if (fpa.type === 'Incoming' && fpa.reference_id) {
       const grn = await dbGet('SELECT warehouse_id FROM goods_receipts WHERE id = ?', [fpa.reference_id]) as any;
       const warehouseId = grn?.warehouse_id || 1;
 
-      const holdRow = await dbGet(
-        'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-        [fpa.product_id, warehouseId, 'qc_hold']
+      // P0-6: find qc_hold row by grn_id first, fall back to legacy
+      let holdRow = await dbGet(
+        'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id = ?',
+        [fpa.product_id, warehouseId, 'qc_hold', fpa.reference_id]
       ) as any;
+      if (!holdRow) {
+        holdRow = await dbGet(
+          'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+          [fpa.product_id, warehouseId, 'qc_hold']
+        ) as any;
+      }
 
       if (holdRow) {
         const releaseQty = Number(fpa.quantity) || Number(holdRow.quantity);
@@ -657,7 +726,6 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
         ) as any;
 
         if (availRow) {
-          // merge: add to available, reduce qc_hold
           await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, availRow.id]);
           const remaining = Number(holdRow.quantity) - releaseQty;
           if (remaining <= 0) {
@@ -666,11 +734,9 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
             await dbRun('UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [remaining, holdRow.id]);
           }
         } else {
-          // no available row: just flip status
           if (releaseQty >= Number(holdRow.quantity)) {
-            await dbRun('UPDATE inventory_stocks SET status = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
+            await dbRun('UPDATE inventory_stocks SET status = ?, grn_id = NULL, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
           } else {
-            // partial release: split row
             await dbRun('UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, holdRow.id]);
             await dbRun(
               'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
@@ -679,7 +745,6 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
           }
         }
 
-        // record stock movement for QC release
         await dbRun(
           `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
            VALUES (?, ?, ?, 'qc_release', 'FPA', ?, ?, CURRENT_TIMESTAMP)`,
