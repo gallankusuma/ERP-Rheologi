@@ -1110,7 +1110,8 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
     
     // Get MPS detail + BOM info
     const detail = await dbGet(`
-      SELECT d.*, p.name as product_name, p.sku as product_sku, bh.id as bom_id
+      SELECT d.*, p.name as product_name, p.sku as product_sku,
+        bh.id as bom_id, bh.qty as bom_batch_qty, bh.unit as bom_batch_unit
       FROM mps_details d
       LEFT JOIN products p ON d.product_id = p.id
       LEFT JOIN bom_headers bh ON d.bom_id = bh.id
@@ -1159,6 +1160,9 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
       weekColumns.push({ week: wk, year: yr, label: `W${wk}`, dateRange: `${range.start}-${range.end}` });
     }
 
+    // batch size from bom_headers.qty (e.g. 200 for "@200 ltr")
+    const bomBatchSize = Number(detail.bom_batch_qty) || 1;
+
     // For each BOM material, calculate MRP with actual data
     const materials = [];
     for (const bom of bomItems) {
@@ -1202,10 +1206,11 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
 
       // Calculate per-week data
       const weeks = weekColumns.map((wc: any) => {
-        // Gross requirement = MPS production_qty × BOM qty_per_unit
+        // Gross requirement = (production_qty / batch_size) × BOM qty_per_unit
         const mpsWeek = mpsWeeks.find((w: any) => w.week_number === wc.week && w.year === wc.year);
         const prodQty = Number(mpsWeek?.production_qty || 0);
-        const grossReq = prodQty * qtyPerUnit;
+        const numBatches = prodQty / bomBatchSize;
+        const grossReq = numBatches * qtyPerUnit;
 
         // Planned order receipt (from saved data or 0)
         const mrpWeek = mrpData.find((m: any) => m.material_id === matId && m.week_number === wc.week && m.year === wc.year);
@@ -1243,6 +1248,8 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
       data: {
         product: { id: detail.product_id, name: detail.product_name, sku: detail.product_sku },
         bom_id: detail.bom_id,
+        bom_batch_qty: bomBatchSize,
+        bom_batch_unit: detail.bom_batch_unit || null,
         materials,
         weekColumns
       }
@@ -1454,8 +1461,10 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
 
     // 2. Get ALL MPS details for those headers (with BOM info)
     const allDetails = await dbAll(`
-      SELECT d.id as detail_id, d.product_id, d.bom_id
+      SELECT d.id as detail_id, d.product_id, d.bom_id,
+        bh.qty as bom_batch_qty
       FROM mps_details d
+      LEFT JOIN bom_headers bh ON d.bom_id = bh.id
       WHERE d.mps_header_id IN (${headerPlaceholders}) AND d.bom_id IS NOT NULL
     `, headerIds) as any[];
 
@@ -1528,12 +1537,16 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
           };
         }
 
+        // batch size from bom_headers.qty (e.g. 200 for "@200 ltr")
+        const bomBatchSize = Number(detail.bom_batch_qty) || 1;
+
         // For each week column, add this detail's contribution to gross requirements
         for (const wc of weekColumns) {
           const key = `${wc.week}-${wc.year}`;
           const mpsWeek = detailWeeks.find((w: any) => w.week_number === wc.week && w.year === wc.year);
           const prodQty = Number(mpsWeek?.production_qty || 0);
-          const grossReq = prodQty * qtyPerUnit;
+          const numBatches = prodQty / bomBatchSize;
+          const grossReq = numBatches * qtyPerUnit;
 
           if (!materialMap[matId].weekGross[key]) {
             materialMap[matId].weekGross[key] = 0;
