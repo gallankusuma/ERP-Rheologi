@@ -175,7 +175,9 @@
                 <thead class="bg-gray-50">
                   <tr>
                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item</th>
-                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PO Qty</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ordered</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prev Recv</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outstanding</th>
                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Received Qty</th>
                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">UoM</th>
                     <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Spec Check</th>
@@ -189,13 +191,15 @@
                       <div class="font-medium">{{ item.product_name }}</div>
                       <div class="text-xs text-gray-500">#{{ item.product_id }}</div>
                     </td>
-                    <td class="px-4 py-2 text-sm font-semibold text-gray-700">{{ item.po_quantity }}</td>
+                    <td class="px-4 py-2 text-sm text-gray-500">{{ item.po_quantity }}</td>
+                    <td class="px-4 py-2 text-sm text-gray-500">{{ item.already_received }}</td>
+                    <td class="px-4 py-2 text-sm font-semibold" :class="item.outstanding_qty > 0 ? 'text-orange-600' : 'text-green-600'">{{ item.outstanding_qty }}</td>
                     <td class="px-4 py-2">
                       <input
                         v-model="item.received_quantity"
                         type="number"
                         min="0"
-                        :max="item.po_quantity"
+                        :max="item.outstanding_qty"
                         step="0.01"
                         placeholder="Ketik qty..."
                         class="w-24 border-2 border-blue-400 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
@@ -203,8 +207,8 @@
                         @input="handleReceivedQtyInput(item, $event)"
                         @focus="($event.target as HTMLInputElement).select()"
                       />
-                      <div v-if="(item.po_quantity - (item.received_quantity || 0)) > 0" class="mt-1 text-[10px] inline-block px-2 py-0.5 rounded-full bg-red-100 text-red-700">
-                        Short: {{ item.po_quantity - (item.received_quantity || 0) }}
+                      <div v-if="(item.outstanding_qty - (item.received_quantity || 0)) > 0 && item.received_quantity > 0" class="mt-1 text-[10px] inline-block px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                        Short: {{ item.outstanding_qty - (item.received_quantity || 0) }}
                       </div>
                     </td>
                     <td class="px-4 py-2 text-sm text-gray-700">{{ item.unit_of_measure }}</td>
@@ -249,7 +253,7 @@
                     </td>
                   </tr>
                   <tr v-if="formItems.length === 0">
-                    <td colspan="7" class="px-4 py-4 text-center text-gray-500 text-sm">Pilih PO untuk load items.</td>
+                    <td colspan="9" class="px-4 py-4 text-center text-gray-500 text-sm">Pilih PO untuk load items.</td>
                   </tr>
                 </tbody>
               </table>
@@ -348,7 +352,10 @@ interface PODetail {
 interface GRItem {
   product_id: number;
   product_name: string;
+  po_item_id: number | null;
   po_quantity: number;
+  already_received: number;
+  outstanding_qty: number;
   received_quantity: number;
   unit_of_measure: string;
   spec_checked: boolean;
@@ -389,9 +396,9 @@ const shortItems = computed(() => {
   return formItems.value
     .filter(item => {
       const received = item.received_quantity || 0;
-      return received < item.po_quantity;
+      return received < item.outstanding_qty;
     })
-    .map(item => `${item.product_name} (${item.po_quantity - (item.received_quantity || 0)})`);
+    .map(item => `${item.product_name} (${item.outstanding_qty - (item.received_quantity || 0)})`);
 });
 
 const fetchData = async () => {
@@ -404,16 +411,9 @@ const loadAvailablePOs = async () => {
   try {
     const response = await api.get('/procurement/purchase-orders');
     
-    // Get PO IDs that already have an active (non-rejected) GRN
-    const activeGRNPOs = new Set(
-      store.goodReceipts
-        .filter((gr: any) => (gr.approval_status || 0) !== -1)
-        .map((gr: any) => gr.po_id)
-    );
-    
-    // Filter POs yang status 'approved' dan belum punya GRN yang aktif
+    // P0-1: allow partial GRN — show all approved POs that still have outstanding items
     availablePOs.value = (response.data.data || []).filter((po: any) => {
-      return po.approval_status === 2 && !activeGRNPOs.has(po.id);
+      return po.approval_status === 2 && po.status !== 'RECEIVED';
     });
   } catch (error) {
     console.error('Failed to load POs:', error);
@@ -459,22 +459,33 @@ const onPOSelected = async () => {
     console.log('Selected PO:', selectedPO.value);
     console.log('PO items array:', po.items);
 
-    // Load PO items directly from the items array
+    // P0-3: load PO items with po_item_id and outstanding qty
     if (po.items && po.items.length > 0) {
       console.log('Found', po.items.length, 'items in PO response');
       
-      formItems.value = po.items.map((item: any) => {
-        console.log('Mapping item:', item);
-        return {
-          product_id: item.product_id,
-          product_name: item.product_name || item.name,
-          po_quantity: item.quantity || item.qty,
-          received_quantity: 0,
-          unit_of_measure: item.unit || item.uom,
-          spec_checked: false,
-          remarks: ''
-        };
-      });
+      formItems.value = po.items
+        .filter((item: any) => {
+          const ordered = Number(item.quantity || item.qty || 0);
+          const received = Number(item.received_qty || 0);
+          return ordered > received;
+        })
+        .map((item: any) => {
+          const ordered = Number(item.quantity || item.qty || 0);
+          const received = Number(item.received_qty || 0);
+          const outstanding = Math.max(ordered - received, 0);
+          return {
+            product_id: item.product_id,
+            product_name: item.product_name || item.name,
+            po_item_id: item.id || null,
+            po_quantity: ordered,
+            already_received: received,
+            outstanding_qty: outstanding,
+            received_quantity: 0,
+            unit_of_measure: item.unit || item.uom,
+            spec_checked: false,
+            remarks: ''
+          };
+        });
       
       console.log('✅ Loaded', formItems.value.length, 'items from PO');
     } else {
@@ -489,8 +500,9 @@ const onPOSelected = async () => {
 
 const validateQty = (item: GRItem) => {
   if (item.received_quantity === undefined || item.received_quantity === null) return;
-  if (item.received_quantity > item.po_quantity) {
-    item.received_quantity = item.po_quantity;
+  // P0-1: cap at outstanding qty, not total po_quantity
+  if (item.received_quantity > item.outstanding_qty) {
+    item.received_quantity = item.outstanding_qty;
   }
   if (item.received_quantity < 0) {
     item.received_quantity = 0;
@@ -507,7 +519,7 @@ const handleReceivedQtyInput = (item: GRItem, event: Event) => {
 const isAutoRemark = (txt: string | undefined | null) => (txt || '').startsWith('[auto]');
 const updateShortageRemark = (item: GRItem) => {
   const received = item.received_quantity || 0;
-  const shortage = Math.max(0, (item.po_quantity || 0) - received);
+  const shortage = Math.max(0, (item.outstanding_qty || 0) - received);
   if (shortage > 0 && item.spec_checked) {
     if (!item.remarks || isAutoRemark(item.remarks)) {
       item.remarks = `[auto] Short by ${shortage}`;

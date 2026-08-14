@@ -1712,6 +1712,32 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
       return res.status(400).json({ error: 'No materials have net requirements > 0.' });
     }
 
+    // P0-7: server-side recalculation — query PO scheduled receipts per material
+    // and reduce net requirement so duplicate procurement is prevented
+    for (const mat of validMaterials) {
+      const poOutstanding = await dbGet(`
+        SELECT COALESCE(SUM(GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0)), 0) as total_outstanding
+        FROM purchase_order_items poi
+        JOIN purchase_orders po ON poi.purchase_order_id = po.id
+        WHERE po.status IN ('APPROVED','PROCESSING','PARTIAL')
+          AND po.approval_status = 2
+          AND poi.product_id = ?
+          AND GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) > 0
+      `, [mat.material_id]) as any;
+
+      const scheduledReceipt = Number(poOutstanding?.total_outstanding || 0);
+      const browserNet = Number(mat.total_net_requirement);
+      // server-side adjusted: reduce by scheduled receipt that browser may not have accounted for
+      const serverNet = Math.max(browserNet - scheduledReceipt, 0);
+      mat.total_net_requirement = Math.round(serverNet * 100) / 100;
+    }
+
+    // re-filter after recalculation (some may now be 0)
+    const recalcMaterials = validMaterials.filter((m: any) => Number(m.total_net_requirement) > 0);
+    if (recalcMaterials.length === 0) {
+      return res.status(400).json({ error: 'After accounting for existing PO scheduled receipts, no materials have net requirements > 0.' });
+    }
+
     // duplicate protection: check if a PR-MRP was generated today for same year
     const today = new Date().toISOString().slice(0, 10);
     const recentPR = await dbGet(
@@ -1731,7 +1757,7 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
     const rand = Math.floor(100 + Math.random() * 900);
     const prNumber = `PR-MRP-${datePart}-${rand}`;
 
-    const maxLeadTime = Math.max(...validMaterials.map((m: any) => Number(m.lead_time) || 2));
+    const maxLeadTime = Math.max(...recalcMaterials.map((m: any) => Number(m.lead_time) || 2));
     const neededBy = new Date();
     neededBy.setDate(neededBy.getDate() + maxLeadTime * 7);
 
@@ -1739,10 +1765,10 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
     const noteText = [
       notes || '',
       `[Auto-generated from MRP Year ${year || now.getFullYear()}]`,
-      `Materials: ${validMaterials.length} items`,
+      `Materials: ${recalcMaterials.length} items`,
       `Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`
     ].filter(Boolean).join(' | ');
-    const notesItems = validMaterials
+    const notesItems = recalcMaterials
       .filter((m: any) => Number(m.total_net_requirement) > 0)
       .map((m: any) => ({
         productId: m.material_id,
@@ -1794,7 +1820,7 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
             WHERE bom_header_id IN (${bPlaceholders})
           `, bomIds) as any[];
 
-          for (const mat of validMaterials) {
+          for (const mat of recalcMaterials) {
             const matId = mat.material_id;
             const contributingDetails = activeDetails.filter((d: any) =>
               allBomItems.some((b: any) => b.bom_header_id === d.bom_id && b.raw_material_id === matId)
@@ -1814,7 +1840,7 @@ router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'c
       const prId = prInsert.insertId;
 
       let itemCount = 0;
-      for (const mat of validMaterials) {
+      for (const mat of recalcMaterials) {
         const qty = Number(mat.total_net_requirement) || 0;
         if (qty <= 0) continue;
         const detailIds = materialDetailMap[mat.material_id] || [];

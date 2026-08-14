@@ -141,6 +141,8 @@ CREATE TABLE bom_headers (
   product_name VARCHAR(255),
   product_id INT,
   version INT DEFAULT 1,
+  qty DECIMAL(15,4) NULL,
+  unit VARCHAR(50) NULL,
   status VARCHAR(20) DEFAULT 'ACTIVE',
   notes TEXT,
   created_by INT NULL,
@@ -210,13 +212,16 @@ CREATE TABLE inventory_stocks (
   warehouse_id INT NOT NULL,
   product_id INT NOT NULL,
   quantity DECIMAL(15,4) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'available',
+  grn_id INT NULL,
   reorder_point DECIMAL(15,4) DEFAULT 0,
   last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_warehouse_product (warehouse_id, product_id),
+  UNIQUE KEY uq_wh_product_status_grn (warehouse_id, product_id, status, grn_id),
   INDEX idx_product_id (product_id),
-  INDEX idx_quantity (quantity)
+  INDEX idx_quantity (quantity),
+  INDEX idx_inv_grn_id (grn_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Stock Transactions

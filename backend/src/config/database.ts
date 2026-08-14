@@ -811,6 +811,13 @@ const ensurePpicSchema = async (connection: any) => {
 
     // P0-cycle3: many-to-many MRP→PR lineage per item
     `ALTER TABLE purchase_request_items ADD COLUMN IF NOT EXISTS mps_detail_ids JSON NULL`,
+
+    // P0-5: grn_id for lot-specific inventory tracking
+    `ALTER TABLE inventory_stocks ADD COLUMN IF NOT EXISTS grn_id INT NULL`,
+
+    // P0-5: bom_headers batch size (qty, unit) — matches production DB
+    `ALTER TABLE bom_headers ADD COLUMN IF NOT EXISTS qty DECIMAL(15,4) NULL`,
+    `ALTER TABLE bom_headers ADD COLUMN IF NOT EXISTS unit VARCHAR(50) NULL`,
   ];
 
   for (const statement of statements) {
@@ -818,7 +825,7 @@ const ensurePpicSchema = async (connection: any) => {
   }
 
   // P0-1: migrate unique key from (warehouse_id, product_id) to (warehouse_id, product_id, status)
-  // this allows both 'available' and 'qc_hold' rows per product+warehouse
+  // P0-1: migrate unique key from (warehouse_id, product_id) to (warehouse_id, product_id, status, grn_id)
   // must drop FK constraints first since MySQL uses the unique index to back them
   try {
     // check if old index still exists
@@ -840,15 +847,26 @@ const ensurePpicSchema = async (connection: any) => {
   } catch (e: any) {
     console.warn('unique_warehouse_product migration warning:', e.message?.substring(0, 120));
   }
+
+  // P0-5: drop old 3-column unique key if exists, create 4-column with grn_id
   try {
-    await connection.execute('ALTER TABLE inventory_stocks ADD UNIQUE KEY uq_wh_product_status (warehouse_id, product_id, status)');
-    console.log('Created uq_wh_product_status index');
+    await connection.execute('ALTER TABLE inventory_stocks DROP INDEX uq_wh_product_status');
+    console.log('Dropped old uq_wh_product_status index (upgrading to include grn_id)');
+  } catch (_e) { /* doesn't exist or already dropped */ }
+
+  try {
+    await connection.execute('ALTER TABLE inventory_stocks ADD UNIQUE KEY uq_wh_product_status_grn (warehouse_id, product_id, status, grn_id)');
+    console.log('Created uq_wh_product_status_grn index');
   } catch (e: any) {
-    // already exists
     if (!e.message?.includes('Duplicate key name')) {
-      console.warn('Create uq_wh_product_status warning:', e.message?.substring(0, 100));
+      console.warn('Create uq_wh_product_status_grn warning:', e.message?.substring(0, 100));
     }
   }
+
+  // add grn_id index
+  try {
+    await connection.execute('ALTER TABLE inventory_stocks ADD INDEX idx_inv_grn_id (grn_id)');
+  } catch (_e) { /* already exists */ }
 
   console.log('PPIC module schema ensured');
 };

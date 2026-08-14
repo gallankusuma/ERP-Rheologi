@@ -61,10 +61,10 @@
               <template v-for="(mat, mIdx) in filteredMaterials" :key="mat.material_id">
                 <!-- Row 1: Gross Requirements -->
                 <tr class="border-b border-gray-100">
-                  <td :rowspan="5" class="px-2 py-1 text-center font-bold text-gray-500 border-r bg-gray-50 sticky left-0 z-20 align-top pt-4 text-sm"
+                  <td :rowspan="6" class="px-2 py-1 text-center font-bold text-gray-500 border-r bg-gray-50 sticky left-0 z-20 align-top pt-4 text-sm"
                     style="border-bottom: 3px solid #f97316">{{ mIdx + 1 }}</td>
                   <!-- REMARK (rowspan 5) -->
-                  <td :rowspan="5" class="px-2 py-2 border-r bg-gradient-to-b from-orange-50 to-amber-50 sticky left-10 z-20 align-top"
+                  <td :rowspan="6" class="px-2 py-2 border-r bg-gradient-to-b from-orange-50 to-amber-50 sticky left-10 z-20 align-top"
                     style="border-bottom: 3px solid #f97316">
                     <div class="space-y-1.5">
                       <div class="bg-orange-500 text-white rounded px-2 py-1.5 flex items-center justify-between">
@@ -88,7 +88,7 @@
                     </div>
                   </td>
                   <!-- PRODUCT (rowspan 5) -->
-                  <td :rowspan="5" class="px-3 py-2 border-r sticky left-[190px] z-20 align-middle text-center bg-white"
+                  <td :rowspan="6" class="px-3 py-2 border-r sticky left-[190px] z-20 align-middle text-center bg-white"
                     style="border-bottom: 3px solid #f97316">
                     <div class="text-[10px] text-orange-600 font-bold">{{ mat.product_type_code || 'RM' }}-{{ mIdx + 1 }}</div>
                     <div class="font-bold text-gray-900 text-[13px] mt-1 leading-tight">{{ mat.material_name }}</div>
@@ -101,7 +101,7 @@
                   <td class="px-1 py-1 text-center border-r font-bold text-sm" :class="cellCls(rowTotal(mat, 'gross_requirements'))">
                     {{ formatN(rowTotal(mat, 'gross_requirements')) }}</td>
                   <!-- UOM rowspan 5 -->
-                  <td :rowspan="5" class="px-1 py-1 text-center border-r bg-gray-50 align-middle font-semibold text-gray-600 text-[11px]"
+                  <td :rowspan="6" class="px-1 py-1 text-center border-r bg-gray-50 align-middle font-semibold text-gray-600 text-[11px]"
                     style="border-bottom: 3px solid #f97316">
                     {{ mat.uom_name || 'Kgs' }}
                   </td>
@@ -112,7 +112,21 @@
                   </td>
                 </tr>
 
-                <!-- Row 2: Planned Order Release -->
+                <!-- Row 2: Scheduled Receipt (from PO) -->
+                <tr class="border-b border-gray-100">
+                  <td class="px-1 py-1 border-r sticky left-[320px] z-20 bg-white">
+                    <div class="bg-indigo-500 text-white rounded px-2 py-2 text-[11px] font-bold">🚚 Scheduled_Receipt (PO)</div>
+                  </td>
+                  <td class="px-1 py-1 text-center border-r font-bold text-sm" :class="cellCls(rowTotal(mat, 'scheduled_receipt'))">
+                    {{ formatN(rowTotal(mat, 'scheduled_receipt')) }}</td>
+                  <td v-for="(wc, wIdx) in weekColumns" :key="'sr-'+mat.material_id+'-'+wc.week"
+                    class="px-0 py-0.5 text-center border-r">
+                    <div class="py-1 text-[11px] font-medium" :class="cellCls(mat.weeks[wIdx]?.scheduled_receipt || 0)">
+                      {{ formatN(mat.weeks[wIdx]?.scheduled_receipt || 0) }}</div>
+                  </td>
+                </tr>
+
+                <!-- Row 3: Planned Order Release -->
                 <tr class="border-b border-gray-100">
                   <td class="px-1 py-1 border-r sticky left-[320px] z-20 bg-white">
                     <div class="bg-green-600 text-white rounded px-2 py-2 text-[11px] font-bold">📤 Planned_Order_RELEASE</div>
@@ -339,9 +353,11 @@ const getNetReq = (mat: any, weekIdx: number): number => {
   const w = mat.weeks[weekIdx];
   if (!w) return 0;
   const gross = Number(w.gross_requirements) || 0;
+  const scheduled = Number(w.scheduled_receipt) || 0;
   const received = Number(w.planned_order_receipt) || 0;
   const prevOH = weekIdx > 0 ? getProjectedOH(mat, weekIdx - 1) : (Number(mat.first_stock) || 0);
-  const net = gross - received - Math.max(prevOH, 0);
+  // P0-7: scheduled receipt from PO reduces net requirement
+  const net = gross - scheduled - received - Math.max(prevOH, 0);
   return Math.max(net, 0);
 };
 
@@ -350,7 +366,8 @@ const getProjectedOH = (mat: any, weekIdx: number): number => {
   for (let i = 0; i <= weekIdx; i++) {
     const w = mat.weeks[i];
     if (!w) continue;
-    oh = oh + (Number(w.planned_order_receipt) || 0) - (Number(w.gross_requirements) || 0);
+    // P0-7: include scheduled receipt in projected OH
+    oh = oh + (Number(w.scheduled_receipt) || 0) + (Number(w.planned_order_receipt) || 0) - (Number(w.gross_requirements) || 0);
   }
   return Math.round(oh * 100) / 100;
 };

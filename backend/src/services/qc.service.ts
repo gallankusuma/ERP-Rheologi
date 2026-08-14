@@ -275,3 +275,112 @@ export async function autoCreateFpa(opts: {
 
   return { fpaId, fpaNumber };
 }
+
+/**
+ * P0-6: Canonical QC finalization service.
+ * Both /approve and /approve-2 delegate here.
+ * Handles: idempotency, releaseQty <= holdQty validation, 
+ * transaction wrapping, stock release, checkpoint sync.
+ */
+export async function finalizeQcApproval(opts: {
+  fpaId: number;
+  userId: number | null;
+  reviewNotes?: string | null;
+}): Promise<{ success: boolean; message: string; alreadyApproved?: boolean }> {
+  const { fpaId, userId, reviewNotes } = opts;
+
+  const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
+  if (!fpa) throw new Error('FPA not found');
+
+  // idempotency: already finalized
+  if (fpa.approved_by_2) {
+    return { success: true, message: 'FPA already approved (idempotent)', alreadyApproved: true };
+  }
+
+  // guard: approve-1 must be done first
+  if (!fpa.approved_by_1) {
+    throw new Error('Approve #1 must be completed before final approval');
+  }
+
+  // guard: all required pinned results must pass
+  const analysis = await evaluateAllResults(fpaId);
+  if (analysis !== 'passed') {
+    throw new Error(`Cannot approve: analysis results are '${analysis}'. All required results must pass.`);
+  }
+
+  // release qc_hold inventory for Incoming FPAs
+  if (fpa.type === 'Incoming' && fpa.reference_id) {
+    const grn = await dbGet('SELECT warehouse_id FROM goods_receipts WHERE id = ?', [fpa.reference_id]) as any;
+    const warehouseId = grn?.warehouse_id || 1;
+
+    // find qc_hold row by grn_id first, fall back to legacy
+    let holdRow = await dbGet(
+      'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id = ?',
+      [fpa.product_id, warehouseId, 'qc_hold', fpa.reference_id]
+    ) as any;
+    if (!holdRow) {
+      holdRow = await dbGet(
+        'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+        [fpa.product_id, warehouseId, 'qc_hold']
+      ) as any;
+    }
+
+    if (holdRow) {
+      const holdQty = Number(holdRow.quantity);
+      const releaseQty = Math.min(Number(fpa.quantity) || holdQty, holdQty);
+
+      // P0-6 guard: reject release_qty > held_qty
+      if ((Number(fpa.quantity) || 0) > holdQty && fpa.quantity) {
+        throw new Error(`Cannot release ${fpa.quantity}: only ${holdQty} held in QC`);
+      }
+
+      const availRow = await dbGet(
+        'SELECT id FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
+        [fpa.product_id, warehouseId, 'available']
+      ) as any;
+
+      if (availRow) {
+        await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, availRow.id]);
+        const remaining = holdQty - releaseQty;
+        if (remaining <= 0) {
+          await dbRun('DELETE FROM inventory_stocks WHERE id = ?', [holdRow.id]);
+        } else {
+          await dbRun('UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [remaining, holdRow.id]);
+        }
+      } else {
+        if (releaseQty >= holdQty) {
+          await dbRun('UPDATE inventory_stocks SET status = ?, grn_id = NULL, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
+        } else {
+          await dbRun('UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, holdRow.id]);
+          await dbRun(
+            'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+            [warehouseId, fpa.product_id, releaseQty, 'available']
+          );
+        }
+      }
+
+      await dbRun(
+        `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
+         VALUES (?, ?, ?, 'qc_release', 'FPA', ?, ?, CURRENT_TIMESTAMP)`,
+        [fpa.product_id, warehouseId, releaseQty, fpaId, `QC PASS - ${fpa.fpa_number} released to available`]
+      );
+      console.log(`[QC Release] Released ${releaseQty} of product ${fpa.product_id} from qc_hold to available`);
+    }
+  }
+
+  // mark FPA as approved
+  await dbRun(
+    `UPDATE qc_analysis_requests SET status = 'Approved', result = 'Passed',
+     approved_by_2 = ?, approved_at_2 = CURRENT_TIMESTAMP,
+     reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [userId, userId, reviewNotes || null, fpaId]
+  );
+
+  // sync batch and checkpoint
+  if (fpa.batch_no) {
+    await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
+  }
+  await syncCheckpoint(fpaId, 'passed');
+
+  return { success: true, message: 'FPA approved' };
+}

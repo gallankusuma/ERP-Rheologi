@@ -1989,34 +1989,53 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
         approveParams
       );
 
-      // 2. load PO items for cross-referencing
+      // 2. P0-2: load PO items with row lock to prevent concurrent over-receipt
       const [poItems] = await conn.execute(
-        'SELECT id, product_id, quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
+        'SELECT id, product_id, quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
         [grn.po_id]
       );
-      const poItemMap = new Map<number, any>();
+      // P0-3: build maps for both po_item_id lookup and product_id fallback
+      const poItemById = new Map<number, any>();
+      const poItemByProduct = new Map<number, any>();
       for (const poi of poItems) {
-        poItemMap.set(Number(poi.product_id), poi);
+        poItemById.set(Number(poi.id), poi);
+        poItemByProduct.set(Number(poi.product_id), poi);
       }
 
-      // 3. persist items into grn_items (P0-4: canonical relational table)
-      //    and create inventory entries (P0-5: single posting, no double)
+      // 3. persist items into grn_items and create inventory entries
+      const fpaQueue: { productId: number; batchNo: string | null; qty: number }[] = [];
+
       for (const item of items) {
         const qty = Number(item.received_quantity || 0);
         if (!item.product_id || qty <= 0) continue;
 
-        // find matching PO item
-        const poItem = poItemMap.get(Number(item.product_id));
+        // P0-3: use exact po_item_id from frontend, fallback to product_id inference
+        let poItem: any = null;
+        if (item.po_item_id) {
+          poItem = poItemById.get(Number(item.po_item_id));
+        }
+        if (!poItem) {
+          poItem = poItemByProduct.get(Number(item.product_id));
+        }
         const poItemId = poItem?.id || null;
 
-        // P0-4: insert into grn_items
+        // P0-2: validate cumulative received does not exceed ordered
+        if (poItem) {
+          const ordered = Number(poItem.quantity);
+          const alreadyReceived = Number(poItem.received_qty);
+          if (alreadyReceived + qty > ordered) {
+            throw new Error(`Over-receipt rejected: item ${item.product_id} ordered ${ordered}, already received ${alreadyReceived}, attempting ${qty}. Max allowed: ${ordered - alreadyReceived}`);
+          }
+        }
+
+        // insert into grn_items
         await conn.execute(
           `INSERT INTO grn_items (grn_id, po_item_id, product_id, quantity_received, batch_number, notes)
            VALUES (?, ?, ?, ?, ?, ?)`,
           [grnId, poItemId, item.product_id, qty, item.batch_number || null, item.remarks || null]
         );
 
-        // P0-6: create qc_hold inventory with grn_id for lot-specific tracking
+        // create qc_hold inventory with grn_id for lot-specific tracking
         await conn.execute(
           `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, grn_id, reorder_point)
            VALUES (?, ?, ?, 'qc_hold', ?, 0)
@@ -2024,7 +2043,7 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
           [grn.warehouse_id || 1, item.product_id, qty, grnId, qty]
         );
 
-        // P0-5: single stock_movement per item (not double)
+        // single stock_movement per item
         await conn.execute(
           `INSERT INTO stock_movements
            (product_id, warehouse_id, reference_type, reference_id, quantity, movement_type, notes, created_at)
@@ -2038,16 +2057,18 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
           ]
         );
 
-        // P0-2: update PO item received_qty
+        // update PO item received_qty
         if (poItemId) {
           await conn.execute(
             'UPDATE purchase_order_items SET received_qty = COALESCE(received_qty, 0) + ? WHERE id = ?',
             [qty, poItemId]
           );
         }
+
+        fpaQueue.push({ productId: item.product_id, batchNo: item.batch_number || null, qty });
       }
 
-      // P0-2: update PO status based on received vs ordered
+      // update PO status based on received vs ordered
       const [updatedPoItems] = await conn.execute(
         'SELECT quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
         [grn.po_id]
@@ -2066,34 +2087,28 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
         'UPDATE purchase_orders SET status = ? WHERE id = ?',
         [newPoStatus, grn.po_id]
       );
-    });
 
-    console.log('[GRN Approve] Transaction committed', { grnId, items: items.length });
-
-    // auto-trigger Incoming QC (outside transaction — FPA creation is non-critical)
-    try {
-      const uniqueProducts = new Map<number, any>();
-      for (const item of items) {
-        if (item.product_id && !uniqueProducts.has(item.product_id)) {
-          uniqueProducts.set(item.product_id, item);
+      // P0-4: create Incoming QC FPA inside transaction (mandatory, not "non-critical")
+      const uniqueProducts = new Map<number, { productId: number; batchNo: string | null; qty: number }>();
+      for (const entry of fpaQueue) {
+        if (!uniqueProducts.has(entry.productId)) {
+          uniqueProducts.set(entry.productId, entry);
         }
       }
-      for (const [productId, item] of uniqueProducts) {
+      for (const [productId, entry] of uniqueProducts) {
         await autoCreateFpa({
           type: 'Incoming',
           productId,
-          batchNo: item.batch_number || null,
+          batchNo: entry.batchNo,
           supplierId: grn.vendor_id || null,
           referenceId: grnId,
           referenceNumber: grnNumber,
           notes: `Auto-generated Incoming QC from GRN ${grnNumber}`,
           createdBy: userId,
-          quantity: item.received_quantity || null
+          quantity: entry.qty
         });
       }
-    } catch (incomingErr: any) {
-      console.error('[GRN Approve] Failed to auto-create Incoming QC FPA:', incomingErr.message);
-    }
+    });
 
     const finalData = await dbGet(
       `SELECT gr.*, po.po_number, w.name as warehouse_name, u.full_name as received_by_name
@@ -2108,6 +2123,10 @@ router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, 
     res.json({ message: 'GRN approval updated', data: finalData });
   } catch (error: any) {
     console.error('Error approving GRN:', error);
+    // P0-2: over-receipt returns 409
+    if (error.message?.includes('Over-receipt rejected')) {
+      return res.status(409).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to approve GRN: ' + (error.message || 'Unknown error') });
   }
 });

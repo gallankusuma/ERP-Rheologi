@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
-import { resolveAndSync, evaluateAllResults, evaluateResult, syncCheckpoint } from '../services/qc.service';
+import { resolveAndSync, evaluateAllResults, evaluateResult, syncCheckpoint, finalizeQcApproval } from '../services/qc.service';
 
 const router = Router();
 
@@ -494,99 +494,20 @@ router.put('/fpa/:id/submit', authMiddleware, requirePermission('quality.qc-fpa'
   }
 });
 
-// P0-7: single approval path — /approve now delegates to the same logic as approve-2
-// this ensures qc_hold inventory is always released on approval
+// P0-6: single approval path — delegates to canonical finalizeQcApproval
 router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const fpaId = Number(req.params.id);
     const { review_notes } = req.body;
 
-    const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
-    if (!fpa) return res.status(404).json({ success: false, error: 'FPA not found' });
-
-    // guard: approve-1 must be done first
-    if (!fpa.approved_by_1) {
-      return res.status(400).json({ success: false, error: 'Approve #1 must be completed before final approval' });
+    const result = await finalizeQcApproval({ fpaId, userId, reviewNotes: review_notes });
+    res.json({ success: true, message: result.message });
+  } catch (error: any) {
+    if (error.message?.includes('not found')) return res.status(404).json({ success: false, error: error.message });
+    if (error.message?.includes('must be completed') || error.message?.includes('Cannot approve') || error.message?.includes('Cannot release')) {
+      return res.status(400).json({ success: false, error: error.message });
     }
-
-    // guard: all required pinned results must pass
-    const analysis = await evaluateAllResults(fpaId);
-    if (analysis !== 'passed') {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot approve: analysis results are '${analysis}'. All required results must pass.`
-      });
-    }
-
-    // release qc_hold inventory for Incoming FPAs
-    if (fpa.type === 'Incoming' && fpa.reference_id) {
-      const grn = await dbGet('SELECT warehouse_id FROM goods_receipts WHERE id = ?', [fpa.reference_id]) as any;
-      const warehouseId = grn?.warehouse_id || 1;
-
-      // P0-6: find qc_hold row by grn_id first, fall back to legacy
-      let holdRow = await dbGet(
-        'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id = ?',
-        [fpa.product_id, warehouseId, 'qc_hold', fpa.reference_id]
-      ) as any;
-      if (!holdRow) {
-        holdRow = await dbGet(
-          'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-          [fpa.product_id, warehouseId, 'qc_hold']
-        ) as any;
-      }
-
-      if (holdRow) {
-        const releaseQty = Number(fpa.quantity) || Number(holdRow.quantity);
-
-        const availRow = await dbGet(
-          'SELECT id FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-          [fpa.product_id, warehouseId, 'available']
-        ) as any;
-
-        if (availRow) {
-          await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, availRow.id]);
-          const remaining = Number(holdRow.quantity) - releaseQty;
-          if (remaining <= 0) {
-            await dbRun('DELETE FROM inventory_stocks WHERE id = ?', [holdRow.id]);
-          } else {
-            await dbRun('UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [remaining, holdRow.id]);
-          }
-        } else {
-          if (releaseQty >= Number(holdRow.quantity)) {
-            await dbRun('UPDATE inventory_stocks SET status = ?, grn_id = NULL, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
-          } else {
-            await dbRun('UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, holdRow.id]);
-            await dbRun(
-              'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
-              [warehouseId, fpa.product_id, releaseQty, 'available']
-            );
-          }
-        }
-
-        await dbRun(
-          `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
-           VALUES (?, ?, ?, 'qc_release', 'FPA', ?, ?, CURRENT_TIMESTAMP)`,
-          [fpa.product_id, warehouseId, releaseQty, fpaId, `QC PASS - ${fpa.fpa_number} released to available`]
-        );
-        console.log(`[QC Release] Released ${releaseQty} of product ${fpa.product_id} from qc_hold to available`);
-      }
-    }
-
-    // mark FPA as approved
-    await dbRun(
-      `UPDATE qc_analysis_requests SET status = 'Approved', result = 'Passed',
-       approved_by_2 = ?, approved_at_2 = CURRENT_TIMESTAMP,
-       reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [userId, userId, review_notes || null, fpaId]
-    );
-
-    if (fpa.batch_no) {
-      await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
-    }
-    await syncCheckpoint(fpaId, 'passed');
-    res.json({ success: true, message: 'FPA approved' });
-  } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to approve FPA' });
   }
 });
@@ -682,93 +603,19 @@ router.put('/fpa/:id/approve-1', authMiddleware, requirePermission('quality.qc-f
   }
 });
 
-// P0-A: approve level 2 — guards with result evaluation, triggers final resolution
+// P0-6: approve level 2 — delegates to canonical finalizeQcApproval
 router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
     const fpaId = Number(req.params.id);
-    const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
-    if (!fpa) return res.status(404).json({ success: false, error: 'FPA not found' });
-    if (!fpa.approved_by_1) return res.status(400).json({ success: false, error: 'Approve #1 must be completed first' });
-    
-    // P0-A: guard - all required pinned results must pass before final approval
-    const analysis = await evaluateAllResults(fpaId);
-    if (analysis !== 'passed') {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot approve: analysis results are '${analysis}'. All required results must pass.`
-      });
+
+    const result = await finalizeQcApproval({ fpaId, userId, reviewNotes: null });
+    res.json({ success: true, message: result.message });
+  } catch (error: any) {
+    if (error.message?.includes('not found')) return res.status(404).json({ success: false, error: error.message });
+    if (error.message?.includes('must be completed') || error.message?.includes('Cannot approve') || error.message?.includes('Cannot release')) {
+      return res.status(400).json({ success: false, error: error.message });
     }
-
-    // release qc_hold inventory BEFORE marking FPA as approved
-    if (fpa.type === 'Incoming' && fpa.reference_id) {
-      const grn = await dbGet('SELECT warehouse_id FROM goods_receipts WHERE id = ?', [fpa.reference_id]) as any;
-      const warehouseId = grn?.warehouse_id || 1;
-
-      // P0-6: find qc_hold row by grn_id first, fall back to legacy
-      let holdRow = await dbGet(
-        'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? AND grn_id = ?',
-        [fpa.product_id, warehouseId, 'qc_hold', fpa.reference_id]
-      ) as any;
-      if (!holdRow) {
-        holdRow = await dbGet(
-          'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-          [fpa.product_id, warehouseId, 'qc_hold']
-        ) as any;
-      }
-
-      if (holdRow) {
-        const releaseQty = Number(fpa.quantity) || Number(holdRow.quantity);
-
-        const availRow = await dbGet(
-          'SELECT id FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ?',
-          [fpa.product_id, warehouseId, 'available']
-        ) as any;
-
-        if (availRow) {
-          await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, availRow.id]);
-          const remaining = Number(holdRow.quantity) - releaseQty;
-          if (remaining <= 0) {
-            await dbRun('DELETE FROM inventory_stocks WHERE id = ?', [holdRow.id]);
-          } else {
-            await dbRun('UPDATE inventory_stocks SET quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [remaining, holdRow.id]);
-          }
-        } else {
-          if (releaseQty >= Number(holdRow.quantity)) {
-            await dbRun('UPDATE inventory_stocks SET status = ?, grn_id = NULL, last_updated = CURRENT_TIMESTAMP WHERE id = ?', ['available', holdRow.id]);
-          } else {
-            await dbRun('UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?', [releaseQty, holdRow.id]);
-            await dbRun(
-              'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, last_updated) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
-              [warehouseId, fpa.product_id, releaseQty, 'available']
-            );
-          }
-        }
-
-        await dbRun(
-          `INSERT INTO stock_movements (product_id, warehouse_id, quantity, movement_type, reference_type, reference_id, notes, created_at)
-           VALUES (?, ?, ?, 'qc_release', 'FPA', ?, ?, CURRENT_TIMESTAMP)`,
-          [fpa.product_id, warehouseId, releaseQty, fpaId, `QC PASS - ${fpa.fpa_number} released to available`]
-        );
-        console.log(`[QC Release] Released ${releaseQty} of product ${fpa.product_id} from qc_hold to available`);
-      }
-    }
-
-    // now mark FPA as approved (only reached if inventory release succeeded)
-    await dbRun(
-      `UPDATE qc_analysis_requests SET approved_by_2 = ?, approved_at_2 = CURRENT_TIMESTAMP,
-       status = 'Approved', result = 'Passed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [userId, fpaId]
-    );
-    
-    // sync batch and checkpoint explicitly passed
-    if (fpa.batch_no) {
-      await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', fpa.batch_no]);
-    }
-    await syncCheckpoint(fpaId, 'passed');
-    
-    res.json({ success: true, message: 'Approve #2 completed - FPA approved' });
-  } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to approve #2' });
   }
 });
