@@ -2113,3 +2113,128 @@ Barcode Generator
 Procurement: 30% (PR, PO, GRN, Price List, History)
 Inventory: 95% (Full 15 submenu with advanced features)
 Overall: 20% → 25%![alt text](image.png)
+
+---
+
+## Review 20 Aug 2026 — Print Templates & Branding
+
+### Completed
+- [x] PR print: Removed unused fields (Allocation Code, Budget Ref, Expected Delivery), landscape layout with QR code signatures
+- [x] PO print: Added QR code signatures (Requested By + Authorised By), dynamic COST CODE shows project name from linked PR
+- [x] PO print: Fixed authStore crash bug (was never imported in PurchaseOrders.vue)
+- [x] Fund Request print: Added QR code signatures (Dibuat oleh + Di setujui oleh) with dynamic data
+- [x] GRN print: Added QR code signatures (Received By + QC + Approved By) with dynamic data
+- [x] Global logo: Replaced all text-based "Rheologi" logos with official PNG logo image across header + all print templates
+- [x] Company tagline: Changed from "Rheologi Biotech Indonesia" → "XLrate your life" in .env.production
+- [x] Logo sizing: Header h-28 with -my-10 crop, PO 140px with -40px margins, PR/GRN 80px, Fund 64px
+
+### Files Changed
+- `frontend/.env.production` — company name
+- `frontend/public/logo-rheologi-v2.png` — logo asset
+- `frontend/src/components/Layout.vue` — header logo
+- `frontend/src/views/PurchaseRequests.vue` — PR print logo
+- `frontend/src/views/PurchaseOrders.vue` — PO print: logo, QR, cost code, authStore fix
+- `frontend/src/views/FinanceFundRequests.vue` — Fund print: logo, QR
+- `frontend/src/views/GoodReceipt.vue` — GRN print: logo, QR
+- `frontend/src/views/PlaceholderPage.vue` — logo
+
+### Notes
+- QR codes use external API: `api.qrserver.com/v1/create-qr-code`
+- Logo PNG has internal whitespace — negative margins used to crop visually
+- Print templates use `window.open` + `document.write` approach
+
+---
+
+## Technical Acceptance Contracts — Outstanding
+
+Reference: [Review.md](Review.md) (canonical active review)
+
+### Business intent already covered in this doc
+- [x] Shipment mengurangi stok FG (§4.5, §6 rule 4)
+- [x] QC wajib approve sebelum shipment (§6 rule 3)
+- [x] DO sebagai dasar picking/shipping (§4.5)
+- [x] FIFO/FEFO dan batch traceability wajib (§4.2, §6 rule 2/4)
+
+### Technical contracts NOT YET covered (from Review.md)
+
+#### 1. MPS Beginning Inventory — Immutable Snapshot (PPIC-PROD-P0-1)
+- Beginning Inventory MPS harus immutable snapshot dengan `as_of`/cutoff timestamp
+- Pemisahan state: **Opening Snapshot** vs **Current Available** vs **QC Hold** vs **Planned vs Actual**
+- WO hanya boleh `DRAFT -> RELEASED` bila planning/BOM/component snapshot lengkap
+- Snapshot immutable; perubahan planning membuat WO baru yang `SUPERSEDES` WO lama
+- Idempotency scope: `(mps_detail_id, year, week_number, planning_revision_hash)` unique constraint
+
+#### 2. WO Immutable Snapshot & Supersession (PPIC-PROD-P0-1, P0-2)
+- Hapus operasi delete dari business flow; gunakan `CANCELLED` / `SUPERSEDED` + reason + actor/timestamp
+- State terminal tidak boleh diedit; compensation sebagai event baru, bukan mutation
+- Exact API: transition valid `200`, replay `200`, dependent activity `409`, invalid `422`, permission `403`
+
+#### 3. DO State Machine (INV-SALES target)
+- Full state machine: `DRAFT → ALLOCATED → PICKED → SHIPPED → DELIVERED`
+- Stock berkurang **atomik** saat status = `SHIPPED`
+- Setiap DO line harus exact: `so_item_id`, `delivery_item_id`, `warehouse_id`, `lot_id`
+- Support partial delivery dan multi-lot picking
+- Concurrency: row-lock order, retry/idempotency dengan stored replay
+- Cancellation, return, reversal setelah shipment harus menghasilkan compensating movement
+
+#### 4. Exact Lot Identity & Material Issue (PPIC-PROD-P0-3)
+- Request wajib exact `lot_id`; server validasi lot/product/warehouse/status/expiry
+- Lock order tetap: WO → WO material → lot balance
+- Idempotency: `(WO_MATERIAL_ISSUE, user/tenant, key)` + payload hash + stored response
+- Bulk harus atomic per-command atau explicit per-line result + resumable key
+
+#### 5. Partial Delivery, Multi-Lot, Concurrency
+- Partial receipt multi-line: request hanya membawa selected lines (exact `po_item_id`)
+- Server menolak: duplicate line, zero/negative, foreign PO line, over-receipt → typed `422/409`
+- Two concurrent receipts pada line sama → serialized via row lock
+- GRN create = non-posted (`201`); final approval = posted + stock effect
+
+#### 6. Transaction/Row-Lock Order & DB Constraints
+- Lock order per domain: document → items/lines → lot balance → inventory
+- Unique constraints: idempotency scope, lot-per-receipt, opname-per-lot
+- Decimal database/string contract, bukan JS floating-point
+- Adjustment request pada tabel workflow terpisah sampai approval final
+
+#### 7. Cancellation, Return & Reversal After Shipment
+- Reversal menghasilkan compensating stock movement (bukan delete)
+- Audit trail: original actor, reversal actor, reason, timestamp
+- Cancelled/returned items tidak mengubah lot lineage asli
+- Reconciliation wajib buktikan closing = authoritative balance
+
+#### 8. Exact HTTP/Error Contract & RBAC (INV-PROC-P1-17)
+- Typed domain errors dari service; satu mapper ke: `401/403/404/409/422/500`
+- Stable error code + request ID; frontend menampilkan code/recovery action
+- Deny-by-default RBAC pada semua API endpoints
+- Principal identity = immutable `actor_user_id` dari auth middleware; tidak boleh fallback
+
+#### 9. QR Code — Internal/Signed Verification (INV-PROC-P1-18)
+- **Current:** QR codes hit external `api.qrserver.com` — metadata leaks to third party
+- **Target:** generate QR lokal/internal service
+- Payload harus opaque/signed verification token → immutable audit record
+- Print harus deterministik/offline; approval QR hanya tampil bila audit approval exists
+- Network pihak ketiga diblokir tanpa merusak print
+
+#### 10. Stock Card Authoritative Balance (INV-PROC-P0-9)
+- Owner tunggal: `InventoryLedgerQueryService`
+- Endpoint wajib: `opening_quantity`, `delta_quantity`, `balance_after`, `closing_quantity`, `lot_id`, lineage
+- Partition: product + warehouse + lot; ordering `(moved_at, id)`
+- Hanya posted events; pending adjustment excluded
+- Web dan mobile pakai satu canonical service + permission catalog
+
+#### 11. Stock Opname Lot-Aware (INV-PROC-P0-10)
+- State machine: `DRAFT → COUNTING → COUNTED → POSTED`; terminal immutable
+- Items wajib exact `lot_id`, warehouse, status, batch/expiry snapshot
+- Immutable cutoff; movement after snapshot → `409 OPNAME_STALE`
+- Lock order: session → item/lot ascending → inventory balance
+
+### Revision Priority Order (from Review.md §330-342)
+
+1. Migration foundation (strict ordering, fail-closed, disposable tests)
+2. Procurement approval/GRN boundary (state machine, SoD, stored replay, typed errors)
+3. Authoritative Stock Card (server-side balance, lot lineage, web/mobile parity)
+4. Lot-aware stock opname (cutoff, exact lot, reversal, conflict)
+5. Immutable WO snapshot + supersession
+6. Exact `lot_id` material issue + stored replay + bulk
+7. FG/QC stored replay, batch reconciliation, exact HTTP
+8. Backend-authoritative MRP → PR with calculation lineage
+9. Isolated acceptance suite + reconciliation checks

@@ -1,15 +1,17 @@
-# ERP Manufacturing System
+    # ERP Manufacturing System
 
 Small business ERP system focused on manufacturing operations, built with **Node.js + Express + PostgreSQL + Vue 3 + TypeScript + Tailwind CSS**.
 
 ## 🎯 Quick Start - View Project Overview
 
 **Once the system is running, navigate to:**
+
 ```
 http://localhost:5173/project
 ```
 
 This opens the **Project Overview Dashboard** which displays:
+
 - All 9 active modules with their features
 - Complete menu structure per design.pdf
 - Implementation status of each feature
@@ -31,6 +33,7 @@ This opens the **Project Overview Dashboard** which displays:
 ## Tech Stack
 
 ### Backend
+
 - **Node.js** (v18+) with **Express.js**
 - **TypeScript** for type safety
 - **PostgreSQL** for data persistence
@@ -38,6 +41,7 @@ This opens the **Project Overview Dashboard** which displays:
 - **bcrypt** for password hashing
 
 ### Frontend
+
 - **Vue 3** with Composition API
 - **Vite** for fast development
 - **TypeScript**
@@ -107,6 +111,7 @@ npm run dev
 ```
 
 This starts:
+
 - Backend API on `http://localhost:3000`
 - Frontend UI on `http://localhost:5173`
 
@@ -144,10 +149,12 @@ ERP/
 ## API Endpoints
 
 ### Authentication
+
 - `POST /api/auth/login` - User login
 - `POST /api/auth/register` - User registration
 
 ### Products
+
 - `GET /api/products` - List all products
 - `GET /api/products/:id` - Get product details
 - `POST /api/products` - Create product
@@ -155,17 +162,20 @@ ERP/
 - `DELETE /api/products/:id` - Delete product
 
 ### BOM (Bill of Materials)
+
 - `GET /api/bom` - List all BOMs
 - `GET /api/bom/:id` - Get BOM details
 - `POST /api/bom` - Create BOM
 
 ### Work Orders
+
 - `GET /api/workorders` - List all work orders
 - `GET /api/workorders/:id` - Get work order details
 - `POST /api/workorders` - Create work order
 - `PUT /api/workorders/:id` - Update work order
 
 ### Inventory
+
 - `GET /api/inventory` - List all inventory items
 - `GET /api/inventory/:id` - Get inventory details
 - `POST /api/inventory` - Add inventory item
