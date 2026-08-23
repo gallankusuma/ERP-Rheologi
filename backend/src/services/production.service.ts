@@ -1,0 +1,728 @@
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
+import { autoCreateFpa } from './qc.service';
+import { createLot, resolveQcPolicy } from './lot.service';
+import { postSystemJournal, postStatisticalEvent, JournalLineInput } from './accounting-posting.service';
+import { resolveValuation } from './valuation-policy.service';
+import { resolveAccountByRole } from './account-role.service';
+import {
+  allocateCostFromLayer, linkAllocationsToJournal, restoreCostToLayer, reduceMaterialCostOnBatch,
+  addMaterialCostToBatch, computeProvisionalFgCost,
+  createCostLayer, linkCostLayerToJournal, updateBatchSheetForFgReceipt,
+} from './inventory-costing.service';
+import { toDbString, money, moneyRound } from '../lib/decimal';
+
+// WO statuses that allow material issue
+const ISSUABLE_STATUSES = ['released', 'in_progress', 'on_hold'];
+
+interface IssueMaterialResult {
+  success: boolean;
+  message: string;
+}
+
+interface FgReceiptResult {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Issue material to a Work Order.
+ * Transaction + row lock on wo_materials + inventory_stocks.
+ * Guards: over-issue, insufficient stock, WO status.
+ */
+export async function issueWoMaterial(opts: {
+  woMaterialId: number;
+  quantity: number;
+  warehouseId: number;
+  lotId: number;
+  userId: number | null;
+  idempotencyKey: string;
+}): Promise<IssueMaterialResult> {
+  const { woMaterialId, quantity, warehouseId, lotId, userId, idempotencyKey } = opts;
+
+  if (!woMaterialId || !Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('wo_material_id and a positive quantity are required');
+  }
+  if (!warehouseId) {
+    throw new Error('warehouse_id is required for material issue');
+  }
+  if (!lotId) {
+    throw new Error('lot_id is required for material issue');
+  }
+  if (!idempotencyKey) {
+    throw new Error('idempotency_key is required for material issue');
+  }
+
+  await dbTransaction(async (conn) => {
+
+    // idempotency check: replay if already processed
+    const [dupRows] = await conn.execute(
+      "SELECT id FROM wo_material_issues WHERE idempotency_key = ?",
+      [idempotencyKey]
+    );
+    if ((dupRows as any[]).length > 0) {
+      return; // idempotent replay
+    }
+
+    // lock order: WO -> WO material -> inventory lot/balance
+    // 1. lock WO first
+    const [matPeek] = await conn.execute('SELECT wo_id FROM wo_materials WHERE id = ?', [woMaterialId]);
+    const woId = (matPeek as any[])[0]?.wo_id;
+    if (!woId) throw new Error('WO material not found');
+
+    const [woRows] = await conn.execute('SELECT status FROM work_orders WHERE id = ? FOR UPDATE', [woId]);
+    const woStatus = (woRows as any[])[0]?.status?.toLowerCase();
+    if (!ISSUABLE_STATUSES.includes(woStatus)) {
+      throw new Error(`Cannot issue material for WO with status '${(woRows as any[])[0]?.status}'. WO must be RELEASED, IN_PROGRESS, or ON_HOLD.`);
+    }
+
+    // 2. lock WO material
+    const [matRows] = await conn.execute(
+      'SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [woMaterialId]
+    );
+    const mat = (matRows as any[])[0];
+    if (!mat) throw new Error('WO material not found');
+
+    const alreadyIssued = Number(mat.quantity_issued) || 0;
+    const requiredQty = Number(mat.quantity_required) || 0;
+    const newIssued = alreadyIssued + Number(quantity);
+    if (newIssued > requiredQty) {
+      throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${requiredQty}). Already issued: ${alreadyIssued}`);
+    }
+
+    // 3. lock exact lot in inventory
+    const [lotRows] = await conn.execute(
+      "SELECT * FROM inventory_stocks WHERE lot_id = ? AND warehouse_id = ? AND product_id = ? AND status = 'available' FOR UPDATE",
+      [lotId, warehouseId, mat.product_id]
+    );
+    const stock = (lotRows as any[])[0];
+    if (!stock) {
+      throw new Error(`Lot ${lotId} not found as available stock for product ${mat.product_id} in warehouse ${warehouseId}`);
+    }
+    const currentQty = Number(stock.quantity) || 0;
+
+    if (currentQty < quantity) {
+      throw new Error(`Insufficient stock. Available: ${currentQty}, Requested: ${quantity}`);
+    }
+
+    // 4. update WO material issued quantity
+    await conn.execute(
+      `UPDATE wo_materials SET quantity_issued=?, warehouse_id=?, issued_at=CURRENT_TIMESTAMP, issued_by=? WHERE id=?`,
+      [newIssued, warehouseId, userId, woMaterialId]
+    );
+
+    // 5. deduct inventory stock
+    await conn.execute(
+      `UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
+      [quantity, stock.id]
+    );
+
+    // 6. record stock movement with lot reference
+    await conn.execute(
+      `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, lot_id, notes, created_by)
+       VALUES (?, ?, ?, 'out', ?, 'wo_material', ?, ?, 'Material issued to WO', ?)`,
+      [warehouseId, mat.product_id, stock.batch_number || null, quantity, woMaterialId, lotId, userId]
+    );
+
+    // 7. insert issue event with idempotency key
+    const [issueResult] = await conn.execute(
+      `INSERT INTO wo_material_issues (wo_material_id, wo_id, warehouse_id, product_id, quantity, batch_number, lot_id, issued_by, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [woMaterialId, woId, warehouseId, mat.product_id, quantity, stock.batch_number || null, lotId, userId, idempotencyKey]
+    );
+    const issueId = issueResult.insertId;
+
+    // phase 4: allocate cost from exact lot layer
+    const costAlloc = await allocateCostFromLayer(conn, {
+      lotId,
+      productId: mat.product_id,
+      quantity: String(quantity),
+      movementType: 'wo_material_issue',
+      movementId: issueId,
+    });
+
+    // update issue record with cost
+    await conn.execute(
+      'UPDATE wo_material_issues SET unit_cost = ?, total_cost = ?, cost_layer_id = ? WHERE id = ?',
+      [costAlloc.unitCost, costAlloc.totalCost, costAlloc.costLayerId, issueId]
+    );
+
+    // accumulate material cost on the work order's cost sheet. The sheet is keyed by the
+    // WO and stays unbatched until an FG receipt stamps the finished-goods batch onto it;
+    // keying it by the raw material's batch made the RM lot the identity of the FG sheet.
+    const [woProductRow] = await conn.execute('SELECT product_id FROM work_orders WHERE id = ?', [woId]);
+    const fgProductId = (woProductRow as any[])[0]?.product_id;
+    if (!fgProductId) throw new Error(`WO ${woId} has no product; cannot cost the batch`);
+
+    await addMaterialCostToBatch(conn, {
+      woId,
+      batchNumber: null,
+      materialCost: costAlloc.totalCost,
+      fgProductId,
+    });
+
+    // phase 4: GL journal — Dr WIP, Cr RM Available
+    const wipAccount = await resolveAccountByRole(conn, 'INVENTORY_WIP', { warehouseId });
+    const rmAccount = await resolveAccountByRole(conn, 'INVENTORY_RM_AVAILABLE', { warehouseId });
+
+    // get WO number for description
+    const [woNumRow] = await conn.execute('SELECT wo_number FROM work_orders WHERE id = ?', [woId]);
+    const woNumber = woNumRow?.[0]?.wo_number || `WO-${woId}`;
+
+    const glLines: JournalLineInput[] = [
+      {
+        accountId: wipAccount.accountId,
+        description: `Material issue to ${woNumber} - lot ${lotId} (${quantity} units)`,
+        debit: costAlloc.totalCost,
+        credit: '0',
+        productId: mat.product_id,
+        warehouseId,
+        lotId,
+      },
+      {
+        accountId: rmAccount.accountId,
+        description: `Material issue to ${woNumber} - RM consumed`,
+        debit: '0',
+        credit: costAlloc.totalCost,
+        productId: mat.product_id,
+        warehouseId,
+        lotId,
+      },
+    ];
+
+    const glResult = await postSystemJournal(conn, {
+      sourceModule: 'PRODUCTION',
+      sourceType: 'wo_material_issue',
+      sourceId: issueId,
+      sourceEventType: 'MATERIAL_ISSUED',
+      businessDate: new Date().toISOString().slice(0, 10),
+      description: `Material issue to ${woNumber}`,
+      lines: glLines,
+      idempotencyKey,
+      userId: userId || 0,
+    });
+
+    // link allocation and issue to journal
+    await linkAllocationsToJournal(conn, costAlloc.allocationIds, glResult.journal_id);
+    await conn.execute(
+      'UPDATE wo_material_issues SET journal_entry_id = ? WHERE id = ?',
+      [glResult.journal_id, issueId]
+    );
+  });
+
+  return { success: true, message: 'Material issued successfully' };
+}
+
+interface ReturnMaterialResult {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Return unused material from production back to warehouse.
+ * Guards: over-return, WO status.
+ */
+export async function returnWoMaterial(opts: {
+  woMaterialId: number;
+  quantity: number;
+  warehouseId: number;
+  originalIssueId?: number | null;
+  notes?: string | null;
+  reason?: string | null;
+  userId: number | null;
+  idempotencyKey?: string | null;
+}): Promise<ReturnMaterialResult> {
+  const { woMaterialId, quantity, warehouseId, originalIssueId, notes, reason, userId, idempotencyKey } = opts;
+
+  if (!woMaterialId || !Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('wo_material_id and a positive quantity are required');
+  }
+  if (!warehouseId) {
+    throw new Error('warehouse_id is required for material return');
+  }
+
+  await dbTransaction(async (conn) => {
+    // lock order: WO -> WO material -> original issue -> lot balance -> cost layer
+    const [matPeek] = await conn.execute('SELECT wo_id FROM wo_materials WHERE id = ?', [woMaterialId]);
+    const woId = (matPeek as any[])[0]?.wo_id;
+    if (!woId) throw new Error('WO material not found');
+
+    const [woRows] = await conn.execute('SELECT wo_number, status FROM work_orders WHERE id = ? FOR UPDATE', [woId]);
+    const wo = (woRows as any[])[0];
+    if (!wo) throw new Error('Work order not found');
+    const woStatus = String(wo.status || '').toLowerCase();
+    if (['completed', 'closed', 'cancelled'].includes(woStatus)) {
+      throw Object.assign(
+        new Error(`WO ${wo.wo_number} is ${woStatus}; material can no longer be returned`),
+        { statusCode: 409, code: 'WO_TERMINAL' }
+      );
+    }
+
+    const [matRows] = await conn.execute('SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [woMaterialId]);
+    const mat = (matRows as any[])[0];
+    if (!mat) throw new Error('WO material not found');
+
+    // a return compensates one specific issue: that is what carries the lot and the cost
+    let issue: any;
+    if (originalIssueId) {
+      const [rows] = await conn.execute(
+        'SELECT * FROM wo_material_issues WHERE id = ? AND wo_material_id = ? FOR UPDATE',
+        [originalIssueId, woMaterialId]
+      );
+      issue = (rows as any[])[0];
+      if (!issue) {
+        throw Object.assign(
+          new Error(`Issue ${originalIssueId} does not belong to WO material ${woMaterialId}`),
+          { statusCode: 422, code: 'INVALID_ISSUE_LINEAGE' }
+        );
+      }
+    } else {
+      // no explicit issue: proceed only when exactly one issue still has returnable quantity,
+      // so the lot and cost are unambiguous rather than "whichever was issued most recently"
+      const [rows] = await conn.execute(
+        `SELECT * FROM wo_material_issues
+          WHERE wo_material_id = ? AND (quantity - COALESCE(returned_qty, 0)) > 0
+          ORDER BY id ASC FOR UPDATE`,
+        [woMaterialId]
+      );
+      const candidates = rows as any[];
+      if (candidates.length === 0) {
+        throw Object.assign(
+          new Error('No issued quantity remains to return for this WO material'),
+          { statusCode: 422, code: 'NOTHING_TO_RETURN' }
+        );
+      }
+      if (candidates.length > 1) {
+        throw Object.assign(
+          new Error(
+            `WO material ${woMaterialId} has ${candidates.length} issues with returnable quantity; original_issue_id is required to identify the lot and cost being compensated`
+          ),
+          { statusCode: 422, code: 'ISSUE_AMBIGUOUS', data: { candidateIssueIds: candidates.map((c: any) => c.id) } }
+        );
+      }
+      issue = candidates[0];
+    }
+
+    const issuedQty = money(String(issue.quantity));
+    const priorReturns = money(String(issue.returned_qty || 0));
+    const returnQty = money(String(quantity));
+    const returnable = issuedQty.minus(priorReturns);
+
+    if (returnQty.greaterThan(returnable)) {
+      throw Object.assign(
+        new Error(
+          `Return of ${toDbString(returnQty)} exceeds the ${toDbString(returnable)} still returnable on issue ${issue.id}`
+        ),
+        { statusCode: 409, code: 'OVER_RETURN' }
+      );
+    }
+
+    const returnKey = idempotencyKey || `mat-return-${issue.id}-${toDbString(returnQty)}`;
+
+    // stored replay: the same key against the same issue must not move stock twice
+    const [existingReturn] = await conn.execute(
+      'SELECT id FROM wo_material_returns WHERE original_issue_id = ? AND idempotency_key = ?',
+      [issue.id, returnKey]
+    );
+    if ((existingReturn as any[]).length > 0) return;
+
+    const lotId = issue.lot_id;
+    if (!lotId) {
+      throw Object.assign(
+        new Error(`Issue ${issue.id} has no lot; the exact lot to return to cannot be determined`),
+        { statusCode: 422, code: 'MISSING_LOT_LINEAGE' }
+      );
+    }
+
+    // return to the exact lot the material left, not to any available row for the product
+    const [lotStockRows] = await conn.execute(
+      `SELECT id FROM inventory_stocks
+        WHERE lot_id = ? AND warehouse_id = ? AND product_id = ? AND status = 'available'
+        FOR UPDATE`,
+      [lotId, warehouseId, mat.product_id]
+    );
+    const lotStock = (lotStockRows as any[])[0];
+
+    if (lotStock) {
+      await conn.execute(
+        'UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+        [quantity, lotStock.id]
+      );
+    } else {
+      await conn.execute(
+        `INSERT INTO inventory_stocks (product_id, warehouse_id, quantity, status, lot_id, batch_number, last_updated)
+         VALUES (?, ?, ?, 'available', ?, ?, CURRENT_TIMESTAMP)`,
+        [mat.product_id, warehouseId, quantity, lotId, issue.batch_number || null]
+      );
+    }
+
+    await conn.execute('UPDATE wo_materials SET quantity_issued = quantity_issued - ? WHERE id = ?', [
+      quantity,
+      woMaterialId,
+    ]);
+
+    const newReturned = moneyRound(priorReturns.plus(returnQty));
+    const returnStatus = newReturned.greaterThanOrEqualTo(issuedQty) ? 'RETURNED' : 'PARTIALLY_RETURNED';
+    await conn.execute('UPDATE wo_material_issues SET returned_qty = ?, return_status = ? WHERE id = ?', [
+      toDbString(newReturned),
+      returnStatus,
+      issue.id,
+    ]);
+
+    const [returnMovement] = await conn.execute(
+      `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, lot_id, notes, created_by)
+       VALUES (?, ?, ?, 'in', ?, 'material_return', ?, ?, ?, ?)`,
+      [
+        warehouseId, mat.product_id, issue.batch_number || null, quantity,
+        issue.id, lotId, notes || reason || 'Material returned from production', userId,
+      ]
+    );
+
+    // give the quantity back to the layer it was consumed from, valued at that layer's rate
+    const restored = await restoreCostToLayer(conn, {
+      costLayerId: issue.cost_layer_id,
+      quantity: toDbString(returnQty),
+      movementType: 'return',
+      movementId: returnMovement.insertId,
+    });
+
+    await reduceMaterialCostOnBatch(conn, { woId, materialCost: restored.totalCost });
+
+    const returnBusinessDate = new Date().toISOString().slice(0, 10);
+    const returnValuation = await resolveValuation(conn, {
+      sourceEventType: 'MATERIAL_RETURNED',
+      businessDate: returnBusinessDate,
+      quantity: toDbString(returnQty),
+      unitCost: restored.unitCost,
+      context: { issueId: issue.id, lotId, woMaterialId, warehouseId },
+    });
+
+    let journalId: number | null = null;
+
+    if (returnValuation.statistical) {
+      await postStatisticalEvent(conn, {
+        sourceModule: 'PRODUCTION',
+        sourceType: 'material_return',
+        sourceId: returnMovement.insertId,
+        sourceEventType: 'MATERIAL_RETURNED',
+        businessDate: returnBusinessDate,
+        description: `Material return from ${wo.wo_number} - zero-value`,
+        postingProfileId: returnValuation.profileId,
+        idempotencyKey: returnKey,
+        userId: userId || 0,
+      });
+    } else {
+      const rmAccount = await resolveAccountByRole(conn, 'INVENTORY_RM_AVAILABLE', { warehouseId });
+      const wipAccount = await resolveAccountByRole(conn, 'INVENTORY_WIP', { warehouseId });
+
+      const glLines: JournalLineInput[] = [
+        {
+          accountId: rmAccount.accountId,
+          description: `Material return from ${wo.wo_number} lot ${lotId} (${quantity} units)`,
+          debit: returnValuation.amount,
+          credit: '0',
+          productId: mat.product_id,
+          warehouseId,
+          lotId,
+        },
+        {
+          accountId: wipAccount.accountId,
+          description: `Material return from ${wo.wo_number} - WIP reduced`,
+          debit: '0',
+          credit: returnValuation.amount,
+          productId: mat.product_id,
+          warehouseId,
+          lotId,
+        },
+      ];
+
+      const glResult = await postSystemJournal(conn, {
+        sourceModule: 'PRODUCTION',
+        sourceType: 'material_return',
+        sourceId: returnMovement.insertId,
+        sourceEventType: 'MATERIAL_RETURNED',
+        businessDate: returnBusinessDate,
+        description: `Material return from ${wo.wo_number}`,
+        lines: glLines,
+        idempotencyKey: returnKey,
+        userId: userId || 0,
+      });
+      journalId = glResult.journal_id;
+      await linkAllocationsToJournal(conn, [restored.allocationId], journalId as number);
+    }
+
+    await conn.execute(
+      `INSERT INTO wo_material_returns
+       (original_issue_id, wo_material_id, wo_id, product_id, warehouse_id, lot_id,
+        quantity, unit_cost, total_cost, cost_layer_id, cost_allocation_id,
+        movement_id, journal_entry_id, reason, idempotency_key, returned_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        issue.id, woMaterialId, woId, mat.product_id, warehouseId, lotId,
+        toDbString(returnQty), restored.unitCost, restored.totalCost,
+        restored.costLayerId, restored.allocationId,
+        returnMovement.insertId, journalId, reason || notes || null, returnKey, userId,
+      ]
+    );
+  });
+
+  return { success: true, message: 'Material returned to warehouse successfully' };
+}
+
+/**
+ * Post Finished Goods receipt from a Work Order.
+ * Transaction + row lock on work_orders + inventory_stocks.
+ * Guards: WO status, QC gate (mandatory checkpoints), yield ceiling,
+ *         over-receipt, idempotency key.
+ */
+export async function postFinishedGoods(opts: {
+  woId: number;
+  warehouseId: number;
+  quantity: number;
+  batchNumber?: string | null;
+  idempotencyKey?: string | null;
+  userId: number | null;
+}): Promise<FgReceiptResult> {
+  const { woId, warehouseId, quantity, batchNumber, idempotencyKey, userId } = opts;
+
+  if (!woId || !warehouseId || !Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error('wo_id, warehouse_id, and a positive quantity are required');
+  }
+
+  await dbTransaction(async (conn) => {
+    // 1. lock and validate Work Order
+    const [woRows] = await conn.execute(
+      `SELECT w.*, p.name AS product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ? FOR UPDATE`, [woId]
+    );
+    const wo = (woRows as any[])[0];
+    if (!wo) throw new Error('Work order not found');
+
+    const allowedStatuses = ['in_progress', 'completed', 'IN_PROGRESS', 'COMPLETED'];
+    if (!allowedStatuses.includes(wo.status)) {
+      throw new Error(`Cannot receive FG for WO with status '${wo.status}'. WO must be in_progress or completed.`);
+    }
+
+    // 2. idempotency check — key is mandatory
+    if (!idempotencyKey) {
+      throw new Error('idempotency_key is required for FG receipt');
+    }
+    const [dupRows] = await conn.execute(
+      `SELECT id FROM stock_movements WHERE idempotency_key = ?`,
+      [idempotencyKey]
+    );
+    if ((dupRows as any[]).length > 0) {
+      // idempotent replay: return success without creating new effects
+      return;
+    }
+
+    // 3. QC gate — mandatory checkpoints must all have status exactly 'passed'
+    // NULL or any non-'passed' value blocks FG receipt
+    const [qcRows] = await conn.execute(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN is_mandatory = 1 AND (status IS NULL OR LOWER(status) != 'passed') THEN 1 ELSE 0 END) AS pending_mandatory
+       FROM wo_qc_checkpoints WHERE wo_id = ?`,
+      [woId]
+    );
+    const qcTotal = Number((qcRows as any[])[0]?.total || 0);
+    const qcPendingMandatory = Number((qcRows as any[])[0]?.pending_mandatory || 0);
+    if (qcTotal === 0) {
+      throw new Error('Cannot receive FG: this WO has no QC checkpoints. Generate QC checkpoints and complete inspection first.');
+    }
+    if (qcPendingMandatory > 0) {
+      throw new Error(`Cannot receive FG: ${qcPendingMandatory} mandatory QC checkpoint(s) not passed. Complete QC inspection first.`);
+    }
+
+    // 4. yield ceiling — FG receipt cannot exceed actual accepted output
+    const [yieldRows] = await conn.execute(
+      `SELECT COALESCE(SUM(output_quantity), 0) as total_output FROM wo_results WHERE wo_id = ?`,
+      [woId]
+    );
+    const maxReceivable = Number((yieldRows as any[])[0]?.total_output || 0);
+    if (maxReceivable === 0) {
+      throw new Error('Cannot receive FG: no yield recorded for this WO. Record actual output first.');
+    }
+
+    const [existingReceipts] = await conn.execute(
+      `SELECT COALESCE(SUM(quantity), 0) as total_received FROM stock_movements 
+       WHERE reference_type = 'fg_receipt' AND reference_id = ? AND movement_type = 'in'`,
+      [woId]
+    );
+    const alreadyReceived = Number((existingReceipts as any[])[0]?.total_received || 0);
+    if (alreadyReceived + quantity > maxReceivable) {
+      throw new Error(`Total receipt (${alreadyReceived + quantity}) exceeds actual accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
+    }
+
+    // 5. create FG receipt event and canonical lot
+    const [receiptEvent] = await conn.execute(
+      `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by, idempotency_key)
+       VALUES (?, ?, ?, 'in', ?, 'fg_receipt', ?, ?, ?, ?)`,
+      [warehouseId, wo.product_id, batchNumber || null, quantity, woId,
+       `FG receipt from ${wo.wo_number || 'WO-' + woId}`, userId, idempotencyKey || null]
+    );
+    const receiptEventId = receiptEvent.insertId;
+
+    // resolve QC policy
+    const qcPolicy = await resolveQcPolicy(wo.product_id, 'FG', conn);
+
+    // create canonical lot for this receipt event
+    const { lotId, lotNumber } = await createLot({
+      productId: wo.product_id,
+      sourceType: 'fg_receipt',
+      sourceDocumentId: woId,
+      sourceLineId: receiptEventId,
+      batchNumber: batchNumber || null,
+      qcPolicy,
+      conn
+    });
+
+    // update movement with lot_id
+    await conn.execute('UPDATE stock_movements SET lot_id = ? WHERE id = ?', [lotId, receiptEventId]);
+
+    // phase 4: compute provisional FG cost from batch cost sheet
+    const fgCostData = await computeProvisionalFgCost(conn, woId);
+    const fgUnitCost = fgCostData.unitCost;
+    const fgTotalCost = toDbString(moneyRound(money(fgUnitCost).times(money(String(quantity)))));
+
+    if (qcPolicy === 'NOT_REQUIRED') {
+      // no QC needed: create available stock directly
+      await conn.execute(
+        "INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, lot_id, batch_number, source_type, source_id) VALUES (?, ?, ?, 'available', ?, ?, 'fg_receipt', ?)",
+        [warehouseId, wo.product_id, quantity, lotId, batchNumber || null, woId]
+      );
+    } else {
+      // REQUIRED: create qc_hold keyed to lot
+      await conn.execute(
+        "INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, lot_id, batch_number, source_type, source_id) VALUES (?, ?, ?, 'qc_hold', ?, ?, 'fg_receipt', ?)",
+        [warehouseId, wo.product_id, quantity, lotId, batchNumber || null, woId]
+      );
+    }
+
+    // phase 4: create FG cost layer (PROVISIONAL until WO close)
+    const fgCostLayerId = await createCostLayer(conn, {
+      lotId,
+      productId: wo.product_id,
+      warehouseId,
+      quantity: String(quantity),
+      unitCost: fgUnitCost,
+      sourceType: 'fg_receipt',
+      sourceDocumentId: woId,
+      sourceLineId: receiptEventId,
+      costStatus: 'PROVISIONAL',
+      createdBy: userId || 0,
+    });
+
+    // update batch cost sheet with FG lot reference
+    await updateBatchSheetForFgReceipt(conn, {
+      woId,
+      batchNumber: batchNumber || null,
+      fgLotId: lotId,
+      outputQty: String(quantity),
+      provisionalUnitCost: fgUnitCost,
+    });
+
+    // phase 4: GL is a mandatory participant — finished goods never enter stock without
+    // an accounting record of what they are worth
+    const fgBusinessDate = new Date().toISOString().slice(0, 10);
+    const fgValuation = await resolveValuation(conn, {
+      sourceEventType: 'FG_RECEIVED',
+      businessDate: fgBusinessDate,
+      quantity: String(quantity),
+      unitCost: fgUnitCost,
+      context: { woId, receiptEventId, productId: wo.product_id, lotId },
+    });
+
+    if (fgValuation.statistical) {
+      await postStatisticalEvent(conn, {
+        sourceModule: 'PRODUCTION',
+        sourceType: 'fg_receipt',
+        sourceId: woId,
+        sourceLineId: receiptEventId,
+        sourceEventType: 'FG_RECEIVED',
+        businessDate: fgBusinessDate,
+        description: `FG receipt from ${wo.wo_number || 'WO-' + woId} - zero-value output`,
+        postingProfileId: fgValuation.profileId,
+        idempotencyKey: idempotencyKey || `fg-receipt-${woId}-${receiptEventId}`,
+        userId: userId || 0,
+      });
+    } else {
+      const debitRole = qcPolicy === 'NOT_REQUIRED' ? 'INVENTORY_FG_AVAILABLE' : 'INVENTORY_FG_QC_HOLD';
+      const debitAccount = await resolveAccountByRole(conn, debitRole, { warehouseId });
+      const wipAccount = await resolveAccountByRole(conn, 'INVENTORY_WIP', { warehouseId });
+
+      const glLines: JournalLineInput[] = [
+        {
+          accountId: debitAccount.accountId,
+          description: `FG receipt from ${wo.wo_number || 'WO-' + woId} - lot ${lotId} (${quantity} units)`,
+          debit: fgTotalCost,
+          credit: '0',
+          productId: wo.product_id,
+          warehouseId,
+          lotId,
+        },
+        {
+          accountId: wipAccount.accountId,
+          description: `FG receipt from ${wo.wo_number || 'WO-' + woId} - WIP relieved`,
+          debit: '0',
+          credit: fgTotalCost,
+          productId: wo.product_id,
+          warehouseId,
+        },
+      ];
+
+      const glResult = await postSystemJournal(conn, {
+        sourceModule: 'PRODUCTION',
+        sourceType: 'fg_receipt',
+        sourceId: woId,
+        sourceLineId: receiptEventId,
+        sourceEventType: 'FG_RECEIVED',
+        businessDate: new Date().toISOString().slice(0, 10),
+        description: `FG receipt from ${wo.wo_number || 'WO-' + woId}`,
+        lines: glLines,
+        idempotencyKey: idempotencyKey || `fg-receipt-${woId}-${receiptEventId}`,
+        userId: userId || 0,
+      });
+
+      await linkCostLayerToJournal(conn, fgCostLayerId, glResult.journal_id);
+    }
+
+    // 7. update WO completed_quantity
+    await conn.execute(
+      'UPDATE work_orders SET completed_quantity = COALESCE(completed_quantity, 0) + ? WHERE id = ?',
+      [quantity, woId]
+    );
+
+    // 8. create batch if batch_number provided
+    if (batchNumber) {
+      const [batchRows] = await conn.execute('SELECT id FROM batches WHERE batch_number = ?', [batchNumber]);
+      if ((batchRows as any[]).length === 0) {
+        await conn.execute(
+          `INSERT INTO batches (batch_number, product_id, quantity, manufacture_date, status, warehouse_id)
+           VALUES (?, ?, ?, CURDATE(), ?, ?)`,
+          [batchNumber, wo.product_id, quantity, qcPolicy === 'NOT_REQUIRED' ? 'released' : 'pending_qc', warehouseId]
+        );
+      }
+    }
+
+    // 9. auto-create FG QC FPA if REQUIRED and specs exist
+    if (qcPolicy === 'REQUIRED') {
+      const fpaResult = await autoCreateFpa({
+        conn,
+        type: 'FG',
+        productId: wo.product_id,
+        batchNo: batchNumber || null,
+        woId: woId,
+        referenceId: woId,
+        referenceNumber: wo.wo_number || `WO-${woId}`,
+        notes: `Auto-generated FG QC from WO ${wo.wo_number || woId} lot ${lotId}`,
+        createdBy: userId,
+        quantity: quantity,
+        lotId: lotId
+      });
+
+      if (!fpaResult) {
+        throw new Error(`QC_SPEC_REQUIRED: product ${wo.product_id} has QC policy REQUIRED but no FG specifications. FG receipt rolled back.`);
+      }
+    }
+  });
+
+  return { success: true, message: 'FG received into warehouse' };
+}

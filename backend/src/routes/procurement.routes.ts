@@ -3,6 +3,8 @@ import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission, checkUserPermission } from '../middleware/permission';
 import { autoCreateFpa } from '../services/qc.service';
+import { approvePurchaseRequest, approvePurchaseOrder, postGoodsReceipt } from '../services/procurement.service';
+import { mapProcurementError } from '../errors/procurement.error';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -427,10 +429,13 @@ router.get('/purchase-requests', authMiddleware, requirePermission('procurement.
           pr.requestor_id as requester_id,
           COALESCE(pr.request_date, DATE(pr.created_at)) as request_date,
           pr.needed_by,
-          cp.project_name, cp.project_number
+          cp.project_name, cp.project_number,
+          usup.full_name as supervisor_name, umgr.full_name as manager_name
        FROM purchase_requests pr
        LEFT JOIN users u ON pr.requestor_id = u.id
        LEFT JOIN client_projects cp ON pr.project_id = cp.id
+       LEFT JOIN users usup ON pr.approved_by_supervisor_id = usup.id
+       LEFT JOIN users umgr ON pr.approved_by_manager_id = umgr.id
        ORDER BY pr.created_at DESC`,
       []
     );
@@ -448,10 +453,13 @@ router.get('/purchase-requests/:id', authMiddleware, requirePermission('procurem
               pr.requestor_id as requester_id,
               COALESCE(pr.request_date, DATE(pr.created_at)) as request_date,
               pr.needed_by,
-              cp.project_name, cp.project_number
+              cp.project_name, cp.project_number,
+              usup.full_name as supervisor_name, umgr.full_name as manager_name
        FROM purchase_requests pr
        LEFT JOIN users u ON pr.requestor_id = u.id
        LEFT JOIN client_projects cp ON pr.project_id = cp.id
+       LEFT JOIN users usup ON pr.approved_by_supervisor_id = usup.id
+       LEFT JOIN users umgr ON pr.approved_by_manager_id = umgr.id
        WHERE pr.id = ?`,
       [req.params.id]
     );
@@ -603,49 +611,21 @@ router.delete('/purchase-requests/:id', authMiddleware, requirePermission('procu
 
 router.post('/purchase-requests/:id/approve', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const prId = req.params.id;
+    const prId = Number(req.params.id);
     const userId = (req as any).user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const pr = await dbGet('SELECT approval_status FROM purchase_requests WHERE id = ?', [prId]) as any;
-    if (!pr) return res.status(404).json({ error: 'Purchase request not found' });
+    const perms = {
+      hasApprove: await checkUserPermission(userId, 'procurement.purchase-requests', 'approve'),
+      hasApprove1: await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_1'),
+      hasApprove2: await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_2'),
+    };
 
-    const currentStatus = pr.approval_status || 0;
-    const hasApprove = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve');
-    const hasApprove1 = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_1');
-    const hasApprove2 = await checkUserPermission(userId, 'procurement.purchase-requests', 'approve_2');
-
-    // full approve: direct 0->2 or 1->2
-    if (hasApprove && currentStatus < 2) {
-      await dbRun(
-        'UPDATE purchase_requests SET approval_status = 2, approved_by_supervisor_id = ?, approved_by_manager_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [userId, userId, prId]
-      );
-      return res.json({ message: 'PR fully approved (DIRECT)', approval_status: 2 });
-    }
-
-    // approve_1: 0 -> 1
-    if (hasApprove1 && currentStatus === 0) {
-      await dbRun(
-        'UPDATE purchase_requests SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
-        [userId, prId]
-      );
-      return res.json({ message: 'PR approved (1/2)', approval_status: 1 });
-    }
-
-    // approve_2: 1 -> 2
-    if (hasApprove2 && currentStatus === 1) {
-      await dbRun(
-        'UPDATE purchase_requests SET approval_status = 2, approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?',
-        [userId, prId]
-      );
-      return res.json({ message: 'PR approved (2/2)', approval_status: 2 });
-    }
-
-    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
-  } catch (error) {
+    const result = await approvePurchaseRequest(prId, userId, perms);
+    res.json(result);
+  } catch (error: any) {
     console.error('Error approving PR:', error);
-    res.status(500).json({ error: 'Failed to approve purchase request' });
+    mapProcurementError(error, res);
   }
 });
 
@@ -1526,47 +1506,21 @@ router.get('/purchase-orders/:id/payment-schedules', authMiddleware, async (req:
 // Approve / Reject Purchase Orders
 router.post('/purchase-orders/:id/approve', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const poId = req.params.id;
+    const poId = Number(req.params.id);
     const userId = (req as any).user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const po = await dbGet('SELECT approval_status FROM purchase_orders WHERE id = ?', [poId]) as any;
-    if (!po) return res.status(404).json({ error: 'Purchase order not found' });
+    const perms = {
+      hasApprove: await checkUserPermission(userId, 'procurement.purchase-orders', 'approve'),
+      hasApprove1: await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_1'),
+      hasApprove2: await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_2'),
+    };
 
-    const currentStatus = po.approval_status || 0;
-    const hasApprove = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve');
-    const hasApprove1 = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_1');
-    const hasApprove2 = await checkUserPermission(userId, 'procurement.purchase-orders', 'approve_2');
-
-    if (hasApprove && currentStatus < 2) {
-      await dbRun(
-        `UPDATE purchase_orders SET approval_status = 2, status = 'APPROVED',
-         approved_by_supervisor_id = ?, approved_by_manager_id = ?,
-         approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?`,
-        [userId, userId, poId]
-      );
-      return res.json({ message: 'PO fully approved (DIRECT)', approval_status: 2 });
-    }
-    if (hasApprove1 && currentStatus === 0) {
-      await dbRun(
-        'UPDATE purchase_orders SET approval_status = 1, approved_by_supervisor_id = ?, approved_at_supervisor = CURRENT_TIMESTAMP WHERE id = ?',
-        [userId, poId]
-      );
-      return res.json({ message: 'PO approved (1/2)', approval_status: 1 });
-    }
-    if (hasApprove2 && currentStatus === 1) {
-      await dbRun(
-        `UPDATE purchase_orders SET approval_status = 2, status = 'APPROVED',
-         approved_by_manager_id = ?, approved_at_manager = CURRENT_TIMESTAMP WHERE id = ?`,
-        [userId, poId]
-      );
-      return res.json({ message: 'PO approved (2/2)', approval_status: 2 });
-    }
-
-    return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
-  } catch (error) {
+    const result = await approvePurchaseOrder(poId, userId, perms);
+    res.json(result);
+  } catch (error: any) {
     console.error('Error approving PO:', error);
-    res.status(500).json({ error: 'Failed to approve purchase order' });
+    mapProcurementError(error, res);
   }
 });
 
@@ -1695,7 +1649,7 @@ router.get('/goods-receipts/:id', authMiddleware, requirePermission('procurement
 
 router.post('/goods-receipts', authMiddleware, requirePermission('procurement.grn', 'create'), async (req: Request, res: Response) => {
   try {
-    const { grn_number, po_id, warehouse_id, status, received_date, received_at, notes, received_by } = req.body;
+    const { grn_number, po_id, warehouse_id, status, received_date, received_at, notes } = req.body;
     if (!po_id) return res.status(400).json({ error: 'po_id is required' });
     if (!warehouse_id) return res.status(400).json({ error: 'warehouse_id is required' });
 
@@ -1703,16 +1657,10 @@ router.post('/goods-receipts', authMiddleware, requirePermission('procurement.gr
     if (!normalizedDate) return res.status(400).json({ error: 'received_date is required' });
 
     const number = grn_number || generateCode('GRN');
-    
-    // Determine and validate received_by user ID
-    let receiver = received_by || (req as any).userId || 1;
-    
-    // Verify user exists in database
-    const userExists = await dbGet('SELECT id FROM users WHERE id = ?', [receiver]);
-    if (!userExists) {
-      console.warn(`⚠️ User ID ${receiver} not found, using default admin (ID: 1)`);
-      receiver = 1;
-    }
+
+    // received_by is always the authenticated principal — never from request body
+    const receiver = (req as any).user?.userId;
+    if (!receiver) return res.status(401).json({ error: 'Unauthorized', code: 'AUTH_PRINCIPAL_INVALID' });
     
     // P0-2: allow multiple GRNs per PO — only require PO to be approved with outstanding items
     const po = await dbGet('SELECT id, approval_status, status FROM purchase_orders WHERE id = ?', [po_id]) as any;
@@ -1731,7 +1679,7 @@ router.post('/goods-receipts', authMiddleware, requirePermission('procurement.gr
       return res.status(400).json({ error: 'All PO items have been fully received. No outstanding quantity.' });
     }
 
-    console.log('🔍 GRN Create Debug:', { po_id, warehouse_id, receiver, date: normalizedDate });
+    console.log('GRN Create Debug:', { po_id, warehouse_id, receiver, date: normalizedDate });
 
     const result = await dbRun(
       `INSERT INTO goods_receipts 
@@ -1744,7 +1692,7 @@ router.post('/goods-receipts', authMiddleware, requirePermission('procurement.gr
 
     res.status(201).json({ message: 'Goods receipt created', data: { id: grId, grn_number: number } });
   } catch (error: any) {
-    console.error('❌ Error creating goods receipt:', error);
+    console.error('Error creating goods receipt:', error);
     console.error('Error details:', { message: error.message, code: error.code, sql: error.sql });
     if (error.message?.includes('UNIQUE')) return res.status(400).json({ error: 'GRN number must be unique' });
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
@@ -1760,6 +1708,13 @@ router.put('/goods-receipts/:id', authMiddleware, requirePermission('procurement
     const { warehouse_id, status, received_date, received_at, notes } = req.body;
     const normalizedDate = normalizeDateOnly(received_date || received_at);
 
+    // P0-IP-5: block edits on posted/approved GRNs
+    const grn = await dbGet('SELECT approval_status, status as grn_status FROM goods_receipts WHERE id = ?', [id]) as any;
+    if (!grn) return res.status(404).json({ error: 'GRN not found' });
+    if (grn.approval_status >= 2 || grn.grn_status === 'approved') {
+      return res.status(400).json({ error: 'Cannot edit a posted/approved GRN. Posted GRNs are immutable.' });
+    }
+
     await dbRun(
       `UPDATE goods_receipts 
        SET warehouse_id = ?, status = ?, received_date = ?, notes = ? 
@@ -1770,7 +1725,7 @@ router.put('/goods-receipts/:id', authMiddleware, requirePermission('procurement
     res.json({ message: 'Goods receipt updated' });
   } catch (error: any) {
     console.error('Error updating goods receipt:', error);
-    res.status(500).json({ error: 'Failed to update goods receipt' });
+    res.status(error.message?.includes('immutable') ? 400 : 500).json({ error: error.message || 'Failed to update goods receipt' });
   }
 });
 
@@ -1780,6 +1735,11 @@ router.delete('/goods-receipts/:id', authMiddleware, requirePermission('procurem
 
     const grn = await dbGet(`SELECT * FROM goods_receipts WHERE id = ?`, [id]) as any;
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
+
+    // P0-IP-5: block deletion of posted/approved GRNs
+    if (grn.approval_status >= 2 || grn.status === 'approved') {
+      return res.status(400).json({ error: 'Cannot delete a posted/approved GRN. Posted GRNs are immutable. Use a reversal workflow instead.' });
+    }
 
     const safeCleanup = async (sql: string, params: any[], label: string) => {
       try { await dbRun(sql, params); } catch (e: any) {
@@ -1873,261 +1833,21 @@ router.delete('/goods-receipts/:id', authMiddleware, requirePermission('procurem
 
 router.post('/goods-receipts/:id/approve', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    let userId = (req as any).user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const grnId = Number(req.params.id);
+    const userId = (req as any).user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized', code: 'AUTH_PRINCIPAL_INVALID' });
 
-    const userExists = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
-    if (!userExists) {
-      console.warn(`Approve user ID ${userId} not found, using default admin (ID: 1)`);
-      userId = 1;
-    }
+    const perms = {
+      hasApprove: await checkUserPermission(userId, 'procurement.grn', 'approve'),
+      hasApprove1: await checkUserPermission(userId, 'procurement.grn', 'approve_1'),
+      hasApprove2: await checkUserPermission(userId, 'procurement.grn', 'approve_2'),
+    };
 
-    const grn = await dbGet(`SELECT * FROM goods_receipts WHERE id = ?`, [id]) as any;
-    if (!grn) return res.status(404).json({ error: 'GRN not found' });
-
-    let currentStatus = Number(grn.approval_status || 0);
-
-    // parse items from notes JSON (frontend stores items here)
-    let items: any[] = [];
-    try {
-      const parsedNotes = JSON.parse(grn.notes || '{}');
-      items = parsedNotes.items || [];
-    } catch (e) {
-      items = [];
-    }
-
-    // if rejected (-1), reset to pending (0) first
-    if (currentStatus === -1) {
-      await dbRun(
-        `UPDATE goods_receipts
-         SET approval_status = 0, status = 'received',
-             approved_by_supervisor_id = NULL,
-             approved_by_manager_id = NULL,
-             approved_at_supervisor = NULL,
-             approved_at_manager = NULL
-         WHERE id = ?`,
-        [id]
-      );
-      currentStatus = 0;
-    }
-
-    const hasApprove = await checkUserPermission(userId, 'procurement.grn', 'approve');
-    const hasApprove1 = await checkUserPermission(userId, 'procurement.grn', 'approve_1');
-    const hasApprove2 = await checkUserPermission(userId, 'procurement.grn', 'approve_2');
-
-    // determine if this step reaches final approval (approval_status = 2)
-    let newApprovalStatus = currentStatus;
-    if (hasApprove && currentStatus < 2) {
-      newApprovalStatus = 2;
-    } else if (hasApprove1 && currentStatus === 0) {
-      newApprovalStatus = 1;
-    } else if (hasApprove2 && currentStatus === 1) {
-      newApprovalStatus = 2;
-    } else {
-      return res.status(403).json({ error: 'Insufficient permissions to approve at current status' });
-    }
-
-    // partial approval (0 -> 1): just update approval_status, no inventory
-    if (newApprovalStatus === 1) {
-      await dbRun(
-        `UPDATE goods_receipts
-         SET approval_status = 1, status = 'received',
-             approved_by_supervisor_id = ?,
-             approved_at_supervisor = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [userId, id]
-      );
-      const finalData = await dbGet(
-        `SELECT gr.*, po.po_number, w.name as warehouse_name, u.full_name as received_by_name
-         FROM goods_receipts gr
-         LEFT JOIN purchase_orders po ON gr.po_id = po.id
-         LEFT JOIN warehouses w ON gr.warehouse_id = w.id
-         LEFT JOIN users u ON gr.received_by = u.id
-         WHERE gr.id = ?`,
-        [id]
-      );
-      return res.json({ message: 'GRN approved (1/2)', data: finalData });
-    }
-
-    // final approval (-> 2): atomic transaction for everything
-    const grnId = Number(grn.id);
-    const grnNumber = grn.grn_number || `GRN-${grnId}`;
-
-    // idempotency: check if already posted
-    const alreadyPosted = await dbGet(
-      'SELECT COUNT(*) as cnt FROM stock_movements WHERE reference_type = ? AND reference_id = ?',
-      ['GRN', grnId]
-    ) as any;
-
-    if ((alreadyPosted?.cnt || 0) > 0) {
-      // already posted — just ensure status is correct and return
-      await dbRun(
-        `UPDATE goods_receipts SET approval_status = 2, status = 'approved' WHERE id = ?`,
-        [id]
-      );
-      const finalData = await dbGet(
-        `SELECT gr.*, po.po_number FROM goods_receipts gr LEFT JOIN purchase_orders po ON gr.po_id = po.id WHERE gr.id = ?`,
-        [id]
-      );
-      return res.json({ message: 'GRN already posted (idempotent)', data: finalData });
-    }
-
-    // P0-3: all inventory posting inside one transaction
-    await dbTransaction(async (conn: any) => {
-      // 1. mark GRN as approved
-      const approveFields = hasApprove
-        ? `approval_status = 2, status = 'approved',
-           approved_by_supervisor_id = ?, approved_by_manager_id = ?,
-           approved_at_supervisor = CURRENT_TIMESTAMP, approved_at_manager = CURRENT_TIMESTAMP`
-        : `approval_status = 2, status = 'approved',
-           approved_by_manager_id = ?,
-           approved_at_manager = CURRENT_TIMESTAMP`;
-      const approveParams = hasApprove ? [userId, userId, id] : [userId, id];
-      await conn.execute(
-        `UPDATE goods_receipts SET ${approveFields} WHERE id = ?`,
-        approveParams
-      );
-
-      // 2. P0-2: load PO items with row lock to prevent concurrent over-receipt
-      const [poItems] = await conn.execute(
-        'SELECT id, product_id, quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
-        [grn.po_id]
-      );
-      // P0-3: build maps for both po_item_id lookup and product_id fallback
-      const poItemById = new Map<number, any>();
-      const poItemByProduct = new Map<number, any>();
-      for (const poi of poItems) {
-        poItemById.set(Number(poi.id), poi);
-        poItemByProduct.set(Number(poi.product_id), poi);
-      }
-
-      // 3. persist items into grn_items and create inventory entries
-      const fpaQueue: { productId: number; batchNo: string | null; qty: number }[] = [];
-
-      for (const item of items) {
-        const qty = Number(item.received_quantity || 0);
-        if (!item.product_id || qty <= 0) continue;
-
-        // P0-3: use exact po_item_id from frontend, fallback to product_id inference
-        let poItem: any = null;
-        if (item.po_item_id) {
-          poItem = poItemById.get(Number(item.po_item_id));
-        }
-        if (!poItem) {
-          poItem = poItemByProduct.get(Number(item.product_id));
-        }
-        const poItemId = poItem?.id || null;
-
-        // P0-2: validate cumulative received does not exceed ordered
-        if (poItem) {
-          const ordered = Number(poItem.quantity);
-          const alreadyReceived = Number(poItem.received_qty);
-          if (alreadyReceived + qty > ordered) {
-            throw new Error(`Over-receipt rejected: item ${item.product_id} ordered ${ordered}, already received ${alreadyReceived}, attempting ${qty}. Max allowed: ${ordered - alreadyReceived}`);
-          }
-        }
-
-        // insert into grn_items
-        await conn.execute(
-          `INSERT INTO grn_items (grn_id, po_item_id, product_id, quantity_received, batch_number, notes)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [grnId, poItemId, item.product_id, qty, item.batch_number || null, item.remarks || null]
-        );
-
-        // create qc_hold inventory with grn_id for lot-specific tracking
-        await conn.execute(
-          `INSERT INTO inventory_stocks (warehouse_id, product_id, quantity, status, grn_id, reorder_point)
-           VALUES (?, ?, ?, 'qc_hold', ?, 0)
-           ON DUPLICATE KEY UPDATE quantity = quantity + ?`,
-          [grn.warehouse_id || 1, item.product_id, qty, grnId, qty]
-        );
-
-        // single stock_movement per item
-        await conn.execute(
-          `INSERT INTO stock_movements
-           (product_id, warehouse_id, reference_type, reference_id, quantity, movement_type, notes, created_at)
-           VALUES (?, ?, 'GRN', ?, ?, 'inbound', ?, CURRENT_TIMESTAMP)`,
-          [
-            item.product_id,
-            grn.warehouse_id,
-            grnId,
-            qty,
-            `${grnNumber} - Receipt from PO ${grn.po_id} [QC_HOLD]${item.remarks ? ' - ' + item.remarks : ''}`
-          ]
-        );
-
-        // update PO item received_qty
-        if (poItemId) {
-          await conn.execute(
-            'UPDATE purchase_order_items SET received_qty = COALESCE(received_qty, 0) + ? WHERE id = ?',
-            [qty, poItemId]
-          );
-        }
-
-        fpaQueue.push({ productId: item.product_id, batchNo: item.batch_number || null, qty });
-      }
-
-      // update PO status based on received vs ordered
-      const [updatedPoItems] = await conn.execute(
-        'SELECT quantity, COALESCE(received_qty, 0) as received_qty FROM purchase_order_items WHERE purchase_order_id = ?',
-        [grn.po_id]
-      );
-      const allFullyReceived = updatedPoItems.every(
-        (i: any) => Number(i.received_qty) >= Number(i.quantity)
-      );
-      const someReceived = updatedPoItems.some(
-        (i: any) => Number(i.received_qty) > 0
-      );
-      let newPoStatus = 'APPROVED';
-      if (allFullyReceived) newPoStatus = 'RECEIVED';
-      else if (someReceived) newPoStatus = 'PARTIAL';
-
-      await conn.execute(
-        'UPDATE purchase_orders SET status = ? WHERE id = ?',
-        [newPoStatus, grn.po_id]
-      );
-
-      // P0-4: create Incoming QC FPA inside transaction (mandatory, not "non-critical")
-      const uniqueProducts = new Map<number, { productId: number; batchNo: string | null; qty: number }>();
-      for (const entry of fpaQueue) {
-        if (!uniqueProducts.has(entry.productId)) {
-          uniqueProducts.set(entry.productId, entry);
-        }
-      }
-      for (const [productId, entry] of uniqueProducts) {
-        await autoCreateFpa({
-          type: 'Incoming',
-          productId,
-          batchNo: entry.batchNo,
-          supplierId: grn.vendor_id || null,
-          referenceId: grnId,
-          referenceNumber: grnNumber,
-          notes: `Auto-generated Incoming QC from GRN ${grnNumber}`,
-          createdBy: userId,
-          quantity: entry.qty
-        });
-      }
-    });
-
-    const finalData = await dbGet(
-      `SELECT gr.*, po.po_number, w.name as warehouse_name, u.full_name as received_by_name
-       FROM goods_receipts gr
-       LEFT JOIN purchase_orders po ON gr.po_id = po.id
-       LEFT JOIN warehouses w ON gr.warehouse_id = w.id
-       LEFT JOIN users u ON gr.received_by = u.id
-       WHERE gr.id = ?`,
-      [id]
-    );
-
-    res.json({ message: 'GRN approval updated', data: finalData });
+    const result = await postGoodsReceipt({ grnId, userId, perms });
+    res.json({ message: result.message, data: result.data });
   } catch (error: any) {
     console.error('Error approving GRN:', error);
-    // P0-2: over-receipt returns 409
-    if (error.message?.includes('Over-receipt rejected')) {
-      return res.status(409).json({ error: error.message });
-    }
-    res.status(500).json({ error: 'Failed to approve GRN: ' + (error.message || 'Unknown error') });
+    mapProcurementError(error, res);
   }
 });
 
@@ -2139,6 +1859,13 @@ router.post('/goods-receipts/:id/reject', authMiddleware, async (req: Request, r
       || await checkUserPermission(userId, 'procurement.grn', 'approve_2')
       || await checkUserPermission(userId, 'procurement.grn', 'approve');
     if (!canReject) return res.status(403).json({ error: 'Insufficient permissions to reject' });
+
+    // P0-IP-5: block rejection of posted/approved GRNs
+    const grn = await dbGet('SELECT approval_status, status as grn_status FROM goods_receipts WHERE id = ?', [id]) as any;
+    if (!grn) return res.status(404).json({ error: 'GRN not found' });
+    if (grn.approval_status >= 2 || grn.grn_status === 'approved') {
+      return res.status(400).json({ error: 'Cannot reject a posted/approved GRN. Use a reversal workflow instead.' });
+    }
 
     await dbRun(
       `UPDATE goods_receipts 

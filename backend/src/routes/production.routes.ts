@@ -4,6 +4,9 @@ import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { validateTransition, EXECUTION_STATUSES, ISSUABLE_STATUSES, MRP_OPEN_STATUSES } from '../utils/wo-transitions';
 import { autoCreateFpa } from '../services/qc.service';
+import { issueWoMaterial, returnWoMaterial, postFinishedGoods } from '../services/production.service';
+import { explodeBom } from '../services/bom.service';
+import { respondWithDomainError } from '../errors/domain.error';
 
 // Bound once so /mrp and /mrp/shortage cannot drift apart the way they drifted
 // from /mrp/dashboard.
@@ -572,12 +575,17 @@ router.get('/issue-material/wo/:woId', authMiddleware, requirePermission('produc
       `SELECT wm.id, wm.product_id, p.name AS material_name, p.sku AS material_sku,
               wm.quantity_required, wm.quantity_issued,
               (wm.quantity_required - COALESCE(wm.quantity_issued, 0)) AS pending_qty,
-              wm.batch_number, wm.warehouse_id, wh.name AS warehouse_name,
-              COALESCE(inv.quantity, 0) AS stock_available
+              wm.batch_number, COALESCE(wm.warehouse_id, 1) AS warehouse_id,
+              COALESCE(wh.name, (SELECT name FROM warehouses WHERE id = 1)) AS warehouse_name,
+              COALESCE(
+                (SELECT SUM(inv2.quantity) FROM inventory_stocks inv2
+                 WHERE inv2.product_id = wm.product_id
+                   AND inv2.warehouse_id = COALESCE(wm.warehouse_id, 1)
+                   AND inv2.status = 'available'), 0
+              ) AS stock_available
        FROM wo_materials wm
        JOIN products p ON p.id = wm.product_id
        LEFT JOIN warehouses wh ON wh.id = wm.warehouse_id
-       LEFT JOIN inventory_stocks inv ON inv.product_id = wm.product_id AND inv.warehouse_id = wm.warehouse_id
        WHERE wm.wo_id = ?
        ORDER BY p.name ASC`,
       [req.params.woId]
@@ -590,75 +598,67 @@ router.get('/issue-material/wo/:woId', authMiddleware, requirePermission('produc
 
 router.post('/issue-material', authMiddleware, requirePermission('production.workorders', 'issue_material'), async (req: Request, res: Response) => {
   try {
-    const { wo_material_id, quantity, warehouse_id, batch_number } = req.body;
-    if (!wo_material_id || !quantity) {
-      return res.status(400).json({ error: 'wo_material_id and quantity are required' });
-    }
-    if (!warehouse_id) {
-      return res.status(400).json({ error: 'warehouse_id is required for material issue' });
-    }
-
+    const { wo_material_id, quantity, warehouse_id, lot_id, idempotency_key } = req.body;
     const userId = (req as any).user?.userId;
 
-    await dbTransaction(async (conn) => {
-      // 1. Lock and validate WO material
-      const [matRows] = await conn.execute(
-        'SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [wo_material_id]
-      );
-      const mat = matRows[0];
-      if (!mat) throw new Error('WO material not found');
+    if (!idempotency_key || typeof idempotency_key !== 'string') {
+      return res.status(422).json({ error: 'idempotency_key is required for material issue', code: 'VALIDATION_ERROR' });
+    }
+    if (!lot_id) {
+      return res.status(422).json({ error: 'lot_id is required for material issue', code: 'VALIDATION_ERROR' });
+    }
 
-      // 1b. Check WO status — only allow issue for RELEASED/IN_PROGRESS/ON_HOLD
-      const [woRows] = await conn.execute('SELECT status FROM work_orders WHERE id = ?', [mat.wo_id]);
-      const woStatus = woRows[0]?.status?.toLowerCase();
-      if (!ISSUABLE_STATUSES.includes(woStatus)) {
-        throw new Error(`Cannot issue material for WO with status '${woRows[0]?.status}'. WO must be RELEASED, IN_PROGRESS, or ON_HOLD.`);
-      }
-
-      const alreadyIssued = Number(mat.quantity_issued) || 0;
-      const requiredQty = Number(mat.quantity_required) || 0;
-      const newIssued = alreadyIssued + Number(quantity);
-      if (newIssued > requiredQty) {
-        throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${requiredQty}). Already issued: ${alreadyIssued}`);
-      }
-
-      // 2. Lock and validate inventory stock — prevent negative stock
-      const [stockRows] = await conn.execute(
-        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = \'available\' FOR UPDATE',
-        [mat.product_id, warehouse_id]
-      );
-      const stock = stockRows[0];
-      const currentQty = stock ? Number(stock.quantity) || 0 : 0;
-
-      if (currentQty < quantity) {
-        throw new Error(`Insufficient stock. Available: ${currentQty}, Requested: ${quantity}`);
-      }
-
-      // 3. Update WO material issued quantity
-      await conn.execute(
-        `UPDATE wo_materials SET quantity_issued=?, warehouse_id=?, batch_number=?, issued_at=CURRENT_TIMESTAMP, issued_by=? WHERE id=?`,
-        [newIssued, warehouse_id, batch_number || null, userId, wo_material_id]
-      );
-
-      // 4. Deduct inventory stock
-      await conn.execute(
-        `UPDATE inventory_stocks SET quantity = quantity - ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`,
-        [quantity, stock.id]
-      );
-
-      // 5. Record stock movement for audit trail
-      await conn.execute(
-        `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
-         VALUES (?, ?, ?, 'out', ?, 'work_order', ?, 'Material issued to WO', ?)`,
-        [warehouse_id, mat.product_id, batch_number || null, quantity, mat.wo_id, userId]
-      );
+    const result = await issueWoMaterial({
+      woMaterialId: Number(wo_material_id),
+      quantity: Number(quantity),
+      warehouseId: Number(warehouse_id) || 1,
+      lotId: Number(lot_id),
+      userId,
+      idempotencyKey: idempotency_key
     });
 
-    res.json({ success: true, message: 'Material issued successfully' });
+    res.json(result);
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
     console.error('Error issuing material:', error);
     const msg = error.message || 'Failed to issue material';
-    const status = msg.includes('Insufficient stock') || msg.includes('exceed') || msg.includes('Cannot issue') || msg.includes('warehouse_id') ? 400 : 500;
+    let status = 500;
+    if (msg.includes('not found')) status = 404;
+    else if (msg.includes('Insufficient') || msg.includes('exceed') || msg.includes('required')) status = 422;
+    else if (msg.includes('Cannot issue')) status = 409;
+    res.status(status).json({ error: msg });
+  }
+});
+
+// Return unused material from production to warehouse
+router.post('/issue-material/return', authMiddleware, requirePermission('production.workorders', 'issue_material'), async (req: Request, res: Response) => {
+  try {
+    const { wo_material_id, quantity, warehouse_id, notes, idempotency_key, original_issue_id, reason } = req.body;
+    const userId = (req as any).user?.userId;
+
+    if (!idempotency_key || typeof idempotency_key !== 'string') {
+      return res.status(400).json({ error: 'idempotency_key is required for material return' });
+    }
+
+    const result = await returnWoMaterial({
+      woMaterialId: Number(wo_material_id),
+      quantity: Number(quantity),
+      warehouseId: Number(warehouse_id) || 1,
+      originalIssueId: original_issue_id ? Number(original_issue_id) : null,
+      notes,
+      reason,
+      userId,
+      idempotencyKey: idempotency_key
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
+    console.error('Error returning material:', error);
+    const msg = error.message || 'Failed to return material';
+    const status = msg.includes('exceed') || msg.includes('required') || msg.includes('Duplicate') || msg.includes('Nothing to return') ? 400 : 500;
     res.status(status).json({ error: msg });
   }
 });
@@ -687,14 +687,15 @@ router.post('/issue-material/generate/:woId', authMiddleware, requirePermission(
       return res.status(400).json({ error: `Pinned BOM is not valid for production (status=${bomCheck.status}, approval=${bomCheck.approval_status}). Requires ACTIVE + fully approved.` });
     }
 
-    const bomDetails = await dbAll('SELECT * FROM bom_details WHERE bom_header_id = ?', [bomId]);
+    // P1-1: use canonical BOM explosion with batch qty support
+    const materials = await explodeBom({ bomId, productionQty: Number(wo.quantity) });
 
-    for (const item of bomDetails) {
-      const exists = await dbGet('SELECT id FROM wo_materials WHERE wo_id = ? AND product_id = ?', [wo.id, item.raw_material_id]);
+    for (const mat of materials) {
+      const exists = await dbGet('SELECT id FROM wo_materials WHERE wo_id = ? AND product_id = ?', [wo.id, mat.rawMaterialId]);
       if (!exists) {
         await dbRun(
           `INSERT INTO wo_materials (wo_id, product_id, quantity_required, quantity_issued) VALUES (?, ?, ?, 0)`,
-          [wo.id, item.raw_material_id, item.quantity * wo.quantity]
+          [wo.id, mat.rawMaterialId, mat.quantity]
         );
       }
     }
@@ -822,34 +823,13 @@ router.post('/execution/:woId/complete', authMiddleware, requirePermission('prod
       [woId]
     );
 
-    // auto-trigger FG QC: create FPA for finished goods inspection
-    let fgFpa: { fpaId: number; fpaNumber: string } | null = null;
-    try {
-      const woFull = await dbGet(
-        'SELECT w.*, p.name as product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ?',
-        [woId]
-      ) as any;
-      if (woFull && woFull.product_id) {
-        // find batch from wo_results
-        const yield_row = await dbGet('SELECT batch_number FROM wo_results WHERE wo_id = ? LIMIT 1', [woId]) as any;
-        fgFpa = await autoCreateFpa({
-          type: 'FG',
-          productId: woFull.product_id,
-          batchNo: yield_row?.batch_number || null,
-          woId: Number(woId),
-          notes: `Auto-generated FG QC for completed WO ${woFull.wo_number || woId}`,
-          createdBy: (req as any).user?.userId || null,
-          quantity: woFull.quantity || null
-        });
-      }
-    } catch (fgErr: any) {
-      console.error('Failed to auto-create FG FPA on WO complete:', fgErr.message);
-    }
+    // P0-LIVE-2: FG FPA is created by the canonical FG receipt flow (postFinishedGoods),
+    // not by WO completion. Removing duplicate FPA creation here to prevent mismatched
+    // inspection requests. WO complete only validates mandatory QC checkpoints passed.
 
     res.json({
       success: true,
-      message: 'Work order completed' + (fgFpa ? `, FG QC FPA ${fgFpa.fpaNumber} created` : ''),
-      fg_fpa: fgFpa
+      message: 'Work order completed'
     });
   } catch (error) {
     console.error('Error completing WO:', error);
@@ -860,16 +840,182 @@ router.post('/execution/:woId/complete', authMiddleware, requirePermission('prod
 // Process logs for a WO
 router.get('/execution/:woId/logs', authMiddleware, requirePermission('production.execution', 'view'), async (req: Request, res: Response) => {
   try {
-    const logs = await dbAll(
+    let logs = await dbAll(
       `SELECT wpl.*, COALESCE(u.full_name, u.username) AS recorded_by_name
        FROM wo_process_logs wpl
        LEFT JOIN users u ON u.id = wpl.recorded_by
-       WHERE wpl.wo_id = ? ORDER BY wpl.start_time ASC`,
+       WHERE wpl.wo_id = ? ORDER BY wpl.id ASC`,
       [req.params.woId]
+    ) as any[];
+
+    // auto-backfill from template if no logs exist and WO has a line_process
+    if (!logs.length) {
+      const wo = await dbGet(
+        'SELECT id, line_process_id, status FROM work_orders WHERE id = ?',
+        [req.params.woId]
+      ) as any;
+      if (wo && wo.line_process_id) {
+        const templateSteps = await dbAll(
+          'SELECT * FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC',
+          [wo.line_process_id]
+        ) as any[];
+        if (templateSteps.length) {
+          const userId = (req as any).user?.userId || null;
+          for (const step of templateSteps) {
+            await dbRun(
+              `INSERT INTO wo_process_logs (wo_id, process_name, status, notes, recorded_by)
+               VALUES (?, ?, 'pending', ?, ?)`,
+              [req.params.woId, step.process_name, step.description || null, userId]
+            );
+            // auto-create QC checkpoint for QC steps
+            if (step.is_qc_checkpoint) {
+              const existsQC = await dbGet(
+                'SELECT id FROM wo_qc_checkpoints WHERE wo_id = ? AND process_stage = ?',
+                [req.params.woId, step.process_name]
+              );
+              if (!existsQC) {
+                await dbRun(
+                  `INSERT INTO wo_qc_checkpoints (wo_id, process_stage, is_mandatory, qc_type) VALUES (?, ?, 1, 'LP')`,
+                  [req.params.woId, step.process_name]
+                );
+              }
+            }
+          }
+          // re-fetch with user join
+          logs = await dbAll(
+            `SELECT wpl.*, COALESCE(u.full_name, u.username) AS recorded_by_name
+             FROM wo_process_logs wpl
+             LEFT JOIN users u ON u.id = wpl.recorded_by
+             WHERE wpl.wo_id = ? ORDER BY wpl.id ASC`,
+            [req.params.woId]
+          ) as any[];
+        }
+      }
+    }
+
+    // enrich each log with QC gate info
+    const checkpoints = await dbAll(
+      `SELECT process_stage, status, is_mandatory, triggered_at FROM wo_qc_checkpoints WHERE wo_id = ?`,
+      [req.params.woId]
+    ) as any[];
+
+    // check if any mandatory QC is triggered but not passed (global block)
+    const hasUnresolvedQC = checkpoints.some((c: any) => 
+      c.is_mandatory && c.triggered_at && c.status !== 'passed'
     );
+
+    for (const log of logs) {
+      const cp = checkpoints.find((c: any) => c.process_stage === log.process_name);
+      log.has_qc_checkpoint = !!cp;
+      log.qc_status = cp?.status || null;
+      // block non-completed steps if any mandatory QC is unresolved
+      log.qc_blocking = hasUnresolvedQC && log.status !== 'completed';
+    }
+
     res.json({ success: true, data: logs });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch process logs' });
+  }
+});
+
+router.put('/execution/:woId/process-logs/:logId', authMiddleware, requirePermission('production.execution', 'create'), async (req: Request, res: Response) => {
+  try {
+    const { status, start_time, end_time, notes } = req.body;
+
+    // QC gate: block advancing if ANY mandatory QC checkpoint is triggered but not passed
+    if (status === 'in_progress' || status === 'completed') {
+      const unresolvedQC = await dbGet(
+        `SELECT id, process_stage, status FROM wo_qc_checkpoints 
+         WHERE wo_id = ? AND is_mandatory = 1 AND status IN ('in_review', 'pending')
+         AND triggered_at IS NOT NULL
+         LIMIT 1`,
+        [req.params.woId]
+      ) as any;
+      if (unresolvedQC) {
+        const currentLog = await dbGet('SELECT process_name FROM wo_process_logs WHERE id = ?', [req.params.logId]) as any;
+        return res.status(400).json({
+          error: `Proses "${currentLog?.process_name || ''}" tidak bisa dilanjutkan. QC Checkpoint "${unresolvedQC.process_stage}" belum passed (status: ${unresolvedQC.status}). Selesaikan QC terlebih dahulu.`
+        });
+      }
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [];
+
+    if (status) { updates.push('status = ?'); params.push(status); }
+    if (start_time) { updates.push('start_time = ?'); params.push(start_time); }
+    if (end_time) {
+      updates.push('end_time = ?');
+      params.push(end_time);
+      // auto-calc duration if both start and end exist
+      const existing = await dbGet('SELECT start_time FROM wo_process_logs WHERE id = ?', [req.params.logId]) as any;
+      const effectiveStart = start_time || existing?.start_time;
+      if (effectiveStart) {
+        const dur = Math.round((new Date(end_time).getTime() - new Date(effectiveStart).getTime()) / 60000);
+        updates.push('duration_minutes = ?');
+        params.push(dur > 0 ? dur : null);
+      }
+    }
+    if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+
+    if (!updates.length) return res.status(400).json({ error: 'No fields to update' });
+
+    params.push(req.params.logId, req.params.woId);
+    await dbRun(`UPDATE wo_process_logs SET ${updates.join(', ')} WHERE id = ? AND wo_id = ?`, params);
+
+    // auto-trigger QC when step completed
+    let qcTriggered = null;
+    if (status === 'completed') {
+      const log = await dbGet('SELECT process_name FROM wo_process_logs WHERE id = ?', [req.params.logId]) as any;
+      if (log) {
+        const checkpoint = await dbGet(
+          `SELECT * FROM wo_qc_checkpoints WHERE wo_id = ? AND process_stage = ? AND status = 'pending'`,
+          [req.params.woId, log.process_name]
+        ) as any;
+        if (checkpoint) {
+          const wo = await dbGet('SELECT * FROM work_orders WHERE id = ?', [req.params.woId]) as any;
+          if (wo) {
+            const userId = (req as any).user?.userId || null;
+            const now = new Date();
+            const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+            const rand = Math.floor(100 + Math.random() * 900);
+            const fpaNumber = `FPA-LP-${datePart}-${rand}`;
+            try {
+              const fpaResult = await dbRun(
+                `INSERT INTO qc_analysis_requests (fpa_number, type, reference_id, reference_number, product_id, batch_no, notes, created_by, status)
+                 VALUES (?, 'LP', ?, ?, ?, ?, ?, ?, 'Pending')`,
+                [fpaNumber, wo.id, wo.wo_number, wo.product_id, null, `In-Process QC for ${log.process_name} | WO: ${wo.wo_number}`, userId]
+              );
+              const fpaId = fpaResult.insertId;
+              await dbRun(
+                `UPDATE wo_qc_checkpoints SET status = 'in_review', fpa_id = ?, triggered_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                [fpaId, checkpoint.id]
+              );
+              // copy specs to FPA results
+              const specs = await dbAll(
+                `SELECT * FROM qc_specifications WHERE product_id = ? AND (qc_type = 'LP' OR qc_type IS NULL)`,
+                [wo.product_id]
+              ) as any[];
+              for (const spec of specs) {
+                await dbRun(
+                  `INSERT INTO qc_analysis_results (fpa_id, parameter_id, method_id, standard_value, min_value, max_value) VALUES (?, ?, ?, ?, ?, ?)`,
+                  [fpaId, spec.parameter_id, spec.method_id, spec.standard_value, spec.min_value, spec.max_value]
+                );
+              }
+              qcTriggered = { checkpoint_id: checkpoint.id, fpa_id: fpaId, fpa_number: fpaNumber };
+              console.log(`Auto-triggered QC: ${fpaNumber} for WO ${wo.wo_number} stage "${log.process_name}"`);
+            } catch (fpaErr: any) {
+              console.warn(`Failed to auto-create FPA for checkpoint: ${fpaErr.message}`);
+            }
+          }
+        }
+      }
+    }
+
+    res.json({ message: 'Process log updated', qc_triggered: qcTriggered });
+  } catch (error) {
+    console.error('Error updating process log:', error);
+    res.status(500).json({ error: 'Failed to update process log' });
   }
 });
 
@@ -1161,15 +1307,25 @@ router.post('/yield', authMiddleware, requirePermission('production.yield-scrap'
       return res.status(400).json({ error: 'wo_id and output_quantity are required' });
     }
 
+    // P1-5 + P0-3: strict positive validation
+    const outQty = Number(output_quantity);
+    const lossQty = Number(loss_quantity || 0);
+    if (!Number.isFinite(outQty) || outQty < 0) {
+      return res.status(400).json({ error: 'output_quantity must be a non-negative number' });
+    }
+    if (!Number.isFinite(lossQty) || lossQty < 0) {
+      return res.status(400).json({ error: 'loss_quantity must be a non-negative number' });
+    }
+
     const userId = (req as any).user?.userId;
-    const totalOutput = Number(output_quantity) + Number(loss_quantity || 0);
-    const lossPct = totalOutput > 0 ? ((Number(loss_quantity || 0) / totalOutput) * 100).toFixed(2) : '0.00';
+    const totalOutput = outQty + lossQty;
+    const lossPct = totalOutput > 0 ? ((lossQty / totalOutput) * 100).toFixed(2) : '0.00';
 
     // qc_status always starts as 'pending' — only QC module can set passed/failed
     const result = await dbRun(
       `INSERT INTO wo_results (wo_id, output_quantity, loss_quantity, loss_percentage, batch_number, qc_status, completed_by, completed_at, notes)
        VALUES (?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?)`,
-      [wo_id, output_quantity, loss_quantity || 0, lossPct, batch_number || null, userId, notes || null]
+      [wo_id, outQty, lossQty, lossPct, batch_number || null, userId, notes || null]
     );
     res.status(201).json({ success: true, message: 'Yield recorded', id: result.insertId });
   } catch (error) {
@@ -1181,23 +1337,51 @@ router.post('/yield', authMiddleware, requirePermission('production.yield-scrap'
 router.put('/yield/:id', authMiddleware, requirePermission('production.yield-scrap', 'update'), async (req: Request, res: Response) => {
   try {
     // qc_status is DELIBERATELY NOT READ FROM THE BODY.
-    //
-    // The create path was hardened to always insert 'pending', but this update
-    // path still took qc_status straight from the request — so Production could
-    // still mark its own output QC-passed, just by editing instead of creating.
-    // Closing one of two doors into the same field leaves the field open.
-    //
-    // QC is owned by the Quality module: qc.routes.ts resolves an FPA and writes
-    // wo_qc_checkpoints.status = passed/failed. Production records HOW MUCH was
-    // produced; Quality decides whether it is acceptable. Those are different
-    // authorities and this endpoint only carries the first.
+    // QC is owned by the Quality module. Production records how much was produced;
+    // Quality decides whether it is acceptable.
     const { output_quantity, loss_quantity, batch_number, notes } = req.body;
-    const totalOutput = Number(output_quantity) + Number(loss_quantity || 0);
-    const lossPct = totalOutput > 0 ? ((Number(loss_quantity || 0) / totalOutput) * 100).toFixed(2) : '0.00';
+
+    // P1-5: strict positive validation
+    const outQty = Number(output_quantity);
+    const lossQty = Number(loss_quantity || 0);
+    if (!Number.isFinite(outQty) || outQty < 0) {
+      return res.status(400).json({ error: 'output_quantity must be a non-negative number' });
+    }
+    if (!Number.isFinite(lossQty) || lossQty < 0) {
+      return res.status(400).json({ error: 'loss_quantity must be a non-negative number' });
+    }
+
+    // P1-5: prevent reducing yield below already-posted FG
+    const existing = await dbGet('SELECT wo_id FROM wo_results WHERE id = ?', [req.params.id]) as any;
+    if (existing) {
+      const fgPosted = await dbGet(
+        `SELECT COALESCE(SUM(quantity), 0) as total_fg FROM stock_movements
+         WHERE reference_type = 'fg_receipt' AND reference_id = ? AND movement_type = 'in'`,
+        [existing.wo_id]
+      ) as any;
+      const totalFg = Number(fgPosted?.total_fg || 0);
+
+      // get total output from OTHER yield records for this WO (excluding the one being edited)
+      const otherYield = await dbGet(
+        'SELECT COALESCE(SUM(output_quantity), 0) as other_output FROM wo_results WHERE wo_id = ? AND id != ?',
+        [existing.wo_id, req.params.id]
+      ) as any;
+      const otherOutput = Number(otherYield?.other_output || 0);
+      const newTotalOutput = otherOutput + outQty;
+
+      if (newTotalOutput < totalFg) {
+        return res.status(400).json({
+          error: `Cannot reduce output to ${outQty}. Total accepted output (${newTotalOutput}) would be less than already-posted FG receipts (${totalFg}).`
+        });
+      }
+    }
+
+    const totalOutput = outQty + lossQty;
+    const lossPct = totalOutput > 0 ? ((lossQty / totalOutput) * 100).toFixed(2) : '0.00';
 
     await dbRun(
       `UPDATE wo_results SET output_quantity=?, loss_quantity=?, loss_percentage=?, batch_number=?, notes=? WHERE id=?`,
-      [output_quantity, loss_quantity || 0, lossPct, batch_number || null, notes || null, req.params.id]
+      [outQty, lossQty, lossPct, batch_number || null, notes || null, req.params.id]
     );
     res.json({ success: true, message: 'Yield updated' });
   } catch (error) {
@@ -1264,140 +1448,29 @@ router.get('/fg-receipt', authMiddleware, requirePermission('production.fg-recei
 router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-receipt', 'create'), async (req: Request, res: Response) => {
   try {
     const { wo_id, warehouse_id, quantity, batch_number, idempotency_key } = req.body;
-    if (!wo_id || !warehouse_id || !quantity) {
-      return res.status(400).json({ error: 'wo_id, warehouse_id, and quantity are required' });
-    }
-
     const userId = (req as any).user?.userId;
 
-    await dbTransaction(async (conn) => {
-      // 1. Lock and validate Work Order
-      const [woRows] = await conn.execute(
-        `SELECT w.*, p.name AS product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ? FOR UPDATE`, [wo_id]
-      );
-      const wo = woRows[0];
-      if (!wo) throw new Error('Work order not found');
+    // P0-DELTA-6: idempotency key is mandatory for FG receipt
+    if (!idempotency_key || typeof idempotency_key !== 'string') {
+      return res.status(400).json({ error: 'idempotency_key is required for FG receipt' });
+    }
 
-      // Validate WO status — must be in_progress or completed
-      const allowedStatuses = ['in_progress', 'completed', 'IN_PROGRESS', 'COMPLETED'];
-      if (!allowedStatuses.includes(wo.status)) {
-        throw new Error(`Cannot receive FG for WO with status '${wo.status}'. WO must be in_progress or completed.`);
-      }
-
-      // 2. Idempotency check — prevent double-click creating duplicate receipts
-      if (idempotency_key) {
-        const [dupRows] = await conn.execute(
-          `SELECT id FROM stock_movements WHERE reference_type = 'fg_receipt' AND reference_id = ? AND notes LIKE ?`,
-          [wo_id, `%${idempotency_key}%`]
-        );
-        if (dupRows.length > 0) {
-          throw new Error('Duplicate receipt detected. This FG receipt has already been processed.');
-        }
-      }
-
-      // 3. QC GATE — asked of the module that actually owns the answer.
-      //
-      // This used to read `wo_results.qc_status = 'passed'`, and that column is
-      // written by nothing except the Production yield endpoints. So the gate
-      // was asking Production whether Production's own output had passed QC.
-      // Once that field was correctly locked (see PUT /yield/:id), NOTHING in
-      // the system could ever set it to 'passed' — the gate would have been
-      // unsatisfiable and FG receipt permanently impossible. Locking the field
-      // and keeping this query would have deadlocked the plant.
-      //
-      // wo_qc_checkpoints is the real record: qc.routes.ts resolves an FPA and
-      // writes passed/failed there. Same predicate the `complete` endpoint
-      // already enforces, so the two gates cannot drift apart.
-      const [qcRows] = await conn.execute(
-        `SELECT COUNT(*) AS total,
-                SUM(CASE WHEN is_mandatory = 1 AND status NOT IN ('passed') THEN 1 ELSE 0 END) AS pending_mandatory
-         FROM wo_qc_checkpoints WHERE wo_id = ?`,
-        [wo_id]
-      );
-      const qcTotal = Number(qcRows[0]?.total || 0);
-      const qcPendingMandatory = Number(qcRows[0]?.pending_mandatory || 0);
-      // No checkpoint at all is not "QC clean", it is "QC never happened".
-      // Receiving finished goods on that basis is precisely the negative flow
-      // the review requires rejected, and refusing keeps this gate at least as
-      // strict as the one it replaces rather than quietly loosening it.
-      if (qcTotal === 0) {
-        throw new Error('Cannot receive FG: this WO has no QC checkpoints. Generate QC checkpoints and complete inspection first.');
-      }
-      if (qcPendingMandatory > 0) {
-        throw new Error(`Cannot receive FG: ${qcPendingMandatory} mandatory QC checkpoint(s) not passed. Complete QC inspection first.`);
-      }
-
-      // Actual output, from wo_results. Planned quantity is NOT the ceiling —
-      // a WO planned at 1,000 that yielded 820 with 180 scrap may receive 820,
-      // never 1,000 and never the old `planned * 1.1`.
-      const [yieldRows] = await conn.execute(
-        `SELECT COALESCE(SUM(output_quantity), 0) as total_output FROM wo_results WHERE wo_id = ?`,
-        [wo_id]
-      );
-      const maxReceivable = Number(yieldRows[0]?.total_output || 0);
-      if (maxReceivable === 0) {
-        throw new Error('Cannot receive FG: no yield recorded for this WO. Record actual output first.');
-      }
-
-      const [existingReceipts] = await conn.execute(
-        `SELECT COALESCE(SUM(quantity), 0) as total_received FROM stock_movements 
-         WHERE reference_type = 'fg_receipt' AND reference_id = ? AND movement_type = 'in'`,
-        [wo_id]
-      );
-      const alreadyReceived = Number(existingReceipts[0]?.total_received || 0);
-      if (alreadyReceived + quantity > maxReceivable) {
-        throw new Error(`Total receipt (${alreadyReceived + quantity}) exceeds actual accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
-      }
-
-      // 4. Update inventory stock (with row lock)
-      const [stockRows] = await conn.execute(
-        'SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = \'available\' FOR UPDATE',
-        [wo.product_id, warehouse_id]
-      );
-      if (stockRows[0]) {
-        await conn.execute(
-          'UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
-          [quantity, stockRows[0].id]
-        );
-      } else {
-        await conn.execute(
-          'INSERT INTO inventory_stocks (warehouse_id, product_id, quantity) VALUES (?, ?, ?)',
-          [warehouse_id, wo.product_id, quantity]
-        );
-      }
-
-      // 5. Record stock movement
-      const receiptNotes = `FG receipt from ${wo.wo_number || 'WO-' + wo_id}${idempotency_key ? ' [key:' + idempotency_key + ']' : ''}`;
-      await conn.execute(
-        `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, reference_id, notes, created_by)
-         VALUES (?, ?, ?, 'in', ?, 'fg_receipt', ?, ?, ?)`,
-        [warehouse_id, wo.product_id, batch_number || null, quantity, wo_id, receiptNotes, userId]
-      );
-
-      // 6. Update WO completed_quantity
-      await conn.execute(
-        'UPDATE work_orders SET completed_quantity = COALESCE(completed_quantity, 0) + ? WHERE id = ?',
-        [quantity, wo_id]
-      );
-
-      // 7. Create batch if batch_number provided
-      if (batch_number) {
-        const [batchRows] = await conn.execute('SELECT id FROM batches WHERE batch_number = ?', [batch_number]);
-        if (batchRows.length === 0) {
-          await conn.execute(
-            `INSERT INTO batches (batch_number, product_id, quantity, manufacture_date, status, warehouse_id)
-             VALUES (?, ?, ?, CURDATE(), 'released', ?)`,
-            [batch_number, wo.product_id, quantity, warehouse_id]
-          );
-        }
-      }
+    const result = await postFinishedGoods({
+      woId: wo_id,
+      warehouseId: warehouse_id,
+      quantity,
+      batchNumber: batch_number,
+      idempotencyKey: idempotency_key,
+      userId
     });
 
-    res.json({ success: true, message: 'FG received into warehouse' });
+    res.json(result);
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
     console.error('Error receiving FG:', error);
     const msg = error.message || 'Failed to receive FG';
-    const status = msg.includes('Cannot receive') || msg.includes('exceed') || msg.includes('Duplicate') ? 400 : 500;
+    const status = msg.includes('Cannot receive') || msg.includes('exceed') || msg.includes('Duplicate') || msg.includes('required') ? 400 : 500;
     res.status(status).json({ error: msg });
   }
 });
@@ -1480,18 +1553,20 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
     const materials = await dbAll(`
       SELECT p.id AS material_id, p.name AS material_name, p.sku AS material_sku,
              COALESCE(u.name, 'pcs') AS uom_name,
-             COALESCE(inv.total_qty, 0) AS stock_available,
+             COALESCE(mms.first_stock, inv.total_qty, 0) AS stock_available,
              COALESCE(req.total_required, 0) AS total_required,
-             GREATEST(COALESCE(req.total_required, 0) - COALESCE(inv.total_qty, 0), 0) AS total_shortage
+             GREATEST(COALESCE(req.total_required, 0) - COALESCE(mms.first_stock, inv.total_qty, 0), 0) AS total_shortage
       FROM products p
       LEFT JOIN uom u ON p.unit_of_measure_id = u.id
       LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks WHERE status = 'available' GROUP BY product_id) inv ON inv.product_id = p.id
+      LEFT JOIN mrp_material_settings mms ON mms.material_id = p.id
       JOIN (
-        SELECT bd.raw_material_id AS product_id, SUM(bd.quantity * wo.quantity) AS total_required
+        SELECT bd.raw_material_id AS product_id, SUM(bd.quantity * wo.quantity / bh.qty) AS total_required
         FROM work_orders wo
-        JOIN bom_details bd ON bd.bom_header_id = wo.bom_id
+        JOIN bom_headers bh ON wo.bom_id = bh.id
+        JOIN bom_details bd ON bd.bom_header_id = bh.id
         WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
-          AND wo.bom_id IS NOT NULL
+          AND wo.bom_id IS NOT NULL AND bh.qty > 0
         GROUP BY bd.raw_material_id
       ) req ON req.product_id = p.id
       ORDER BY total_shortage DESC, total_required DESC
@@ -1538,15 +1613,17 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
     const woMaterials = await dbAll(`
       SELECT wo.id AS wo_id, bd.raw_material_id AS material_id,
              p.name AS material_name,
-             bd.quantity * wo.quantity AS required,
-             COALESCE(inv.total_qty, 0) AS available,
-             GREATEST(bd.quantity * wo.quantity - COALESCE(inv.total_qty, 0), 0) AS shortage
+             bd.quantity * wo.quantity / bh.qty AS required,
+             COALESCE(mms.first_stock, inv.total_qty, 0) AS available,
+             GREATEST(bd.quantity * wo.quantity / bh.qty - COALESCE(mms.first_stock, inv.total_qty, 0), 0) AS shortage
       FROM work_orders wo
-      JOIN bom_details bd ON bd.bom_header_id = wo.bom_id
+      JOIN bom_headers bh ON wo.bom_id = bh.id
+      JOIN bom_details bd ON bd.bom_header_id = bh.id
       JOIN products p ON p.id = bd.raw_material_id
       LEFT JOIN (SELECT product_id, SUM(quantity) AS total_qty FROM inventory_stocks WHERE status = 'available' GROUP BY product_id) inv ON inv.product_id = bd.raw_material_id
+      LEFT JOIN mrp_material_settings mms ON mms.material_id = bd.raw_material_id
       WHERE YEAR(wo.scheduled_start) = ? AND wo.status NOT IN ('cancelled', 'completed', 'closed')
-        AND wo.bom_id IS NOT NULL
+        AND wo.bom_id IS NOT NULL AND bh.qty > 0
       ORDER BY shortage DESC
     `, [year]) as any[];
 

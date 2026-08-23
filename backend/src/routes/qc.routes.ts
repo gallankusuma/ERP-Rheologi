@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
-import { resolveAndSync, evaluateAllResults, evaluateResult, syncCheckpoint, finalizeQcApproval } from '../services/qc.service';
+import { resolveAndSync, evaluateAllResults, evaluateResult, syncCheckpoint, syncCheckpointTx, finalizeQcApproval } from '../services/qc.service';
+import { logQcEvent } from '../services/qc-audit.service';
+import { respondWithDomainError } from '../errors/domain.error';
 
 const router = Router();
 
@@ -218,6 +220,8 @@ router.post('/specs', authMiddleware, requirePermission('quality.qc-master', 'cr
     );
     res.status(201).json({ success: true, message: 'Spec created', id: result.insertId });
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
     console.error('Spec creation error:', error?.message || error);
     res.status(500).json({ success: false, error: 'Failed to create spec', detail: error?.message });
   }
@@ -258,7 +262,7 @@ router.get('/fpa', authMiddleware, async (req: Request, res: Response) => {
       LEFT JOIN products p ON f.product_id = p.id
       LEFT JOIN qc_sampling_areas a ON f.sampling_area_id = a.id
       LEFT JOIN users u ON f.created_by = u.id
-      ORDER BY f.created_at DESC
+      ORDER BY f.reference_number DESC, f.created_at DESC
     `);
     res.json({ success: true, data });
   } catch (error) {
@@ -305,6 +309,8 @@ router.post('/fpa', authMiddleware, requirePermission('quality.qc-fpa', 'create'
     
     res.status(201).json({ success: true, message: 'FPA created', id: result.insertId, fpa_number });
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
     console.error('FPA creation error:', error?.message || error);
     res.status(500).json({ success: false, error: 'Failed to create FPA', detail: error?.message });
   }
@@ -385,6 +391,14 @@ router.put('/fpa/:id/results', authMiddleware, requirePermission('quality.qc-fpa
   try {
     const { results, status, analysis_notes, data_complete } = req.body;
     const fpaId = Number(req.params.id);
+
+    // terminal state guard: approved/released/rejected FPAs are immutable
+    const fpaCheck = await dbGet('SELECT status, approved_by_2 FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
+    if (!fpaCheck) return res.status(404).json({ success: false, error: 'FPA not found' });
+    const TERMINAL = ['Approved', 'Released', 'Rejected'];
+    if (TERMINAL.includes(fpaCheck.status) || fpaCheck.approved_by_2) {
+      return res.status(422).json({ success: false, error: 'Cannot edit a finalized FPA', code: 'FPA_TERMINAL' });
+    }
     
     // update FPA status fields
     const updateFields: string[] = [];
@@ -401,17 +415,20 @@ router.put('/fpa/:id/results', authMiddleware, requirePermission('quality.qc-fpa
     // update individual results with server-side pass/fail evaluation
     if (results && Array.isArray(results)) {
       for (const r of results) {
-        // load snapshot values for server-side evaluation (uses pinned data, not live master)
+        // load snapshot values bound to this FPA — reject foreign result IDs
         const existing = await dbGet(
-          'SELECT min_value, max_value, standard_value, param_type FROM qc_analysis_results WHERE id = ?', [r.id]
+          'SELECT min_value, max_value, standard_value, param_type FROM qc_analysis_results WHERE id = ? AND fpa_id = ?', [r.id, fpaId]
         ) as any;
+        if (!existing) {
+          return res.status(422).json({ success: false, error: `Result ${r.id} does not belong to FPA ${fpaId}`, code: 'RESULT_FPA_MISMATCH' });
+        }
         
         // use pinned param_type from snapshot
-        const paramType = existing?.param_type || 'quantitative';
+        const paramType = existing.param_type || 'quantitative';
         
         // compute is_pass server-side
         let isPass = r.is_pass;
-        if (existing && r.actual_value !== null && r.actual_value !== undefined && r.actual_value !== '') {
+        if (r.actual_value !== null && r.actual_value !== undefined && r.actual_value !== '') {
           const serverPass = evaluateResult(
             r.actual_value,
             existing.min_value, existing.max_value,
@@ -422,17 +439,21 @@ router.put('/fpa/:id/results', authMiddleware, requirePermission('quality.qc-fpa
         
         await dbRun(
           `UPDATE qc_analysis_results SET instrument_id=?, actual_value=?, is_pass=?,
-           saplo=?, duplo=?, analyst_id=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+           saplo=?, duplo=?, analyst_id=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND fpa_id=?`,
           [r.instrument_id || null, r.actual_value ?? null,
            isPass === undefined ? null : isPass,
            r.saplo ?? null, r.duplo ?? null,
-           r.analyst_id || null, r.notes || null, r.id]
+           r.analyst_id || null, r.notes || null, r.id, fpaId]
         );
       }
     }
 
     // resolve canonical status and sync checkpoint
     await resolveAndSync(fpaId);
+
+    // audit: results saved
+    const actorId = (req as any).user?.userId || null;
+    logQcEvent(fpaId, 'results_saved', actorId, { status, data_complete, resultCount: results?.length || 0 });
     
     res.json({ success: true, message: 'FPA updated' });
   } catch (error) {
@@ -504,11 +525,102 @@ router.put('/fpa/:id/approve', authMiddleware, requirePermission('quality.qc-fpa
     const result = await finalizeQcApproval({ fpaId, userId, reviewNotes: review_notes });
     res.json({ success: true, message: result.message });
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
     if (error.message?.includes('not found')) return res.status(404).json({ success: false, error: error.message });
     if (error.message?.includes('must be completed') || error.message?.includes('Cannot approve') || error.message?.includes('Cannot release')) {
       return res.status(400).json({ success: false, error: error.message });
     }
     res.status(500).json({ success: false, error: 'Failed to approve FPA' });
+  }
+});
+// disposition workflow: link failed FPA to NCR/Rework
+router.put('/fpa/:id/disposition', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
+  try {
+    const fpaId = Number(req.params.id);
+    const userId = (req as any).user?.userId || null;
+    const { action, notes } = req.body;
+
+    const validActions = ['rework', 'use_as_is', 'reject_vendor', 'disposal'];
+    if (!validActions.includes(action)) {
+      return res.status(400).json({ success: false, error: `Invalid disposition action. Must be one of: ${validActions.join(', ')}` });
+    }
+
+    const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
+    if (!fpa) return res.status(404).json({ success: false, error: 'FPA not found' });
+
+    // only failed/rejected FPAs can have disposition
+    if (fpa.result !== 'Failed' && fpa.status !== 'Rejected') {
+      return res.status(422).json({ success: false, error: 'Disposition only applies to failed/rejected FPAs', code: 'NOT_FAILED' });
+    }
+    if (fpa.disposition && fpa.disposition !== 'Pending') {
+      return res.status(422).json({ success: false, error: `Disposition already set to: ${fpa.disposition}`, code: 'ALREADY_DISPOSED' });
+    }
+
+    let ncrId: number | null = null;
+    let reworkId: number | null = null;
+    const dispositionLabel = ({ rework: 'Rework', use_as_is: 'Use As Is', reject_vendor: 'Vendor Claim', disposal: 'Disposal' } as Record<string, string>)[action];
+
+    await dbTransaction(async (conn: any) => {
+      // update FPA disposition
+      await conn.execute(
+        'UPDATE qc_analysis_requests SET disposition = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [dispositionLabel, fpaId]
+      );
+
+      // auto-create NCR for rework/reject_vendor/disposal
+      if (action !== 'use_as_is') {
+        const now = new Date();
+        const ncrNumber = `NCR-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+        const category = action === 'reject_vendor' ? 'vendor' : 'product';
+        const severity = action === 'disposal' ? 'critical' : 'major';
+
+        const [ncrResult] = await conn.execute(
+          `INSERT INTO qc_ncr (ncr_number, product_id, category, severity, description, status, reported_by, source_fpa_id, source_type)
+           VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'disposition')`,
+          [ncrNumber, fpa.product_id, category, severity,
+           `Auto-generated from FPA ${fpa.fpa_number} disposition: ${dispositionLabel}. ${notes || ''}`,
+           userId, fpaId]
+        );
+        ncrId = ncrResult.insertId;
+
+        // auto-create rework order for 'rework' action
+        if (action === 'rework') {
+          const rwNumber = `RW-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+          const [rwResult] = await conn.execute(
+            `INSERT INTO qc_rework_orders (rework_number, ncr_id, product_id, wo_id, quantity, description, instructions, status, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+            [rwNumber, ncrId, fpa.product_id, fpa.wo_id || null,
+             fpa.quantity || 0,
+             `Rework for FPA ${fpa.fpa_number}`,
+             notes || null, userId]
+          );
+          reworkId = rwResult.insertId;
+        }
+
+        // for disposal, update batch status
+        if (action === 'disposal' && fpa.batch_no) {
+          await conn.execute(
+            "UPDATE batches SET qc_status = 'disposed' WHERE batch_number = ?",
+            [fpa.batch_no]
+          );
+        }
+      }
+    });
+
+    logQcEvent(fpaId, 'disposition', userId, { action, dispositionLabel, ncrId, reworkId, notes });
+
+    res.json({
+      success: true,
+      message: `Disposition '${dispositionLabel}' applied`,
+      ncr_id: ncrId,
+      rework_id: reworkId
+    });
+  } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
+    console.error('Disposition error:', error);
+    res.status(500).json({ success: false, error: 'Failed to apply disposition' });
   }
 });
 
@@ -518,21 +630,39 @@ router.put('/fpa/:id/reject', authMiddleware, requirePermission('quality.qc-fpa'
     const userId = (req as any).user?.userId || null;
     const fpaId = Number(req.params.id);
     const { review_notes } = req.body;
-    await dbRun(
-      `UPDATE qc_analysis_requests SET status = 'Rejected', result = 'Failed',
-       reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [userId, review_notes || null, fpaId]
-    );
-    const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
-    if (fpa && fpa.batch_no) {
-      await dbRun('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['failed', fpa.batch_no]);
-    }
-    // explicitly sync failed to checkpoint
-    await syncCheckpoint(fpaId, 'failed');
 
+    // P0-PQ-3: enforce state machine — finalized FPAs are immutable
+    await dbTransaction(async (conn: any) => {
+      const [fpaRows] = await conn.execute(
+        'SELECT * FROM qc_analysis_requests WHERE id = ? FOR UPDATE', [fpaId]
+      );
+      const fpa = fpaRows[0];
+      if (!fpa) throw new Error('FPA not found');
+      if (fpa.approved_by_2) {
+        throw new Error('Cannot reject a finalized FPA. QC release has already been processed.');
+      }
+
+      await conn.execute(
+        `UPDATE qc_analysis_requests SET status = 'Rejected', result = 'Failed',
+         reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [userId, review_notes || null, fpaId]
+      );
+
+      if (fpa.batch_no) {
+        await conn.execute('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['failed', fpa.batch_no]);
+      }
+
+      // checkpoint sync inside transaction to prevent partial state
+      await syncCheckpointTx(conn, fpaId, 'failed');
+    });
+    logQcEvent(fpaId, 'rejected', userId, { review_notes });
     res.json({ success: true, message: 'FPA rejected' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to reject FPA' });
+  } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
+    const msg = error.message || 'Failed to reject FPA';
+    const status = msg.includes('finalized') ? 400 : 500;
+    res.status(status).json({ success: false, error: msg });
   }
 });
 
@@ -542,16 +672,34 @@ router.put('/fpa/:id/resample', authMiddleware, requirePermission('quality.qc-fp
     const userId = (req as any).user?.userId || null;
     const fpaId = Number(req.params.id);
     const { review_notes } = req.body;
-    await dbRun(
-      `UPDATE qc_analysis_requests SET status = 'Resampling', needs_resampling = 1,
-       reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [userId, review_notes || null, fpaId]
-    );
-    // explicitly sync pending to checkpoint
-    await syncCheckpoint(fpaId, 'pending');
+
+    // P0-PQ-3: enforce state machine — finalized FPAs are immutable
+    await dbTransaction(async (conn: any) => {
+      const [fpaRows] = await conn.execute(
+        'SELECT * FROM qc_analysis_requests WHERE id = ? FOR UPDATE', [fpaId]
+      );
+      const fpa = fpaRows[0];
+      if (!fpa) throw new Error('FPA not found');
+      if (fpa.approved_by_2) {
+        throw new Error('Cannot resample a finalized FPA. QC release has already been processed.');
+      }
+
+      await conn.execute(
+        `UPDATE qc_analysis_requests SET status = 'Resampling', needs_resampling = 1,
+         reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [userId, review_notes || null, fpaId]
+      );
+
+      // checkpoint sync inside transaction to prevent partial state
+      await syncCheckpointTx(conn, fpaId, 'pending');
+    });
     res.json({ success: true, message: 'FPA sent for resampling' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to resample FPA' });
+  } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
+    const msg = error.message || 'Failed to resample FPA';
+    const status = msg.includes('finalized') ? 400 : 500;
+    res.status(status).json({ success: false, error: msg });
   }
 });
 
@@ -578,25 +726,38 @@ router.put('/fpa/:id/receive-sample', authMiddleware, requirePermission('quality
       `UPDATE qc_analysis_requests SET status = 'Sample Diterima', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [req.params.id]
     );
+    const sampleUserId = (req as any).user?.userId || null;
+    logQcEvent(Number(req.params.id), 'sample_received', sampleUserId, {});
     res.json({ success: true, message: 'Sample received' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to receive sample' });
   }
 });
 
-// P0-3: approve level 1
+// approve level 1 with SoD constraint
 router.put('/fpa/:id/approve-1', authMiddleware, requirePermission('quality.qc-fpa', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId || null;
+    const userLevel = (req as any).user?.userLevel;
     const fpaId = Number(req.params.id);
     const fpa = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [fpaId]) as any;
     if (!fpa) return res.status(404).json({ success: false, error: 'FPA not found' });
     if (!fpa.data_complete) return res.status(400).json({ success: false, error: 'Data not complete — cannot approve' });
-    
+
+    // terminal state guard
+    if (fpa.approved_by_2) return res.status(422).json({ success: false, error: 'FPA already finalized', code: 'FPA_TERMINAL' });
+    if (fpa.approved_by_1) return res.status(422).json({ success: false, error: 'Approve #1 already done' });
+
+    // SoD: analyst/creator cannot be approver-1 (founder bypass)
+    if (userLevel !== 1 && fpa.created_by === userId) {
+      return res.status(403).json({ success: false, error: 'Segregation of duties: FPA creator cannot be approver', code: 'SOD_VIOLATION' });
+    }
+
     await dbRun(
       `UPDATE qc_analysis_requests SET approved_by_1 = ?, approved_at_1 = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [userId, fpaId]
     );
+    logQcEvent(fpaId, 'approve_l1', userId, { fpa_number: fpa.fpa_number });
     res.json({ success: true, message: 'Approve #1 completed' });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to approve #1' });
@@ -612,11 +773,15 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
     const result = await finalizeQcApproval({ fpaId, userId, reviewNotes: null });
     res.json({ success: true, message: result.message });
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
+    console.error('Approve-2 error:', error.message || error);
     if (error.message?.includes('not found')) return res.status(404).json({ success: false, error: error.message });
-    if (error.message?.includes('must be completed') || error.message?.includes('Cannot approve') || error.message?.includes('Cannot release')) {
+    if (error.message?.includes('must be completed') || error.message?.includes('Cannot approve') || error.message?.includes('Cannot release')
+        || error.message?.includes('Segregation') || error.message?.includes('QC_') || error.message?.includes('invalid quantity')) {
       return res.status(400).json({ success: false, error: error.message });
     }
-    res.status(500).json({ success: false, error: 'Failed to approve #2' });
+    res.status(500).json({ success: false, error: error.message || 'Failed to approve #2' });
   }
 });
 
@@ -624,71 +789,106 @@ router.put('/fpa/:id/approve-2', authMiddleware, requirePermission('quality.qc-f
 router.post('/fpa/:id/new-run', authMiddleware, requirePermission('quality.qc-fpa', 'create'), async (req: Request, res: Response) => {
   try {
     const parentId = Number(req.params.id);
-    const parent = await dbGet('SELECT * FROM qc_analysis_requests WHERE id = ?', [parentId]) as any;
-    if (!parent) return res.status(404).json({ success: false, error: 'Parent FPA not found' });
-    
     const userId = (req as any).user?.userId || null;
-    const newRun = (parent.sampling_run || 1) + 1;
-    const fpaNumber = generateFPANumber(parent.type || 'LP');
-    const rootId = parent.parent_fpa_id || parent.id;
-    
-    // mark parent as needs_resampling
-    await dbRun(
-      'UPDATE qc_analysis_requests SET needs_resampling = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [parentId]
-    );
-    
-    // create child FPA
-    const result = await dbRun(
-      `INSERT INTO qc_analysis_requests
-       (fpa_number, type, reference_id, reference_number, product_id, sampling_area_id,
-        batch_no, quantity, supplier_id, notes, created_by, wo_id, sampling_run, parent_fpa_id,
-        specification_doc, sampling_point, sampling_qty, sampling_unit, process_type, sample_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [fpaNumber, parent.type, parent.reference_id, parent.reference_number, parent.product_id,
-       parent.sampling_area_id, parent.batch_no, parent.quantity, parent.supplier_id,
-       `Resampling run #${newRun} from ${parent.fpa_number}`, userId, parent.wo_id,
-       newRun, rootId, parent.specification_doc, parent.sampling_point,
-       parent.sampling_qty, parent.sampling_unit, parent.process_type, parent.sample_type]
-    );
-    
-    // P0-F: copy full spec snapshot from parent including is_required and param_type
-    const parentResults = await dbAll(
-      'SELECT parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type FROM qc_analysis_results WHERE fpa_id = ?',
-      [parentId]
-    ) as any[];
-    for (const pr of parentResults) {
-      await dbRun(
-        `INSERT INTO qc_analysis_results
-         (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [result.insertId, pr.parameter_id, pr.method_id, pr.standard_value,
-         pr.min_value, pr.max_value, pr.uom, pr.qc_type, pr.specification_id,
-         pr.is_required !== undefined ? pr.is_required : 1,
-         pr.param_type || 'quantitative']
+
+    let newRunResult: { id: number; fpaNumber: string; run: number } | null = null;
+
+    // P0-PQ-5: all resampling operations in one atomic transaction
+    await dbTransaction(async (conn: any) => {
+      // lock parent FPA
+      const [parentRows] = await conn.execute(
+        'SELECT * FROM qc_analysis_requests WHERE id = ? FOR UPDATE', [parentId]
       );
-    }
-    
-    // P0-B: re-point checkpoint from parent/root to new child FPA
-    const checkpointRoot = parent.parent_fpa_id || parentId;
-    await dbRun(
-      `UPDATE wo_qc_checkpoints SET fpa_id = ?, status = 'pending', resolved_at = NULL
-       WHERE fpa_id = ?`,
-      [result.insertId, checkpointRoot]
-    );
-    // also check if checkpoint was on direct parent
-    if (checkpointRoot !== parentId) {
-      await dbRun(
-        `UPDATE wo_qc_checkpoints SET fpa_id = ?, status = 'pending', resolved_at = NULL
-         WHERE fpa_id = ?`,
-        [result.insertId, parentId]
+      const parent = parentRows[0];
+      if (!parent) throw new Error('Parent FPA not found');
+
+      // P0-PQ-3: cannot resample a finalized FPA
+      if (parent.approved_by_2) {
+        throw new Error('Cannot resample a finalized FPA. QC release has already been processed.');
+      }
+
+      const newRun = (parent.sampling_run || 1) + 1;
+      const fpaNumber = generateFPANumber(parent.type || 'LP');
+      const rootId = parent.parent_fpa_id || parent.id;
+
+      // mark parent as needs_resampling
+      await conn.execute(
+        'UPDATE qc_analysis_requests SET needs_resampling = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [parentId]
       );
-    }
-    
-    res.status(201).json({ success: true, message: `Resampling run #${newRun} created`, id: result.insertId, fpa_number: fpaNumber });
+
+      // create child FPA with lot_id from parent
+      const [result] = await conn.execute(
+        `INSERT INTO qc_analysis_requests
+         (fpa_number, type, reference_id, reference_number, product_id, sampling_area_id,
+          batch_no, quantity, supplier_id, notes, created_by, wo_id, sampling_run, parent_fpa_id,
+          specification_doc, sampling_point, sampling_qty, sampling_unit, process_type, sample_type, lot_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [fpaNumber, parent.type, parent.reference_id, parent.reference_number, parent.product_id,
+         parent.sampling_area_id, parent.batch_no, parent.quantity, parent.supplier_id,
+         `Resampling run #${newRun} from ${parent.fpa_number}`, userId, parent.wo_id,
+         newRun, rootId, parent.specification_doc, parent.sampling_point,
+         parent.sampling_qty, parent.sampling_unit, parent.process_type, parent.sample_type,
+         parent.lot_id || null]
+      );
+      const childId = result.insertId;
+
+      // copy spec snapshot from parent
+      const [parentResults] = await conn.execute(
+        'SELECT parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type FROM qc_analysis_results WHERE fpa_id = ?',
+        [parentId]
+      );
+      for (const pr of (parentResults as any[])) {
+        await conn.execute(
+          `INSERT INTO qc_analysis_results
+           (fpa_id, parameter_id, method_id, standard_value, min_value, max_value, uom, qc_type, specification_id, is_required, param_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [childId, pr.parameter_id, pr.method_id, pr.standard_value,
+           pr.min_value, pr.max_value, pr.uom, pr.qc_type, pr.specification_id,
+           pr.is_required !== undefined ? pr.is_required : 1,
+           pr.param_type || 'quantitative']
+        );
+      }
+
+      // re-point checkpoint from parent/root to new child FPA
+      const checkpointRoot = parent.parent_fpa_id || parentId;
+      await conn.execute(
+        `UPDATE wo_qc_checkpoints SET fpa_id = ?, status = 'pending', resolved_at = NULL WHERE fpa_id = ?`,
+        [childId, checkpointRoot]
+      );
+      if (checkpointRoot !== parentId) {
+        await conn.execute(
+          `UPDATE wo_qc_checkpoints SET fpa_id = ?, status = 'pending', resolved_at = NULL WHERE fpa_id = ?`,
+          [childId, parentId]
+        );
+      }
+
+      newRunResult = { id: childId, fpaNumber, run: newRun };
+    });
+
+    res.status(201).json({ success: true, message: `Resampling run #${newRunResult!.run} created`, id: newRunResult!.id, fpa_number: newRunResult!.fpaNumber });
   } catch (error: any) {
+    // domain errors carry their own status and code
+    if (respondWithDomainError(error, res)) return;
     console.error('Error creating resample:', error);
     res.status(500).json({ success: false, error: 'Failed to create resampling run' });
+  }
+});
+
+// audit log for FPA
+router.get('/fpa/:id/audit-log', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const logs = await dbAll(
+      `SELECT l.*, u.full_name as actor_name
+       FROM qc_audit_log l
+       LEFT JOIN users u ON l.actor_id = u.id
+       WHERE l.fpa_id = ?
+       ORDER BY l.created_at ASC`,
+      [req.params.id]
+    );
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch audit log' });
   }
 });
 
