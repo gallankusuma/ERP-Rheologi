@@ -12,10 +12,10 @@ CREATE TABLE departments (
   id INT PRIMARY KEY AUTO_INCREMENT,
   name VARCHAR(100) NOT NULL UNIQUE,
   description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Roles
 DROP TABLE IF EXISTS roles;
@@ -23,9 +23,9 @@ CREATE TABLE roles (
   id INT PRIMARY KEY AUTO_INCREMENT,
   name VARCHAR(100) NOT NULL UNIQUE,
   description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Permissions
 DROP TABLE IF EXISTS permissions;
@@ -34,10 +34,10 @@ CREATE TABLE permissions (
   resource VARCHAR(100) NOT NULL,
   action VARCHAR(50) NOT NULL,
   description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_resource_action (resource, action),
   INDEX idx_resource (resource)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Role Permissions
 DROP TABLE IF EXISTS role_permissions;
@@ -45,12 +45,12 @@ CREATE TABLE role_permissions (
   id INT PRIMARY KEY AUTO_INCREMENT,
   role_id INT NOT NULL,
   permission_id INT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_role_permission (role_id, permission_id),
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
   FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE,
   INDEX idx_role_id (role_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Users
 DROP TABLE IF EXISTS users;
@@ -64,14 +64,14 @@ CREATE TABLE users (
   department_id INT,
   is_active BOOLEAN DEFAULT true,
   last_login TIMESTAMP NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE SET NULL,
   FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
   INDEX idx_username (username),
   INDEX idx_email (email),
   INDEX idx_is_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Categories
 DROP TABLE IF EXISTS categories;
@@ -80,10 +80,10 @@ CREATE TABLE categories (
   name VARCHAR(100) NOT NULL UNIQUE,
   description TEXT,
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Unit of Measure
 DROP TABLE IF EXISTS uom;
@@ -94,10 +94,10 @@ CREATE TABLE uom (
   description TEXT,
   category VARCHAR(50),
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_code (code),
   INDEX idx_category (category)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Product Types
 DROP TABLE IF EXISTS product_types;
@@ -107,9 +107,9 @@ CREATE TABLE product_types (
   name VARCHAR(100) NOT NULL,
   description TEXT,
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_code (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Products
 DROP TABLE IF EXISTS products;
@@ -124,15 +124,15 @@ CREATE TABLE products (
   standard_cost DECIMAL(15,2) DEFAULT 0,
   reorder_point INT DEFAULT 0,
   active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (category_id) REFERENCES categories(id),
   FOREIGN KEY (product_type_id) REFERENCES product_types(id),
   FOREIGN KEY (unit_of_measure_id) REFERENCES uom(id),
   INDEX idx_sku (sku),
   INDEX idx_category_id (category_id),
   INDEX idx_active (active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- BOM Headers
 DROP TABLE IF EXISTS bom_headers;
@@ -141,19 +141,19 @@ CREATE TABLE bom_headers (
   product_name VARCHAR(255),
   product_id INT,
   version INT DEFAULT 1,
-  qty DECIMAL(15,4) NULL,
+  qty VARCHAR(50) NULL,
   unit VARCHAR(50) NULL,
   status VARCHAR(20) DEFAULT 'ACTIVE',
   notes TEXT,
   created_by INT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   INDEX idx_product_id (product_id),
   INDEX idx_status (status),
   INDEX idx_created_by (created_by)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- BOM Details
 DROP TABLE IF EXISTS bom_details;
@@ -164,12 +164,12 @@ CREATE TABLE bom_details (
   quantity DECIMAL(15,4) NOT NULL,
   unit_of_measure_id INT,
   sequence INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (bom_header_id) REFERENCES bom_headers(id) ON DELETE CASCADE,
   FOREIGN KEY (raw_material_id) REFERENCES products(id),
   FOREIGN KEY (unit_of_measure_id) REFERENCES uom(id),
   INDEX idx_bom_header_id (bom_header_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== WAREHOUSE & INVENTORY TABLES ======
 
@@ -182,10 +182,10 @@ CREATE TABLE warehouses (
   address VARCHAR(255),
   contact_person VARCHAR(255),
   is_active TINYINT DEFAULT 1,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_code (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Warehouse Locations
 DROP TABLE IF EXISTS warehouse_locations;
@@ -198,12 +198,12 @@ CREATE TABLE warehouse_locations (
   bin VARCHAR(50),
   capacity DECIMAL(10, 2),
   description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
   UNIQUE KEY unique_warehouse_location (warehouse_id, code),
   INDEX idx_warehouse_id (warehouse_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Inventory Stocks
 DROP TABLE IF EXISTS inventory_stocks;
@@ -215,14 +215,14 @@ CREATE TABLE inventory_stocks (
   status VARCHAR(20) NOT NULL DEFAULT 'available',
   grn_id INT NULL,
   reorder_point DECIMAL(15,4) DEFAULT 0,
-  last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
-  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+  last_updated TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT,
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
   UNIQUE KEY uq_wh_product_status_grn (warehouse_id, product_id, status, grn_id),
   INDEX idx_product_id (product_id),
   INDEX idx_quantity (quantity),
   INDEX idx_inv_grn_id (grn_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Stock Transactions
 DROP TABLE IF EXISTS stock_movements;
@@ -237,7 +237,7 @@ CREATE TABLE stock_movements (
   reference_id INT,
   notes TEXT,
   created_by INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
   FOREIGN KEY (product_id) REFERENCES products(id),
   FOREIGN KEY (created_by) REFERENCES users(id),
@@ -245,7 +245,7 @@ CREATE TABLE stock_movements (
   INDEX idx_warehouse_id (warehouse_id),
   INDEX idx_batch_number (batch_number),
   INDEX idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Batches
 DROP TABLE IF EXISTS batches;
@@ -258,13 +258,13 @@ CREATE TABLE batches (
   expiry_date DATE,
   status VARCHAR(50) DEFAULT 'ACTIVE',
   warehouse_id INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (product_id) REFERENCES products(id),
   FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
   INDEX idx_batch_number (batch_number),
   INDEX idx_product_id (product_id),
   INDEX idx_expiry_date (expiry_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== PROCUREMENT TABLES ======
 
@@ -282,11 +282,11 @@ CREATE TABLE vendors (
   country VARCHAR(100),
   payment_terms VARCHAR(100),
   is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_code (code),
   INDEX idx_is_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Purchase Requests
 DROP TABLE IF EXISTS purchase_requests;
@@ -299,13 +299,13 @@ CREATE TABLE purchase_requests (
   approved_by INT,
   approved_date TIMESTAMP NULL,
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (requestor_id) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
   INDEX idx_status (status),
   INDEX idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Purchase Request Items
 DROP TABLE IF EXISTS purchase_request_items;
@@ -319,7 +319,7 @@ CREATE TABLE purchase_request_items (
   FOREIGN KEY (purchase_request_id) REFERENCES purchase_requests(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_purchase_request_id (purchase_request_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Purchase Orders
 DROP TABLE IF EXISTS purchase_orders;
@@ -336,22 +336,22 @@ CREATE TABLE purchase_orders (
   approved_by INT,
   approved_date TIMESTAMP NULL,
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (pr_id) REFERENCES purchase_requests(id),
   FOREIGN KEY (vendor_id) REFERENCES vendors(id),
   FOREIGN KEY (approved_by) REFERENCES users(id),
   INDEX idx_po_number (po_number),
   INDEX idx_status (status),
   INDEX idx_vendor_id (vendor_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Purchase Order Items
 DROP TABLE IF EXISTS purchase_order_items;
 CREATE TABLE purchase_order_items (
   id INT PRIMARY KEY AUTO_INCREMENT,
   purchase_order_id INT NOT NULL,
-  product_id INT NOT NULL,
+  product_id INT NULL,
   quantity DECIMAL(15,4) NOT NULL,
   unit_price DECIMAL(15,2) NOT NULL,
   line_total DECIMAL(15,2),
@@ -360,7 +360,7 @@ CREATE TABLE purchase_order_items (
   FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_purchase_order_id (purchase_order_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Goods Receipts
 DROP TABLE IF EXISTS goods_receipts;
@@ -372,15 +372,15 @@ CREATE TABLE goods_receipts (
   received_date DATE NOT NULL,
   received_by INT,
   status VARCHAR(50) DEFAULT 'DRAFT',
-  notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  notes LONGTEXT,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
   FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
   FOREIGN KEY (received_by) REFERENCES users(id),
   INDEX idx_grn_number (grn_number),
   INDEX idx_po_id (po_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- GRN Items
 DROP TABLE IF EXISTS grn_items;
@@ -395,7 +395,7 @@ CREATE TABLE grn_items (
   FOREIGN KEY (grn_id) REFERENCES goods_receipts(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_grn_id (grn_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== PRODUCTION TABLES ======
 
@@ -414,14 +414,14 @@ CREATE TABLE work_orders (
   actual_end DATE,
   notes TEXT,
   created_by INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (product_id) REFERENCES products(id),
   FOREIGN KEY (bom_id) REFERENCES bom_headers(id),
   FOREIGN KEY (created_by) REFERENCES users(id),
   INDEX idx_status (status),
   INDEX idx_product_id (product_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- WO Materials
 DROP TABLE IF EXISTS wo_materials;
@@ -440,7 +440,7 @@ CREATE TABLE wo_materials (
   FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
   FOREIGN KEY (issued_by) REFERENCES users(id),
   INDEX idx_wo_id (wo_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- WO Process Logs
 DROP TABLE IF EXISTS wo_process_logs;
@@ -454,11 +454,11 @@ CREATE TABLE wo_process_logs (
   status VARCHAR(50),
   notes TEXT,
   recorded_by INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (wo_id) REFERENCES work_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (recorded_by) REFERENCES users(id),
   INDEX idx_wo_id (wo_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- WO Results
 DROP TABLE IF EXISTS wo_results;
@@ -479,7 +479,7 @@ CREATE TABLE wo_results (
   FOREIGN KEY (completed_by) REFERENCES users(id),
   UNIQUE KEY unique_wo_result (wo_id),
   INDEX idx_batch_number (batch_number)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Production Events
 DROP TABLE IF EXISTS production_events;
@@ -491,11 +491,11 @@ CREATE TABLE production_events (
   event_date DATE NOT NULL,
   event_time TIME,
   location VARCHAR(150),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_event_date (event_date),
   INDEX idx_type (type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Production Tasks
 DROP TABLE IF EXISTS production_tasks;
@@ -508,13 +508,13 @@ CREATE TABLE production_tasks (
   due_date DATE,
   status VARCHAR(50) DEFAULT 'pending',
   description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (wo_id) REFERENCES work_orders(id),
   FOREIGN KEY (assigned_to_user_id) REFERENCES users(id),
   INDEX idx_status (status),
   INDEX idx_due_date (due_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== QUALITY TABLES ======
 
@@ -528,10 +528,10 @@ CREATE TABLE qc_tests (
   test_type VARCHAR(100),
   test_method TEXT,
   acceptance_criteria TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_code (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- QC Results
 DROP TABLE IF EXISTS qc_results;
@@ -545,14 +545,14 @@ CREATE TABLE qc_results (
   test_date DATE,
   tested_by INT,
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (qc_test_id) REFERENCES qc_tests(id),
   FOREIGN KEY (batch_id) REFERENCES batches(id),
   FOREIGN KEY (wo_id) REFERENCES work_orders(id),
   FOREIGN KEY (tested_by) REFERENCES users(id),
   INDEX idx_batch_id (batch_id),
   INDEX idx_result_status (result_status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== SALES TABLES ======
 
@@ -570,18 +570,18 @@ CREATE TABLE customers (
   country VARCHAR(100),
   tax_id VARCHAR(50),
   is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_code (code),
   INDEX idx_is_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Sales Orders
 DROP TABLE IF EXISTS sales_orders;
 CREATE TABLE sales_orders (
   id INT PRIMARY KEY AUTO_INCREMENT,
   so_number VARCHAR(50) NOT NULL UNIQUE,
-  customer_id INT NOT NULL,
+  customer_id INT NULL,
   so_date DATE NOT NULL,
   status VARCHAR(50) DEFAULT 'DRAFT',
   total_amount DECIMAL(15,2) DEFAULT 0,
@@ -589,21 +589,21 @@ CREATE TABLE sales_orders (
   approved_by INT,
   approved_date TIMESTAMP NULL,
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (customer_id) REFERENCES customers(id),
   FOREIGN KEY (approved_by) REFERENCES users(id),
   INDEX idx_so_number (so_number),
   INDEX idx_customer_id (customer_id),
   INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Sales Order Items
 DROP TABLE IF EXISTS so_items;
 CREATE TABLE so_items (
   id INT PRIMARY KEY AUTO_INCREMENT,
   so_id INT NOT NULL,
-  product_id INT NOT NULL,
+  product_id INT NULL,
   quantity DECIMAL(15,4) NOT NULL,
   unit_price DECIMAL(15,2) NOT NULL,
   line_total DECIMAL(15,2),
@@ -612,7 +612,7 @@ CREATE TABLE so_items (
   FOREIGN KEY (so_id) REFERENCES sales_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_so_id (so_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Deliveries
 DROP TABLE IF EXISTS deliveries;
@@ -624,13 +624,13 @@ CREATE TABLE deliveries (
   status VARCHAR(50) DEFAULT 'DRAFT',
   tracking_number VARCHAR(100),
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (so_id) REFERENCES sales_orders(id),
   INDEX idx_do_number (do_number),
   INDEX idx_so_id (so_id),
   INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Delivery Items
 DROP TABLE IF EXISTS delivery_items;
@@ -644,7 +644,7 @@ CREATE TABLE delivery_items (
   FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_delivery_id (delivery_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Invoices
 DROP TABLE IF EXISTS invoices;
@@ -657,13 +657,13 @@ CREATE TABLE invoices (
   total_amount DECIMAL(15,2) DEFAULT 0,
   status VARCHAR(50) DEFAULT 'DRAFT',
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (so_id) REFERENCES sales_orders(id),
   INDEX idx_invoice_number (invoice_number),
   INDEX idx_so_id (so_id),
   INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Sales Payments
 DROP TABLE IF EXISTS sales_payments;
@@ -677,14 +677,14 @@ CREATE TABLE sales_payments (
   reference_number VARCHAR(100),
   status VARCHAR(50) DEFAULT 'pending',
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id),
   FOREIGN KEY (customer_id) REFERENCES customers(id),
   INDEX idx_invoice_id (invoice_id),
   INDEX idx_customer_id (customer_id),
   INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== FINANCE TABLES ======
 
@@ -700,13 +700,13 @@ CREATE TABLE cogs_tracking (
   overhead_cost DECIMAL(15,2) DEFAULT 0,
   total_cogs DECIMAL(15,2) DEFAULT 0,
   period_date DATE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (wo_id) REFERENCES work_orders(id),
   FOREIGN KEY (batch_id) REFERENCES batches(id),
   FOREIGN KEY (product_id) REFERENCES products(id),
   INDEX idx_product_id (product_id),
   INDEX idx_period_date (period_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Profitability Tracking
 DROP TABLE IF EXISTS profitability_tracking;
@@ -719,11 +719,11 @@ CREATE TABLE profitability_tracking (
   gross_profit DECIMAL(15,2),
   margin_percentage DECIMAL(5,2),
   units_sold INT DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (product_id) REFERENCES products(id),
   UNIQUE KEY unique_product_period (product_id, period_date),
   INDEX idx_period_date (period_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Accounts Payable
 DROP TABLE IF EXISTS accounts_payable;
@@ -738,12 +738,12 @@ CREATE TABLE accounts_payable (
   due_date DATE,
   payment_date DATE,
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
   FOREIGN KEY (vendor_id) REFERENCES vendors(id),
   INDEX idx_status (status),
   INDEX idx_due_date (due_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Accounts Receivable
 DROP TABLE IF EXISTS accounts_receivable;
@@ -757,12 +757,12 @@ CREATE TABLE accounts_receivable (
   due_date DATE,
   payment_date DATE,
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id),
   FOREIGN KEY (customer_id) REFERENCES customers(id),
   INDEX idx_status (status),
   INDEX idx_due_date (due_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Financial Summary
 DROP TABLE IF EXISTS financial_summary;
@@ -774,9 +774,9 @@ CREATE TABLE financial_summary (
   gross_profit DECIMAL(15,2),
   operating_expenses DECIMAL(15,2) DEFAULT 0,
   net_profit DECIMAL(15,2),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_period_date (period_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== HUMAN RESOURCES TABLES ======
 
@@ -794,13 +794,13 @@ CREATE TABLE employees (
   hire_date DATE,
   salary DECIMAL(15,2),
   status VARCHAR(50) DEFAULT 'ACTIVE',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id),
   FOREIGN KEY (department_id) REFERENCES departments(id),
   INDEX idx_code (code),
   INDEX idx_department_id (department_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Attendance Logs
 DROP TABLE IF EXISTS attendance_logs;
@@ -812,11 +812,11 @@ CREATE TABLE attendance_logs (
   check_out TIME,
   status VARCHAR(50),
   notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (employee_id) REFERENCES employees(id),
   UNIQUE KEY unique_employee_date (employee_id, date),
   INDEX idx_date (date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ====== SYSTEM TABLES ======
 
@@ -831,12 +831,12 @@ CREATE TABLE audit_log (
   old_values JSON,
   new_values JSON,
   ip_address VARCHAR(50),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id),
   INDEX idx_created_at (created_at),
   INDEX idx_entity_type (entity_type),
   INDEX idx_user_id (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Notifications
 DROP TABLE IF EXISTS notifications;
@@ -851,14 +851,14 @@ CREATE TABLE notifications (
   related_entity_id INT,
   action_url VARCHAR(255),
   is_read BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   read_at TIMESTAMP NULL,
   FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL,
   INDEX idx_recipient_id (recipient_id),
   INDEX idx_is_read (is_read),
   INDEX idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- System Settings
 DROP TABLE IF EXISTS system_settings;
@@ -869,10 +869,10 @@ CREATE TABLE system_settings (
   category VARCHAR(100),
   description TEXT,
   data_type VARCHAR(50),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_category (category)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;
 
