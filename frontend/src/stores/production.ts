@@ -85,6 +85,11 @@ export interface ProcessLog {
   status: string;
   notes: string | null;
   recorded_by_name: string | null;
+  // QC gate fields added by GET /production/wo/:woId/process-logs; optional because a
+  // backend without that enrichment still returns a valid process log
+  has_qc_checkpoint?: boolean;
+  qc_status?: string | null;
+  qc_blocking?: boolean;
 }
 
 export interface YieldResult {

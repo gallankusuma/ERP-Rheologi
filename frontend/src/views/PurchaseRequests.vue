@@ -1496,115 +1496,142 @@ onMounted(async () => {
 });
 
 function printPR() {
-  const notes = parseNotes(form.value.notes);
-  const prItems = notes.items || [];
-  
-  const printContent = `
-    <html>
-      <head>
-        <title>Purchase Request - ${form.value.pr_number}</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
-          .header { text-align: center; margin-bottom: 30px; }
-          .header h1 { margin: 0; color: #333; }
-          .header p { margin: 5px 0; color: #666; }
-          .details { margin: 20px 0; }
-          .detail-row { display: flex; justify-content: space-between; padding: 5px 0; }
-          .detail-label { font-weight: bold; width: 150px; }
-          .detail-value { flex: 1; }
-          .divider { border-top: 1px solid #ccc; margin: 20px 0; }
-          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-          th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-          th { background-color: #f5f5f5; font-weight: bold; }
-          .total-row { font-weight: bold; }
-          .total-value { text-align: right; }
-          .footer { margin-top: 40px; font-size: 12px; color: #999; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>PURCHASE REQUEST</h1>
-          <p>PR No: ${form.value.pr_number}</p>
-        </div>
-        
-        <div class="details">
-          <div class="detail-row">
-            <span class="detail-label">Request Date:</span>
-            <span class="detail-value">${formatDate(form.value.request_date)}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Needed By:</span>
-            <span class="detail-value">${formatDate(form.value.needed_by) || '-'}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Department:</span>
-            <span class="detail-value">${form.value.department || '-'}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Requester:</span>
-            <span class="detail-value">${form.value.requester_name || authStore.user?.name || '-'}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Status:</span>
-            <span class="detail-value">${form.value.approval_status === 2 ? 'Approved' : form.value.approval_status === 1 ? 'Pending Approval' : 'Draft'}</span>
-          </div>
-        </div>
-        
-        <div class="divider"></div>
-        
-        <div class="details">
-          <h3>Request Details</h3>
-          <div class="detail-row">
-            <span class="detail-label">Purpose / Reason:</span>
-            <span class="detail-value">${form.value.reason || '-'}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Item Type:</span>
-            <span class="detail-value">${notes.itemType || 'inventory'}</span>
-          </div>
-        </div>
-        
-        <div class="divider"></div>
-        
-        <h3>Items</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>No</th>
-              <th>Item Name</th>
-              <th>Qty</th>
-              <th>UoM</th>
-              <th>Est. Price (IDR)</th>
-              <th>Line Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${prItems.map((item: any, idx: number) => '<tr><td>' + (idx + 1) + '</td><td>' + (item.productName || item.name || '-') + '</td><td>' + (item.qty || 0) + '</td><td>' + (item.uom || '-') + '</td><td>' + formatCurrency(item.price || 0) + '</td><td>' + formatCurrency((item.qty || 0) * (item.price || 0)) + '</td></tr>').join('')}
-          </tbody>
-        </table>
-        
-        <div style="margin-top: 20px; text-align: right; width: 300px; margin-left: auto;">
-          <div class="detail-row total-row" style="border-top: 2px solid #333; padding-top: 10px; font-size: 16px;">
-            <span class="detail-label">Estimated Total:</span>
-            <span class="detail-value">${formatCurrency(notes.estimatedTotal || 0)}</span>
-          </div>
-        </div>
-        
-        <div class="footer">
-          <p>Notes: ${notes.noteText || '-'}</p>
-          <p style="margin-top: 30px; text-align: center;">
-            Printed on ${new Date().toLocaleDateString('id-ID')} at ${new Date().toLocaleTimeString('id-ID')}
-          </p>
-        </div>
-      </body>
-    </html>
-  `;
-  
+  const pr = currentPR.value;
+  const prItems = formItems.value || [];
+  const itemType = formItemType.value || 'inventory';
+  const reqDate = form.value.request_date ? new Date(form.value.request_date).toLocaleDateString('id-ID') : '';
+  const deliveryDate = form.value.needed_by ? new Date(form.value.needed_by).toLocaleDateString('id-ID') : '';
+  const requesterName = pr?.requester_name || form.value.requester_name || '';
+  const approverName = pr?.manager_name || pr?.supervisor_name || '';
+  const approvedDate = pr?.approved_at_manager || pr?.approved_at_supervisor || '';
+  const approvedDateStr = approvedDate ? new Date(approvedDate).toLocaleDateString('id-ID') : '';
+  const printDate = new Date().toLocaleDateString('id-ID');
+  const prNum = form.value.pr_number || '';
+  const qrBase = 'https://api.qrserver.com/v1/create-qr-code/?size=90x90&data=';
+  const qrCreator = encodeURIComponent(`PR:${prNum}|Dibuat:${requesterName}|Tgl:${printDate}`);
+  const qrApprover = encodeURIComponent(`PR:${prNum}|Approve:${approverName}|Tgl:${approvedDateStr}`);
+
+  const itemRows = prItems.map((item: any, idx: number) => {
+    const cost = (item.qty && item.price) ? Number((item.qty||0)*(item.price||0)).toLocaleString('id-ID') : '';
+    return `<tr>
+      <td style="text-align:center;border:1px solid #000;padding:4px">${idx + 1}</td>
+      <td colspan="3" style="border:1px solid #000;padding:4px 6px;text-align:left">${item.productName || item.name || ''}</td>
+      <td style="text-align:center;border:1px solid #000;padding:4px">${item.qty || ''} ${item.uom || ''}</td>
+      <td style="text-align:center;border:1px solid #000;padding:4px"></td>
+      <td style="text-align:right;border:1px solid #000;padding:4px;white-space:nowrap">${cost}</td>
+      <td style="border:1px solid #000;padding:4px"></td>
+      <td colspan="2" style="border:1px solid #000;padding:4px">${item.specification || ''}</td>
+    </tr>`;
+  }).join('');
+
+  const padCount = Math.max(0, 4 - prItems.length);
+  const emptyRows = Array.from({length: padCount}, () => `<tr>
+      <td style="text-align:center;border:1px solid #000;padding:4px;height:36px"></td>
+      <td colspan="3" style="border:1px solid #000;padding:4px"></td>
+      <td style="border:1px solid #000;padding:4px"></td>
+      <td style="border:1px solid #000;padding:4px"></td>
+      <td style="border:1px solid #000;padding:4px"></td>
+      <td style="border:1px solid #000;padding:4px"></td>
+      <td colspan="2" style="border:1px solid #000;padding:4px"></td>
+    </tr>`).join('');
+
+  const printContent = `<html>
+<head>
+  <title>PR - ${prNum}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Arial Narrow',Arial,sans-serif;font-size:11pt;color:#000}
+    @page{size:A4 landscape;margin:8mm 10mm}
+    @media print{body{margin:0}}
+    table.m{width:100%;border-collapse:collapse;border:2px solid #000}
+    table.m td{border:1px solid #000;padding:3px 6px;vertical-align:middle}
+    .nb{border:none!important}
+    .bb2{border-bottom:2px solid #000!important}
+    .bt2{border-top:2px solid #000!important}
+  </style>
+</head>
+<body>
+  <div style="padding:8px 0 4px 8px">
+    <img src="/logo-rheologi-v2.png" alt="Rheologi" style="height:80px"/>
+  </div>
+  <table class="m">
+    <tr>
+      <td colspan="3" class="bb2" style="width:35%;padding:6px 10px;font-size:9.5pt;line-height:1.35">
+        Ruko Graha Kencana Jl. Perjuangan No. 88 Blok G-H<br/>
+        RT 014 RW 010, Kel. Kebon Jeruk, Kec. Kebon Jeruk,<br/>
+        Kota Adm. Jakarta Barat, DKI Jakarta 11530<br/>
+        Email: rheologibiotech@gmail.com
+      </td>
+      <td colspan="4" class="bb2" style="width:35%;text-align:center;padding:8px;font-size:13pt;font-weight:bold">
+        PERMINTAAN PEMBELIAN<br/><span style="font-weight:normal;font-style:italic;font-size:11pt">Purchase Requisition</span>
+      </td>
+      <td colspan="3" class="bb2" style="width:30%;padding:6px 10px;font-size:11pt;font-weight:bold">
+        No PR: ${prNum}<br/><span style="font-weight:normal;font-size:9pt;color:#666">Printed</span>
+      </td>
+    </tr>
+    <tr>
+      <td style="border-right:none">Tanggal PR</td>
+      <td style="border-left:none;border-right:none;width:2%">:</td>
+      <td style="border-left:none">${reqDate}</td>
+      <td style="border-right:none">Rec. Supplier</td>
+      <td style="border-left:none;border-right:none;width:2%">:</td>
+      <td style="border-left:none">Local PLANT</td>
+      <td></td>
+      <td colspan="3" rowspan="3" style="vertical-align:top;padding:6px;font-size:10pt">Note :</td>
+    </tr>
+    <tr>
+      <td style="border-right:none">Tanggal Delivery</td>
+      <td style="border-left:none;border-right:none">:</td>
+      <td style="border-left:none">${deliveryDate}</td>
+      <td style="border-right:none">Department</td>
+      <td style="border-left:none;border-right:none">:</td>
+      <td style="border-left:none">${pr?.project_name ? 'PROJECT' : 'WAREHOUSE'}</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="bb2" style="border-right:none">Jenis PR</td>
+      <td class="bb2" style="border-left:none;border-right:none">:</td>
+      <td class="bb2" style="border-left:none">${itemType.charAt(0).toUpperCase() + itemType.slice(1)}</td>
+      <td class="bb2" colspan="4"></td>
+    </tr>
+    <tr>
+      <td colspan="10" style="padding:4px 8px">Harap dibelikan Barang sebagai berikut:</td>
+    </tr>
+    <tr>
+      <td class="bt2 bb2" style="text-align:center;font-weight:bold;width:5%">NO</td>
+      <td class="bt2 bb2" colspan="3" style="text-align:center;font-weight:bold;width:33%">ITEM NAME</td>
+      <td class="bt2 bb2" style="text-align:center;font-weight:bold;width:8%">QTY</td>
+      <td class="bt2 bb2" style="text-align:center;font-weight:bold;width:7%">STOCK</td>
+      <td class="bt2 bb2" style="text-align:center;font-weight:bold;width:14%">ESTIMATED COST</td>
+      <td class="bt2 bb2" style="text-align:center;font-weight:bold;width:10%">NO. DOC. SPEC</td>
+      <td class="bt2 bb2" colspan="2" style="text-align:center;font-weight:bold;width:18%">REMARK</td>
+    </tr>
+    ${itemRows}
+    ${emptyRows}
+    <tr>
+      <td class="bt2" colspan="4" style="vertical-align:top;padding:8px;height:140px;border-top:2px solid #000">
+        Dibuat Oleh,<br/>
+        <img src="${qrBase}${qrCreator}" width="90" height="90" style="margin:6px 0"/><br/>
+        <strong>(${requesterName || '...........................'})</strong><br/>
+        <span style="font-size:9pt">${printDate}</span>
+      </td>
+      <td class="bt2" colspan="3" style="border-left:none;border-right:none;border-top:2px solid #000"></td>
+      <td class="bt2" colspan="3" style="vertical-align:top;padding:8px;text-align:right;height:140px;border-top:2px solid #000">
+        Approve Oleh,<br/>
+        ${approverName ? '<img src="'+qrBase+qrApprover+'" width="90" height="90" style="margin:6px 0"/>' : '<div style="height:90px"></div>'}<br/>
+        <strong>(${approverName || '................................'})</strong><br/>
+        <span style="font-size:9pt">Waktu: ${approvedDateStr}</span>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
   const printWindow = window.open('', '_blank');
   if (printWindow) {
     printWindow.document.write(printContent);
     printWindow.document.close();
-    setTimeout(() => printWindow.print(), 250);
+    setTimeout(() => printWindow.print(), 500);
   }
 }
 </script>

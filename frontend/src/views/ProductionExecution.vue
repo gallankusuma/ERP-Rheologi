@@ -121,57 +121,122 @@
       </div>
 
       <!-- Process Logs Modal -->
-      <div v-if="showLogs" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
-          <div class="flex justify-between items-center mb-4">
-            <h3 class="text-lg font-bold">Process Logs — {{ selectedWo?.wo_number }}</h3>
-            <button @click="showLogs = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
-          </div>
-
-          <!-- Existing logs -->
-          <div v-if="store.processLogs.length" class="space-y-2 mb-4">
-            <div v-for="log in store.processLogs" :key="log.id" class="border rounded p-3 text-sm">
-              <div class="flex justify-between">
-                <span class="font-semibold">{{ log.process_name }}</span>
-                <span :class="log.status === 'completed' ? 'text-green-600' : 'text-blue-600'" class="text-xs font-medium">{{ log.status }}</span>
+      <div v-if="showLogs" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="showLogs = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+          <!-- header -->
+          <div class="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+            <div class="flex justify-between items-center">
+              <div>
+                <h3 class="text-lg font-bold">Process Steps — {{ selectedWo?.wo_number }}</h3>
+                <p class="text-blue-200 text-xs mt-0.5">{{ selectedWo?.product_name }}</p>
               </div>
-              <div class="text-xs text-gray-500 mt-1">
-                <span v-if="log.duration_minutes">Duration: {{ log.duration_minutes }} min</span>
-                <span v-if="log.recorded_by_name"> | By: {{ log.recorded_by_name }}</span>
+              <button @click="showLogs = false" class="text-white/70 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <!-- progress bar -->
+            <div v-if="store.processLogs.length" class="mt-3">
+              <div class="flex justify-between text-xs text-blue-200 mb-1">
+                <span>Progress</span>
+                <span>{{ completedSteps }}/{{ store.processLogs.length }} selesai</span>
               </div>
-              <p v-if="log.notes" class="text-xs text-gray-400 mt-1">{{ log.notes }}</p>
+              <div class="w-full bg-white/20 rounded-full h-2">
+                <div class="bg-emerald-400 h-2 rounded-full transition-all duration-500"
+                  :style="{ width: store.processLogs.length ? (completedSteps / store.processLogs.length * 100) + '%' : '0%' }"></div>
+              </div>
             </div>
           </div>
-          <p v-else class="text-sm text-gray-400 mb-4">No process logs yet</p>
 
-          <!-- Add log form -->
-          <div class="border-t pt-4">
-            <h4 class="text-sm font-semibold mb-3">Add Process Log</h4>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="col-span-2">
-                <input v-model="logForm.process_name" placeholder="Process name (e.g. Mixing, Filling, Final)" class="w-full px-3 py-2 border rounded text-sm" />
-              </div>
-              <div>
-                <label class="text-xs text-gray-500">Start Time</label>
-                <input v-model="logForm.start_time" type="datetime-local" class="w-full px-3 py-2 border rounded text-sm" />
-              </div>
-              <div>
-                <label class="text-xs text-gray-500">End Time</label>
-                <input v-model="logForm.end_time" type="datetime-local" class="w-full px-3 py-2 border rounded text-sm" />
-              </div>
-              <div>
-                <select v-model="logForm.status" class="w-full px-3 py-2 border rounded text-sm">
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                </select>
-              </div>
-              <div>
-                <input v-model="logForm.notes" placeholder="Notes (optional)" class="w-full px-3 py-2 border rounded text-sm" />
+          <!-- steps list -->
+          <div class="flex-1 overflow-y-auto p-4 space-y-2">
+            <div v-if="store.processLogs.length">
+              <div v-for="(log, idx) in store.processLogs" :key="log.id"
+                class="border rounded-xl p-4 transition-all"
+                :class="{
+                  'border-emerald-300 bg-emerald-50': log.status === 'completed',
+                  'border-blue-300 bg-blue-50': log.status === 'in_progress',
+                  'border-gray-200 bg-gray-50': log.status === 'pending'
+                }">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex items-start gap-3">
+                    <!-- step number -->
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                      :class="{
+                        'bg-emerald-500 text-white': log.status === 'completed',
+                        'bg-blue-500 text-white animate-pulse': log.status === 'in_progress',
+                        'bg-gray-200 text-gray-500': log.status === 'pending'
+                      }">
+                      <span v-if="log.status === 'completed'">✓</span>
+                      <span v-else>{{ idx + 1 }}</span>
+                    </div>
+                    <div>
+                      <div class="font-semibold text-gray-900">{{ log.process_name }}</div>
+                      <p v-if="log.notes" class="text-xs text-gray-500 mt-0.5">{{ log.notes }}</p>
+                      <div class="flex gap-3 mt-1 text-xs text-gray-400">
+                        <span v-if="log.start_time">Mulai: {{ formatTime(log.start_time) }}</span>
+                        <span v-if="log.end_time">Selesai: {{ formatTime(log.end_time) }}</span>
+                        <span v-if="log.duration_minutes">{{ log.duration_minutes }} menit</span>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- action buttons -->
+                  <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <!-- QC gate badge -->
+                    <span v-if="log.has_qc_checkpoint && log.status === 'completed'"
+                      class="px-2 py-1 text-[10px] font-bold rounded-full"
+                      :class="log.qc_status === 'passed' ? 'bg-green-100 text-green-700' : log.qc_status === 'in_review' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
+                      :title="'QC: ' + (log.qc_status || 'pending')">
+                      🧪 {{ log.qc_status === 'passed' ? 'QC Passed' : log.qc_status === 'in_review' ? 'QC Review' : 'QC Pending' }}
+                    </span>
+                    <!-- QC blocking warning on next step -->
+                    <span v-if="isStepBlockedByQC(idx)"
+                      class="px-2 py-1 bg-red-50 text-red-600 text-[10px] font-bold rounded-full border border-red-200"
+                      title="Step sebelumnya memiliki QC checkpoint yang belum passed">
+                      ⛔ QC Gate
+                    </span>
+                    <button v-if="log.status === 'pending'"
+                      @click="updateLogStatus(log.id, 'in_progress')"
+                      :disabled="isStepBlockedByQC(idx)"
+                      class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                      :class="isStepBlockedByQC(idx) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'">
+                      ▶ Mulai
+                    </button>
+                    <button v-if="log.status === 'in_progress'"
+                      @click="updateLogStatus(log.id, 'completed')"
+                      :disabled="isStepBlockedByQC(idx)"
+                      class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                      :class="isStepBlockedByQC(idx) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'">
+                      ✓ Selesai
+                    </button>
+                    <span v-if="log.status === 'completed' && !log.has_qc_checkpoint"
+                      class="px-2.5 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full">Done</span>
+                  </div>
+                </div>
               </div>
             </div>
-            <button @click="addLog" class="mt-3 px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
-              Add Log
-            </button>
+            <p v-else class="text-center text-gray-400 py-8">Belum ada process steps. Template akan di-generate saat Start Production.</p>
+
+            <!-- Add ad-hoc step -->
+            <div class="border-t border-dashed pt-4 mt-4">
+              <h4 class="text-sm font-semibold text-gray-700 mb-3">Tambah Step Manual</h4>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="col-span-2">
+                  <input v-model="logForm.process_name" placeholder="Nama proses (cth: Cek pH Tambahan)" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <input v-model="logForm.notes" placeholder="Catatan (opsional)" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <select v-model="logForm.status" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                    <option value="pending">Pending</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+              </div>
+              <button @click="addLog" :disabled="!logForm.process_name"
+                class="mt-3 px-4 py-2 bg-blue-600 text-white text-sm rounded-xl hover:bg-blue-700 disabled:opacity-50 font-semibold">
+                + Tambah Step
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -283,7 +348,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, computed } from 'vue';
 import { useProductionStore } from '../stores/production';
 import { api } from '../lib/api';
 
@@ -292,9 +357,11 @@ const showLogs = ref(false);
 const showQCPanel = ref(false);
 const selectedWo = ref<any>(null);
 const selectedWoId = ref<number>(0);
-const logForm = ref({ process_name: '', start_time: '', end_time: '', status: 'in_progress', notes: '' });
+const logForm = ref({ process_name: '', start_time: '', end_time: '', status: 'pending', notes: '' });
 const qcCheckpoints = ref<any[]>([]);
 const newCheckpoint = ref({ process_stage: '', is_mandatory: true });
+
+const completedSteps = computed(() => store.processLogs.filter((l: any) => l.status === 'completed').length);
 
 onMounted(() => store.fetchExecution());
 
@@ -330,8 +397,31 @@ const openLogs = async (wo: any) => {
   selectedWo.value = wo;
   selectedWoId.value = wo.id;
   await store.fetchProcessLogs(wo.id);
-  logForm.value = { process_name: '', start_time: '', end_time: '', status: 'in_progress', notes: '' };
+  logForm.value = { process_name: '', start_time: '', end_time: '', status: 'pending', notes: '' };
   showLogs.value = true;
+};
+
+// check if a step is blocked by an unresolved QC checkpoint (uses backend-computed flag)
+const isStepBlockedByQC = (stepIndex: number): boolean => {
+  return !!store.processLogs[stepIndex]?.qc_blocking;
+};
+
+const updateLogStatus = async (logId: number, newStatus: string) => {
+  try {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const updateData: any = { status: newStatus };
+    if (newStatus === 'in_progress') updateData.start_time = now;
+    if (newStatus === 'completed') updateData.end_time = now;
+    const res = await api.put(`/production/execution/${selectedWoId.value}/process-logs/${logId}`, updateData);
+    await store.fetchProcessLogs(selectedWoId.value);
+    await store.fetchExecution();
+    // show QC notification if triggered
+    if (res.data?.qc_triggered) {
+      alert(`QC Auto-Triggered!\nFPA: ${res.data.qc_triggered.fpa_number}\nCheckpoint updated to "in_review"`);
+    }
+  } catch (e: any) {
+    alert(e?.response?.data?.error || 'Failed to update step');
+  }
 };
 
 const addLog = async () => {
@@ -407,6 +497,7 @@ const deleteCheckpoint = async (checkpointId: number) => {
 
 const formatDate = (d: string | null) => d ? new Date(d).toLocaleDateString() : '-';
 const formatDateTime = (d: string | null) => d ? new Date(d).toLocaleString() : '-';
+const formatTime = (d: string | null) => d ? new Date(d).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-';
 
 const statusLabel = (s: string) => ({
   released: '🚀 Released', RELEASED: '🚀 Released', Released: '🚀 Released',

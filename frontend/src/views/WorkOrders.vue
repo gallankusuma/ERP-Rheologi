@@ -13,7 +13,7 @@
     </div>
 
     <!-- Summary Badges -->
-    <div v-if="summary.length" class="flex flex-wrap gap-2">
+    <div v-if="summaryWithAll.length" class="flex flex-wrap gap-2">
       <button v-for="s in summaryWithAll" :key="s.status"
         @click="filterStatus = s.status"
         class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
@@ -149,6 +149,10 @@
                   class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold transition-colors">
                   Edit
                 </button>
+                <button v-if="canReschedule(wo)" @click="openReschedule(wo)"
+                  class="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm font-semibold transition-colors">
+                  Reschedule
+                </button>
                 <button v-if="wo.status === 'DRAFT'" @click="confirmDelete(wo)"
                   class="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-semibold transition-colors">
                   Hapus
@@ -259,6 +263,29 @@
               class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
               placeholder="Instruksi, catatan produksi..."></textarea>
           </div>
+          <!-- Reschedule History (edit mode only) -->
+          <div v-if="editingWo && rescheduleLog.length > 0">
+            <label class="block text-xs font-semibold text-gray-600 mb-2">Riwayat Reschedule</label>
+            <div class="space-y-2 max-h-[200px] overflow-y-auto">
+              <div v-for="log in rescheduleLog" :key="log.id"
+                class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-purple-700">W{{ log.old_week_number }}</span>
+                    <span class="text-gray-400">→</span>
+                    <span class="font-bold text-indigo-700">W{{ log.new_week_number }}</span>
+                    <span v-if="Number(log.old_quantity) !== Number(log.new_quantity)"
+                      class="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
+                      Qty: {{ formatN(log.old_quantity) }} → {{ formatN(log.new_quantity) }}
+                    </span>
+                  </div>
+                  <span class="text-[10px] text-gray-400">{{ fmtDate(log.created_at) }}</span>
+                </div>
+                <div class="text-xs text-gray-600">{{ log.reason }}</div>
+                <div v-if="log.rescheduled_by_name" class="text-[10px] text-gray-400 mt-0.5">oleh {{ log.rescheduled_by_name }}</div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="px-5 py-4 border-t border-gray-100 flex justify-end gap-2">
           <button @click="showModal = false"
@@ -287,6 +314,65 @@
           <button @click="doDelete" :disabled="saving"
             class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg disabled:opacity-50">
             Hapus
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== RESCHEDULE MODAL ===== -->
+    <div v-if="showRescheduleModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="showRescheduleModal = false">
+      <div class="bg-white rounded-xl shadow-2xl w-[480px] overflow-hidden">
+        <div class="px-5 py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white">
+          <h2 class="font-bold">Reschedule Work Order</h2>
+          <p class="text-xs text-purple-200 mt-0.5">{{ rescheduleWo?.wo_number }} — {{ rescheduleWo?.product_name }}</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm">
+            <div class="flex items-center gap-4">
+              <div>
+                <span class="text-xs text-gray-500">Saat ini</span>
+                <div class="font-bold text-purple-700">W{{ rescheduleWo?.mps_week_number || rescheduleWo?.week_number || '?' }}</div>
+                <div class="text-xs text-gray-500">{{ fmtDate(rescheduleWo?.scheduled_start) }} — {{ fmtDate(rescheduleWo?.scheduled_end) }}</div>
+              </div>
+              <div class="text-xl text-gray-400">→</div>
+              <div>
+                <span class="text-xs text-gray-500">Pindah ke</span>
+                <div class="font-bold text-indigo-700">W{{ rescheduleForm.new_week_number || '?' }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1">Minggu Baru</label>
+              <input v-model.number="rescheduleForm.new_week_number" type="number" min="1" max="52"
+                class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-300" />
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1">Tahun</label>
+              <input v-model.number="rescheduleForm.new_year" type="number" min="2024" max="2030"
+                class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-300" />
+            </div>
+          </div>
+          <div v-if="canChangeQty">
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Quantity (opsional)</label>
+            <input v-model.number="rescheduleForm.new_quantity" type="number" min="0" step="0.01"
+              class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-300"
+              :placeholder="String(rescheduleWo?.quantity || 0)" />
+          </div>
+          <div v-else class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Quantity tidak bisa diubah untuk WO berstatus RELEASED
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Alasan Reschedule <span class="text-red-500">*</span></label>
+            <textarea v-model="rescheduleForm.reason" rows="2" placeholder="Contoh: Material delay dari supplier"
+              class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-300"></textarea>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50">
+          <button @click="showRescheduleModal = false" class="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-100">Batal</button>
+          <button @click="submitReschedule" :disabled="!rescheduleForm.reason || !rescheduleForm.new_week_number || rescheduling"
+            class="px-4 py-2 text-sm font-semibold bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50">
+            {{ rescheduling ? 'Memproses...' : 'Reschedule' }}
           </button>
         </div>
       </div>
@@ -448,7 +534,7 @@ const openCreateModal = () => {
   showModal.value = true;
 };
 
-const openEdit = (wo: any) => {
+const openEdit = async (wo: any) => {
   editingWo.value = wo;
   form.value = {
     product_id: wo.product_id,
@@ -463,8 +549,14 @@ const openEdit = (wo: any) => {
     completed_quantity: wo.completed_quantity || 0,
     notes: wo.notes || '',
     bom_id: wo.bom_id || null,
+    source_reason: wo.source_reason || '',
   };
   showModal.value = true;
+  // load reschedule history
+  try {
+    const res = await api.get(`/workorders/${wo.id}/reschedule-log`);
+    rescheduleLog.value = res.data.data || [];
+  } catch { rescheduleLog.value = []; }
 };
 
 const openDetail = (wo: any) => openEdit(wo);
@@ -593,5 +685,62 @@ const showToast = (message: string, type: 'ok' | 'error' | 'warn' = 'ok') => {
   toast.value = { show: true, message, type };
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.value.show = false; }, 3500);
+};
+
+// reschedule
+const showRescheduleModal = ref(false);
+const rescheduleWo = ref<any>(null);
+const rescheduling = ref(false);
+const rescheduleForm = ref({ new_week_number: 0, new_year: new Date().getFullYear(), new_quantity: 0, reason: '' });
+const rescheduleLog = ref<any[]>([]);
+
+const canReschedule = (wo: any): boolean => {
+  const s = (wo.status || '').toUpperCase();
+  return ['DRAFT', 'PENDING', 'PLANNED', 'APPROVED', 'RELEASED'].includes(s);
+};
+
+const canChangeQty = computed(() => {
+  if (!rescheduleWo.value) return false;
+  const s = (rescheduleWo.value.status || '').toUpperCase();
+  return ['DRAFT', 'PENDING', 'PLANNED', 'APPROVED'].includes(s);
+});
+
+const openReschedule = (wo: any) => {
+  rescheduleWo.value = wo;
+  rescheduleForm.value = {
+    new_week_number: wo.mps_week_number || wo.week_number || 1,
+    new_year: wo.year || new Date().getFullYear(),
+    new_quantity: Number(wo.quantity) || 0,
+    reason: ''
+  };
+  showRescheduleModal.value = true;
+};
+
+const submitReschedule = async () => {
+  if (!rescheduleWo.value || !rescheduleForm.value.reason) return;
+  rescheduling.value = true;
+  try {
+    const payload: any = {
+      new_week_number: rescheduleForm.value.new_week_number,
+      new_year: rescheduleForm.value.new_year,
+      reason: rescheduleForm.value.reason
+    };
+    if (canChangeQty.value && rescheduleForm.value.new_quantity > 0) {
+      payload.new_quantity = rescheduleForm.value.new_quantity;
+    }
+    const { data } = await api.put(`/workorders/${rescheduleWo.value.id}/reschedule`, payload);
+    if (data.changed) {
+      showToast(`WO ${rescheduleWo.value.wo_number} rescheduled: W${data.old.week} → W${data.new.week}`, 'ok');
+    } else {
+      showToast('Tidak ada perubahan', 'warn');
+    }
+    showRescheduleModal.value = false;
+    // summaryWithAll is computed from wos, so reloading the list refreshes the counters
+    await loadWOs();
+  } catch (e: any) {
+    showToast(e.response?.data?.error || 'Gagal reschedule', 'error');
+  } finally {
+    rescheduling.value = false;
+  }
 };
 </script>
