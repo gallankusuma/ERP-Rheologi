@@ -3,15 +3,15 @@
 
 -- 1. Add project_id to purchase_requests
 ALTER TABLE purchase_requests
-  ADD COLUMN project_id INT NULL AFTER requestor_id,
-  ADD INDEX idx_pr_project (project_id),
-  ADD CONSTRAINT fk_pr_project FOREIGN KEY (project_id) REFERENCES client_projects(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS project_id INT NULL AFTER requestor_id,
+  ADD INDEX IF NOT EXISTS idx_pr_project (project_id),
+  ADD CONSTRAINT IF NOT EXISTS fk_pr_project FOREIGN KEY (project_id) REFERENCES client_projects(id) ON DELETE SET NULL;
 
 -- 2. Add project_id to purchase_orders
 ALTER TABLE purchase_orders
-  ADD COLUMN project_id INT NULL AFTER pr_id,
-  ADD INDEX idx_po_project (project_id),
-  ADD CONSTRAINT fk_po_project FOREIGN KEY (project_id) REFERENCES client_projects(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS project_id INT NULL AFTER pr_id,
+  ADD INDEX IF NOT EXISTS idx_po_project (project_id),
+  ADD CONSTRAINT IF NOT EXISTS fk_po_project FOREIGN KEY (project_id) REFERENCES client_projects(id) ON DELETE SET NULL;
 
 -- 3. Create project_expenses table for non-PR/PO costs
 CREATE TABLE IF NOT EXISTS project_expenses (

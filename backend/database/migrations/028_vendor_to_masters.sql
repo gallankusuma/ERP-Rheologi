@@ -4,14 +4,14 @@
 
 -- Add vendor_id column to master_materials
 ALTER TABLE master_materials
-ADD COLUMN vendor_id INT NULL,
-ADD CONSTRAINT fk_materials_vendor
+ADD COLUMN IF NOT EXISTS vendor_id INT NULL,
+ADD CONSTRAINT IF NOT EXISTS fk_materials_vendor
 FOREIGN KEY (vendor_id) REFERENCES vendors(id)
 ON DELETE SET NULL;
 
 -- Add vendor_id column to master_equipment
 ALTER TABLE master_equipment
-ADD COLUMN vendor_id INT NULL,
-ADD CONSTRAINT fk_equipment_vendor
+ADD COLUMN IF NOT EXISTS vendor_id INT NULL,
+ADD CONSTRAINT IF NOT EXISTS fk_equipment_vendor
 FOREIGN KEY (vendor_id) REFERENCES vendors(id)
 ON DELETE SET NULL;
