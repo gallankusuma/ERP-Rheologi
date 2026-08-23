@@ -121,6 +121,15 @@
         </thead>
         <tbody>
           <template v-for="(item, idx) in fpas" :key="item.id">
+            <!-- WO Group Header (show when reference_number changes) -->
+            <tr v-if="item.reference_number && (idx === 0 || fpas[idx - 1]?.reference_number !== item.reference_number)"
+              class="bg-blue-50 border-t-2 border-blue-300">
+              <td :colspan="12" class="px-3 py-2">
+                <span class="font-bold text-blue-700 text-sm">🏭 {{ item.reference_number }}</span>
+                <span class="text-xs text-blue-500 ml-3">{{ item.product_name || '' }}</span>
+                <span class="text-xs text-gray-400 ml-2">({{ fpas.filter(f => f.reference_number === item.reference_number).length }} FPA)</span>
+              </td>
+            </tr>
             <!-- Data Row 1 -->
             <tr class="border-b border-gray-200 cursor-pointer hover:bg-gray-100" :class="getRowBg(item.status)" @click="openDetail(item.id)">
               <td rowspan="2" class="tbl-td text-center font-medium align-top">{{ idx + 1 }}</td>

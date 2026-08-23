@@ -181,6 +181,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/Inventory.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/inventory/overview',
+    name: 'InventoryOverview',
+    component: () => import('../views/Inventory.vue'),
+    meta: { requiresAuth: true, breadcrumb: [{ label: 'Inventory' }, { label: 'Stock Overview' }] },
+  },
   // Inventory detail routes (override placeholders)
   {
     path: '/inventory/stock-card',
@@ -483,6 +489,43 @@ const routes: RouteRecordRaw[] = [
     name: 'EstimatorHSP',
     component: () => import('../views/EstimatorHSP.vue'),
     meta: { requiresAuth: true, title: 'Estimator - HSP' },
+  },
+  // HR Module
+  {
+    path: '/hr/employees',
+    name: 'HREmployees',
+    component: () => import('../views/hr/Employees.vue'),
+    meta: { requiresAuth: true, title: 'HR - Employees' },
+  },
+  {
+    path: '/hr/attendance',
+    name: 'HRAttendance',
+    component: () => import('../views/hr/AttendanceTracking.vue'),
+    meta: { requiresAuth: true, title: 'HR - Attendance' },
+  },
+  {
+    path: '/hr/payroll',
+    name: 'HRPayroll',
+    component: () => import('../views/hr/PayrollCalculator.vue'),
+    meta: { requiresAuth: true, title: 'HR - Payroll' },
+  },
+  {
+    path: '/hr/position-rates',
+    name: 'HRPositionRates',
+    component: () => import('../views/hr/PositionRates.vue'),
+    meta: { requiresAuth: true, title: 'HR - Position Rates' },
+  },
+  {
+    path: '/hr/salary-advances',
+    name: 'HRSalaryAdvances',
+    component: () => import('../views/hr/SalaryAdvances.vue'),
+    meta: { requiresAuth: true, title: 'HR - Salary Advances' },
+  },
+  {
+    path: '/hr/mobile-portal',
+    name: 'HRMobilePortal',
+    component: () => import('../views/hr/MobilePortal.vue'),
+    meta: { requiresAuth: true, title: 'HR - Mobile Portal' },
   },
   // R&D Module
   {

@@ -187,11 +187,12 @@
                       <!-- Day cells: Planned -->
                       <td v-for="dc in dayColumns" :key="'plan-' + wo.id + '-' + dc.day"
                         class="px-0 py-0.5 text-center border-r"
-                        :class="dc.isWeekend ? 'bg-gray-50' : ''">
+                        :class="dc.isPast ? 'bg-gray-100' : dc.isWeekend ? 'bg-gray-50' : ''">
                         <input v-model.number="getDayData(wo, dc.day).planned" type="number" min="0"
+                          :disabled="dc.isPast"
                           @change="markDirty(wo)"
                           class="w-full border-0 text-center text-[10px] font-medium py-1.5 focus:ring-1 focus:ring-blue-300"
-                          :class="dc.isWeekend ? 'bg-gray-50 text-gray-400' : 'bg-blue-50 text-blue-800 focus:bg-blue-100'" />
+                          :class="dc.isPast ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : dc.isWeekend ? 'bg-gray-50 text-gray-400' : 'bg-blue-50 text-blue-800 focus:bg-blue-100'" />
                       </td>
                     </tr>
 
@@ -387,7 +388,7 @@ const filteredWorkOrders = computed(() => {
 });
 const dayColumns = ref<any[]>([]);
 const machineCapacity = ref(8);
-const filterMps = ref('');
+const filterMps = ref('mps');
 const utilZoomed = ref(false);
 const includeHistorical = ref(false);
 
@@ -472,6 +473,8 @@ const formatN = (n: any) => {
 const generateDayColumns = () => {
   const daysInMonth = new Date(selectedYear.value, selectedMonth.value, 0).getDate();
   const cols = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(selectedYear.value, selectedMonth.value - 1, d);
     const dayOfWeek = date.getDay();
@@ -479,6 +482,7 @@ const generateDayColumns = () => {
       day: d,
       dayName: dayNames[dayOfWeek],
       isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+      isPast: date < today,
       date: date
     });
   }

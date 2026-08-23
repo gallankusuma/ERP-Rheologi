@@ -391,11 +391,93 @@ router.put('/stability/:studyId/checkpoints/:cpId', authMiddleware, async (req: 
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// POST create stability checkpoint
+router.post('/stability/:studyId/checkpoints', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { checkpoint_month, label, scheduled_date } = req.body;
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO rnd_stability_checkpoints (study_id, checkpoint_month, label, scheduled_date, status)
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [req.params.studyId, checkpoint_month ?? 0, label || null, scheduled_date || null]
+    );
+    res.status(201).json({ data: { id: result.insertId }, message: 'Checkpoint created' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 // DELETE stability study
 router.delete('/stability/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
     await pool.query('DELETE FROM rnd_stability_studies WHERE id = ?', [req.params.id]);
     res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// GET stability params for a study
+router.get('/stability/:id/params', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [params] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM rnd_stability_params WHERE study_id = ? ORDER BY sort_order, id', [req.params.id]
+    );
+    res.json({ data: params });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// POST add stability param
+router.post('/stability/:id/params', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, spec, sort_order } = req.body;
+    const [result] = await pool.query<ResultSetHeader>(
+      'INSERT INTO rnd_stability_params (study_id, name, spec, sort_order) VALUES (?, ?, ?, ?)',
+      [req.params.id, name, spec || null, sort_order || 0]
+    );
+    res.status(201).json({ data: { id: result.insertId }, message: 'Parameter added' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT update stability param
+router.put('/stability/params/:paramId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, spec, sort_order } = req.body;
+    await pool.query(
+      'UPDATE rnd_stability_params SET name=?, spec=?, sort_order=? WHERE id=?',
+      [name, spec || null, sort_order || 0, req.params.paramId]
+    );
+    res.json({ message: 'Parameter updated' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE stability param
+router.delete('/stability/params/:paramId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await pool.query('DELETE FROM rnd_stability_params WHERE id = ?', [req.params.paramId]);
+    res.json({ message: 'Deleted' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// GET stability readings for a study
+router.get('/stability/:id/readings', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [readings] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM rnd_stability_readings WHERE study_id = ? ORDER BY param_id, checkpoint_id', [req.params.id]
+    );
+    res.json({ data: readings });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT batch upsert stability readings
+router.put('/stability/:id/readings', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { readings } = req.body;
+    if (!Array.isArray(readings)) return res.status(400).json({ error: 'readings must be an array' });
+    for (const r of readings) {
+      await pool.query(
+        `INSERT INTO rnd_stability_readings (study_id, param_id, checkpoint_id, value)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+        [req.params.id, r.param_id, r.checkpoint_id, r.value ?? null]
+      );
+    }
+    res.json({ message: 'Readings saved' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

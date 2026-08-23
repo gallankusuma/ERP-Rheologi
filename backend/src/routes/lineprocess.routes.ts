@@ -59,6 +59,13 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
     );
     (line as any).products = products;
 
+    // load process steps
+    const steps = await dbAll(
+      'SELECT * FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC',
+      [req.params.id]
+    );
+    (line as any).steps = steps;
+
     res.json({ data: line });
   } catch (error) {
     console.error('Error fetching line process:', error);
@@ -145,6 +152,92 @@ router.delete('/:id', authMiddleware, requirePermission('master_data.line-proces
   } catch (error) {
     console.error('Error deleting line process:', error);
     res.status(500).json({ error: 'Failed to delete line process' });
+  }
+});
+
+// process steps CRUD
+router.get('/:id/steps', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const steps = await dbAll(
+      'SELECT * FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC',
+      [req.params.id]
+    );
+    res.json({ data: steps });
+  } catch (error) {
+    console.error('Error fetching steps:', error);
+    res.status(500).json({ error: 'Failed to fetch steps' });
+  }
+});
+
+router.post('/:id/steps', authMiddleware, requirePermission('master_data.line-processes', 'update'), async (req: Request, res: Response) => {
+  try {
+    const { process_name, description, standard_duration_minutes, is_qc_checkpoint } = req.body;
+    if (!process_name) return res.status(400).json({ error: 'process_name is required' });
+
+    // get next step_order
+    const maxRow = await dbGet(
+      'SELECT COALESCE(MAX(step_order), 0) as max_order FROM line_process_steps WHERE line_process_id = ?',
+      [req.params.id]
+    );
+    const nextOrder = ((maxRow as any)?.max_order || 0) + 1;
+
+    const result = await dbRun(
+      'INSERT INTO line_process_steps (line_process_id, step_order, process_name, description, standard_duration_minutes, is_qc_checkpoint) VALUES (?, ?, ?, ?, ?, ?)',
+      [req.params.id, nextOrder, process_name, description || null, standard_duration_minutes || null, is_qc_checkpoint ? 1 : 0]
+    );
+
+    const created = await dbGet('SELECT * FROM line_process_steps WHERE id = ?', [result.insertId]);
+    res.status(201).json({ data: created });
+  } catch (error) {
+    console.error('Error creating step:', error);
+    res.status(500).json({ error: 'Failed to create step' });
+  }
+});
+
+router.put('/:id/steps/:stepId', authMiddleware, requirePermission('master_data.line-processes', 'update'), async (req: Request, res: Response) => {
+  try {
+    const { process_name, description, standard_duration_minutes, is_qc_checkpoint } = req.body;
+    if (!process_name) return res.status(400).json({ error: 'process_name is required' });
+
+    await dbRun(
+      'UPDATE line_process_steps SET process_name = ?, description = ?, standard_duration_minutes = ?, is_qc_checkpoint = ? WHERE id = ? AND line_process_id = ?',
+      [process_name, description || null, standard_duration_minutes || null, is_qc_checkpoint ? 1 : 0, req.params.stepId, req.params.id]
+    );
+    res.json({ message: 'Step updated' });
+  } catch (error) {
+    console.error('Error updating step:', error);
+    res.status(500).json({ error: 'Failed to update step' });
+  }
+});
+
+router.delete('/:id/steps/:stepId', authMiddleware, requirePermission('master_data.line-processes', 'update'), async (req: Request, res: Response) => {
+  try {
+    await dbRun(
+      'DELETE FROM line_process_steps WHERE id = ? AND line_process_id = ?',
+      [req.params.stepId, req.params.id]
+    );
+    res.json({ message: 'Step deleted' });
+  } catch (error) {
+    console.error('Error deleting step:', error);
+    res.status(500).json({ error: 'Failed to delete step' });
+  }
+});
+
+router.put('/:id/steps-reorder', authMiddleware, requirePermission('master_data.line-processes', 'update'), async (req: Request, res: Response) => {
+  try {
+    const { step_ids } = req.body;
+    if (!Array.isArray(step_ids)) return res.status(400).json({ error: 'step_ids array required' });
+
+    for (let i = 0; i < step_ids.length; i++) {
+      await dbRun(
+        'UPDATE line_process_steps SET step_order = ? WHERE id = ? AND line_process_id = ?',
+        [i + 1, step_ids[i], req.params.id]
+      );
+    }
+    res.json({ message: 'Steps reordered' });
+  } catch (error) {
+    console.error('Error reordering steps:', error);
+    res.status(500).json({ error: 'Failed to reorder steps' });
   }
 });
 

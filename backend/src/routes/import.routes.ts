@@ -183,6 +183,14 @@ const templates = {
         resource_harga: 190
       }
     ]
+  },
+  inventory: {
+    headers: ['sku', 'warehouse_code', 'quantity', 'batch_number', 'mode'],
+    sample: [
+      { sku: 'RM-001', warehouse_code: 'WH-001', quantity: 500, batch_number: '', mode: 'replace' },
+      { sku: 'RM-002', warehouse_code: 'WH-001', quantity: 1200, batch_number: 'BATCH-2026-01', mode: 'replace' },
+      { sku: 'FG-001', warehouse_code: 'WH-002', quantity: 50, batch_number: '', mode: 'add' },
+    ]
   }
 };
 
@@ -548,6 +556,25 @@ async function validateData(entity: string, data: any[]): Promise<{
           }
           break;
         }
+
+        case 'inventory': {
+          if (!row.sku) errors.push('SKU is required');
+          if (row.quantity === undefined || row.quantity === null || row.quantity === '') errors.push('Quantity is required');
+          const qty = Number(row.quantity);
+          if (isNaN(qty) || qty < 0) errors.push('Quantity must be a non-negative number');
+
+          if (row.sku) {
+            const prod = await dbGet('SELECT id FROM products WHERE sku = ?', [row.sku]);
+            if (!prod) errors.push(`Product with SKU '${row.sku}' not found`);
+          }
+          if (row.warehouse_code) {
+            const wh = await dbGet('SELECT id FROM warehouses WHERE code = ?', [row.warehouse_code]);
+            if (!wh) errors.push(`Warehouse '${row.warehouse_code}' not found`);
+          }
+          const mode = (row.mode || 'replace').toString().toLowerCase();
+          if (!['replace', 'add'].includes(mode)) errors.push('Mode must be "replace" or "add"');
+          break;
+        }
       }
 
       if (errors.length > 0) {
@@ -693,6 +720,46 @@ async function importData(entity: string, data: any[]): Promise<number> {
             [row.code, row.name, row.satuan, parseNumber(row.harga), equipmentVendorId]
           );
           break;
+
+        case 'inventory': {
+          const prod = await dbGet('SELECT id FROM products WHERE sku = ?', [row.sku]) as any;
+          if (!prod) throw new Error(`Product SKU '${row.sku}' not found`);
+          const whCode = row.warehouse_code || 'WH-001';
+          const wh = await dbGet('SELECT id FROM warehouses WHERE code = ?', [whCode]) as any;
+          const warehouseId = wh?.id || 1;
+          const qty = Number(row.quantity) || 0;
+          const batchNum = row.batch_number || null;
+          const mode = (row.mode || 'replace').toString().toLowerCase();
+
+          // check existing stock
+          const existing = await dbGet(
+            'SELECT id, quantity FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = ? LIMIT 1',
+            [prod.id, warehouseId, 'available']
+          ) as any;
+
+          if (existing) {
+            if (mode === 'replace') {
+              await dbRun('UPDATE inventory_stocks SET quantity = ?, batch_number = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+                [qty, batchNum, existing.id]);
+            } else {
+              await dbRun('UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+                [qty, existing.id]);
+            }
+          } else {
+            await dbRun(
+              'INSERT INTO inventory_stocks (product_id, warehouse_id, quantity, status, batch_number, last_updated) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
+              [prod.id, warehouseId, qty, 'available', batchNum]
+            );
+          }
+
+          // record stock movement for audit
+          await dbRun(
+            `INSERT INTO stock_movements (warehouse_id, product_id, batch_number, movement_type, quantity, reference_type, notes, created_at)
+             VALUES (?, ?, ?, 'in', ?, 'initial_balance', ?, CURRENT_TIMESTAMP)`,
+            [warehouseId, prod.id, batchNum, qty, `Initial stock import (${mode}) via Excel`]
+          );
+          break;
+        }
       }
       
       importedCount++;

@@ -225,9 +225,9 @@
               <input v-model="form.title" type="text" required class="w-full border rounded px-3 py-2">
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
-              <select v-model="form.client_id" class="w-full border rounded px-3 py-2">
-                <option :value="null">Select Client</option>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Client <span class="text-red-500">*</span></label>
+              <select v-model="form.client_id" required class="w-full border rounded px-3 py-2">
+                <option :value="null" disabled>Select Client</option>
                 <option v-for="client in clients" :key="client.id" :value="client.id">{{ client.name }}</option>
               </select>
             </div>
@@ -412,9 +412,10 @@ const createProject = async () => {
       await loadProjects();
       router.push(`/projects/${data.id}`);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to save project:', error);
-    alert('Failed to save project');
+    const msg = error?.response?.data?.error || error?.response?.data?.message || 'Failed to save project';
+    alert(msg);
   }
 };
 

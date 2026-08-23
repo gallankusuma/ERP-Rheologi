@@ -242,6 +242,83 @@
           </div>
         </div>
 
+        <!-- TAB: PROCESS STEPS -->
+        <div v-if="activeTab === 'steps'" class="space-y-5">
+          <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700 p-6">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="font-semibold text-gray-800 dark:text-gray-100">Process Steps Template</h2>
+              <span class="text-xs text-gray-400">{{ steps.length }} steps</span>
+            </div>
+
+            <!-- steps list -->
+            <div v-if="steps.length" class="space-y-2 mb-4">
+              <div v-for="(step, idx) in steps" :key="step.id"
+                class="border border-gray-200 dark:border-slate-600 rounded-xl p-4 hover:border-teal-300 transition-all">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-full bg-teal-100 dark:bg-teal-800 flex items-center justify-center text-sm font-bold text-teal-700 dark:text-teal-200 flex-shrink-0">
+                      {{ idx + 1 }}
+                    </div>
+                    <div>
+                      <div class="font-semibold text-gray-900 dark:text-gray-100">{{ step.process_name }}</div>
+                      <p v-if="step.description" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ step.description }}</p>
+                      <div class="flex gap-3 mt-1">
+                        <span v-if="step.standard_duration_minutes" class="text-xs text-gray-400">{{ step.standard_duration_minutes }} menit</span>
+                        <span v-if="step.is_qc_checkpoint" class="text-xs text-purple-600 font-semibold">QC Checkpoint</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex gap-1">
+                    <button @click="editStep(step)" class="p-1.5 text-gray-400 hover:text-teal-600 rounded transition-colors" title="Edit">
+                      ✏️
+                    </button>
+                    <button @click="deleteStep(step.id)" class="p-1.5 text-gray-400 hover:text-red-600 rounded transition-colors" title="Hapus">
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p v-else class="text-gray-400 text-sm py-4 text-center">Belum ada process steps. Tambahkan template step produksi di bawah.</p>
+
+            <!-- add/edit form -->
+            <div class="border-t border-dashed pt-4">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                {{ editingStep ? 'Edit Step' : 'Tambah Step Baru' }}
+              </h4>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="col-span-2">
+                  <input v-model="stepForm.process_name" placeholder="Nama proses (cth: Mixing Awal)"
+                    class="w-full px-3 py-2 border border-gray-200 dark:border-slate-600 dark:bg-slate-700 dark:text-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-teal-500" />
+                </div>
+                <div class="col-span-2">
+                  <input v-model="stepForm.description" placeholder="Deskripsi singkat (opsional)"
+                    class="w-full px-3 py-2 border border-gray-200 dark:border-slate-600 dark:bg-slate-700 dark:text-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-teal-500" />
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 mb-1 block">Durasi Standar (menit)</label>
+                  <input v-model.number="stepForm.standard_duration_minutes" type="number" placeholder="cth: 30"
+                    class="w-full px-3 py-2 border border-gray-200 dark:border-slate-600 dark:bg-slate-700 dark:text-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-teal-500" />
+                </div>
+                <div class="flex items-center gap-2 mt-5">
+                  <input v-model="stepForm.is_qc_checkpoint" type="checkbox" id="qcCheck" class="rounded" />
+                  <label for="qcCheck" class="text-sm text-gray-700 dark:text-gray-300">QC Checkpoint</label>
+                </div>
+              </div>
+              <div class="flex gap-2 mt-3">
+                <button @click="saveStep" :disabled="!stepForm.process_name"
+                  class="px-4 py-2 bg-teal-600 text-white text-sm rounded-xl hover:bg-teal-700 disabled:opacity-50 font-semibold">
+                  {{ editingStep ? 'Update' : '+ Tambah Step' }}
+                </button>
+                <button v-if="editingStep" @click="cancelEditStep"
+                  class="px-4 py-2 border border-gray-200 text-gray-600 text-sm rounded-xl hover:bg-gray-50">
+                  Batal
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- ==================== TAB: DOCUMENTS ==================== -->
         <div v-if="activeTab === 'documents'" class="space-y-5">
           <!-- Add document form -->
@@ -350,11 +427,15 @@ const activeTab = ref('general');
 const uomList = ref<any[]>([]);
 const bomProducts = ref<any[]>([]);
 const documents = ref<any[]>([]);
+const steps = ref<any[]>([]);
+const editingStep = ref<any>(null);
+const stepForm = ref({ process_name: '', description: '', standard_duration_minutes: null as number | null, is_qc_checkpoint: false });
 
 const tabs = [
   { key: 'general', label: '📋 General' },
   { key: 'capacity', label: '⚙️ Shifts & Capacity' },
   { key: 'energy', label: '⚡ Energy & Specs' },
+  { key: 'steps', label: '🔄 Process Steps' },
   { key: 'documents', label: '📎 Documents' },
 ];
 
@@ -410,6 +491,7 @@ const loadLine = async () => {
     const res = await api.get(`/line-processes/${route.params.id}`);
     line.value = res.data.data;
     documents.value = res.data.data.documents || [];
+    steps.value = res.data.data.steps || [];
     populateForm(res.data.data);
   } catch (e) {
     console.error(e);
@@ -522,6 +604,58 @@ const showToast = (msg: string) => {
   toastMsg.value = msg;
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toastMsg.value = ''; }, 3000);
+};
+
+// steps CRUD
+const loadSteps = async () => {
+  try {
+    const res = await api.get(`/line-processes/${route.params.id}/steps`);
+    steps.value = res.data.data || [];
+  } catch (e) { console.error(e); }
+};
+
+const saveStep = async () => {
+  if (!stepForm.value.process_name) return;
+  try {
+    if (editingStep.value) {
+      await api.put(`/line-processes/${route.params.id}/steps/${editingStep.value.id}`, stepForm.value);
+      showToast('Step diperbarui');
+    } else {
+      await api.post(`/line-processes/${route.params.id}/steps`, stepForm.value);
+      showToast('Step ditambahkan');
+    }
+    editingStep.value = null;
+    stepForm.value = { process_name: '', description: '', standard_duration_minutes: null, is_qc_checkpoint: false };
+    await loadSteps();
+  } catch (e: any) {
+    alert(e?.response?.data?.error || 'Gagal menyimpan step');
+  }
+};
+
+const editStep = (step: any) => {
+  editingStep.value = step;
+  stepForm.value = {
+    process_name: step.process_name,
+    description: step.description || '',
+    standard_duration_minutes: step.standard_duration_minutes,
+    is_qc_checkpoint: !!step.is_qc_checkpoint
+  };
+};
+
+const cancelEditStep = () => {
+  editingStep.value = null;
+  stepForm.value = { process_name: '', description: '', standard_duration_minutes: null, is_qc_checkpoint: false };
+};
+
+const deleteStep = async (stepId: number) => {
+  if (!confirm('Hapus step ini?')) return;
+  try {
+    await api.delete(`/line-processes/${route.params.id}/steps/${stepId}`);
+    await loadSteps();
+    showToast('Step dihapus');
+  } catch (e: any) {
+    alert(e?.response?.data?.error || 'Gagal menghapus step');
+  }
 };
 </script>
 

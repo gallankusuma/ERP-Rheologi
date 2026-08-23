@@ -29,7 +29,9 @@ router.get('/', authMiddleware, requirePermission('production.workorders', 'view
               lp.name as line_process_name, lp.code as line_process_code,
               lp.capacity_per_hour, u.name as capacity_unit_name,
               mh.mps_number, w.week_number as mps_week_number,
-              COALESCE(cu.full_name, cu.username) as created_by_name
+              COALESCE(cu.full_name, cu.username) as created_by_name,
+              (SELECT COUNT(*) FROM wo_materials wm WHERE wm.wo_id = w.id) as materials_total,
+              (SELECT COUNT(*) FROM wo_materials wm WHERE wm.wo_id = w.id AND wm.quantity_issued >= wm.quantity_required) as materials_ready
        FROM work_orders w 
        JOIN products p ON w.product_id = p.id
        LEFT JOIN line_processes lp ON w.line_process_id = lp.id
@@ -276,6 +278,44 @@ router.put('/:id', authMiddleware, requirePermission('production.workorders', 'u
 
     await dbRun(`UPDATE work_orders SET ${updates.join(', ')} WHERE id = ?`, params);
 
+    // auto-generate process logs from line_process_steps template when starting production
+    if (status === 'in_progress') {
+      const effectiveLine = line_process_id || current.line_process_id;
+      if (effectiveLine) {
+        // check if logs already exist (avoid duplicates on resume)
+        const existingLogs = await dbAll(
+          'SELECT id FROM wo_process_logs WHERE wo_id = ? LIMIT 1', [woId]
+        );
+        if (!(existingLogs as any[]).length) {
+          const templateSteps = await dbAll(
+            'SELECT * FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC',
+            [effectiveLine]
+          );
+          const userId = (req as any).user?.userId || null;
+          for (const step of templateSteps as any[]) {
+            await dbRun(
+              `INSERT INTO wo_process_logs (wo_id, process_name, status, notes, recorded_by)
+               VALUES (?, ?, 'pending', ?, ?)`,
+              [woId, step.process_name, step.description || null, userId]
+            );
+            // auto-create QC checkpoint for QC steps
+            if (step.is_qc_checkpoint) {
+              const existsQC = await dbGet(
+                'SELECT id FROM wo_qc_checkpoints WHERE wo_id = ? AND process_stage = ?',
+                [woId, step.process_name]
+              );
+              if (!existsQC) {
+                await dbRun(
+                  `INSERT INTO wo_qc_checkpoints (wo_id, process_stage, is_mandatory, qc_type) VALUES (?, ?, 1, 'LP')`,
+                  [woId, step.process_name]
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
     res.json({ message: 'Work order updated successfully' });
   } catch (error) {
     console.error('Error updating work order:', error);
@@ -338,6 +378,100 @@ router.patch('/:id/status', authMiddleware, requirePermission('production.workor
 });
 
 // DELETE /api/workorders/:id — soft-delete for WOs with transactions
+// PUT /api/workorders/:id/reschedule — move WO to different week
+router.put('/:id/reschedule', authMiddleware, requirePermission('production.workorders', 'update'), async (req: Request, res: Response) => {
+  try {
+    const woId = Number(req.params.id);
+    const userId = (req as any).user?.userId || null;
+    const { new_week_number, new_year, new_quantity, reason } = req.body;
+
+    if (!new_week_number || !new_year) {
+      return res.status(400).json({ error: 'new_week_number and new_year are required' });
+    }
+    if (!reason || reason.trim().length === 0) {
+      return res.status(400).json({ error: 'Reason is required for reschedule' });
+    }
+
+    const wo = await dbGet('SELECT * FROM work_orders WHERE id = ?', [woId]) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+
+    // status-based reschedule rules
+    const status = (wo.status || '').toLowerCase();
+    const terminalStatuses = ['in_progress', 'in-progress', 'completed', 'closed', 'cancelled', 'on_hold'];
+    if (terminalStatuses.includes(status)) {
+      return res.status(422).json({
+        error: `Cannot reschedule WO in status "${wo.status}". Only DRAFT, APPROVED, or RELEASED WOs can be rescheduled.`,
+        code: 'STATUS_LOCKED'
+      });
+    }
+
+    // qty change only for draft/approved
+    const qtyChangeAllowed = ['draft', 'pending', 'planned', 'approved'].includes(status);
+    const finalQty = (new_quantity && qtyChangeAllowed) ? Number(new_quantity) : Number(wo.quantity);
+
+    // calculate new scheduled dates from week number
+    const jan4 = new Date(new_year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const monday = new Date(jan4);
+    monday.setDate(jan4.getDate() - dayOfWeek + 1 + (new_week_number - 1) * 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+    const newStart = fmt(monday);
+    const newEnd = fmt(sunday);
+
+    // skip if nothing changed
+    if (wo.week_number === new_week_number && wo.year === new_year && Number(wo.quantity) === finalQty) {
+      return res.json({ message: 'No change needed', changed: false });
+    }
+
+    await dbTransaction(async (conn: any) => {
+      // log the reschedule
+      await conn.execute(
+        `INSERT INTO wo_reschedule_log (wo_id, old_week_number, old_year, old_scheduled_start, old_scheduled_end, old_quantity, new_week_number, new_year, new_scheduled_start, new_scheduled_end, new_quantity, reason, rescheduled_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [woId, wo.week_number, wo.year, wo.scheduled_start, wo.scheduled_end, wo.quantity,
+         new_week_number, new_year, newStart, newEnd, finalQty, reason.trim(), userId]
+      );
+
+      // update the WO
+      await conn.execute(
+        `UPDATE work_orders SET week_number = ?, year = ?, scheduled_start = ?, scheduled_end = ?, quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [new_week_number, new_year, newStart, newEnd, finalQty, woId]
+      );
+    });
+
+    res.json({
+      message: `WO ${wo.wo_number} rescheduled from W${wo.week_number} to W${new_week_number}`,
+      changed: true,
+      old: { week: wo.week_number, year: wo.year, qty: Number(wo.quantity) },
+      new: { week: new_week_number, year: new_year, qty: finalQty, start: newStart, end: newEnd }
+    });
+  } catch (error) {
+    console.error('Error rescheduling WO:', error);
+    res.status(500).json({ error: 'Failed to reschedule work order' });
+  }
+});
+
+// GET /api/workorders/:id/reschedule-log — reschedule history
+router.get('/:id/reschedule-log', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
+  try {
+    const logs = await dbAll(
+      `SELECT rl.*, u.full_name as rescheduled_by_name
+       FROM wo_reschedule_log rl
+       LEFT JOIN users u ON rl.rescheduled_by = u.id
+       WHERE rl.wo_id = ?
+       ORDER BY rl.created_at DESC`,
+      [req.params.id]
+    );
+    res.json({ data: logs });
+  } catch (error) {
+    console.error('Error fetching reschedule log:', error);
+    res.status(500).json({ error: 'Failed to fetch reschedule log' });
+  }
+});
+
 router.delete('/:id', authMiddleware, requirePermission('production.workorders', 'delete'), async (req: Request, res: Response) => {
   try {
     const woId = req.params.id;

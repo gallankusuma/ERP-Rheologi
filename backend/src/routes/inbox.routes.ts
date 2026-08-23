@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbRun, dbGet, dbQuery } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = Router();
 
@@ -32,7 +33,7 @@ initInboxTable();
 // ============================================
 // GET /api/inbox - Get inbox for current user
 // ============================================
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const items = await dbAll(`
@@ -53,7 +54,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
 // ============================================
 // GET /api/inbox/unread-count - Get unread count
 // ============================================
-router.get('/unread-count', authMiddleware, async (req: Request, res: Response) => {
+router.get('/unread-count', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const result = await dbGet('SELECT COUNT(*) as count FROM inbox_notifications WHERE user_id = ? AND is_read = 0', [userId]);
@@ -66,7 +67,7 @@ router.get('/unread-count', authMiddleware, async (req: Request, res: Response) 
 // ============================================
 // PUT /api/inbox/:id/read - Mark single as read
 // ============================================
-router.put('/:id/read', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id/read', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     await dbRun('UPDATE inbox_notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, userId]);
@@ -79,7 +80,7 @@ router.put('/:id/read', authMiddleware, async (req: Request, res: Response) => {
 // ============================================
 // PUT /api/inbox/read-all - Mark all as read
 // ============================================
-router.put('/read-all', authMiddleware, async (req: Request, res: Response) => {
+router.put('/read-all', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     await dbRun('UPDATE inbox_notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0', [userId]);
@@ -92,7 +93,7 @@ router.put('/read-all', authMiddleware, async (req: Request, res: Response) => {
 // ============================================
 // POST /api/inbox/send - Send notification to user(s) (internal use)
 // ============================================
-router.post('/send', authMiddleware, async (req: Request, res: Response) => {
+router.post('/send', authMiddleware, requirePermission('crm.messages', 'create'), async (req: Request, res: Response) => {
   try {
     const { user_ids, type, title, message, link, ref_id, ref_type } = req.body;
     const senderId = (req as any).userId;
@@ -122,7 +123,7 @@ router.post('/send', authMiddleware, async (req: Request, res: Response) => {
 // ============================================
 // DELETE /api/inbox/:id - Delete a notification
 // ============================================
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('crm.messages', 'delete'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     await dbRun('DELETE FROM inbox_notifications WHERE id = ? AND user_id = ?', [req.params.id, userId]);

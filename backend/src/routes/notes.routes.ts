@@ -35,7 +35,7 @@ const ensureNotesTable = async () => {
 ensureNotesTable();
 
 // GET / — list notes
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.notes', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, category, linked_type, pinned } = req.query;
     let where = '1=1';

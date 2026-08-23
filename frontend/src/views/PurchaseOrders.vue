@@ -2006,9 +2006,7 @@ function printPO() {
                   <i>No.</i> <strong>${form.value.po_number}</strong><br/>
                   Date &nbsp; ${formatDate(form.value.po_date)}
                 </div>
-                <!-- Logo -->
-                <div style="font-size: 24px; font-weight: 900; color: #64748b; letter-spacing: -1px; margin-top: auto; padding-right: 5px;">Rhe<span style="color: #3b82f6;">o</span>logi</div>
-                <div style="font-size: 10px; font-weight: bold; color: #3b82f6; padding-right: 5px;">INDONESIA</div>
+                <img src="/logo-rheologi-v2.png" alt="Rheologi" style="height:140px;margin:-40px -10px -40px 0;padding-right:5px;"/>
               </div>
             </div>
             
@@ -2055,8 +2053,8 @@ function printPO() {
               <div class="bottom-left">
                 <div class="bank-box">
                   <div style="font-size: 9px; text-align: left;">COST CODE:</div>
-                  BANK TRANSFER<br/>
-                  -
+                  <strong>${approvedPRs.value.find(p => p.id === form.value.pr_id)?.project_name || currentPO.value?.project_name || '-'}</strong><br/>
+                  BANK TRANSFER
                 </div>
                 <div class="info-grid">
                   <div class="info-row" style="background-color: #ffeb3b;">
@@ -2098,14 +2096,17 @@ function printPO() {
               </div>
             </div>
             
-            <!-- Signatures Grid -->
+            <!-- Signatures Grid with QR -->
             <div class="signatures">
               <div style="width: 33%;">
                  <br/><br/>
                  <div style="text-align: left; padding-left: 10px;">
-                    REQUESTED BY : <strong>AA</strong><br/>
-                    PREPARED BY : <strong>GK</strong><br/>
-                    CHECKED BY : <strong>ZN</strong>
+                    REQUESTED BY : <strong>${approvedPRs.value.find(p => p.id === form.value.pr_id)?.requester_name || '-'}</strong><br/>
+                    PREPARED BY : <strong>${currentPO.value?.created_by_name || '-'}</strong><br/>
+                    CHECKED BY : <strong>-</strong>
+                 </div>
+                 <div style="margin-top:8px;text-align:left;padding-left:10px">
+                   <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('PO:'+form.value.po_number+'|By:'+(currentPO.value?.created_by_name||'-')+'|Tgl:'+new Date().toLocaleDateString('id-ID'))}" width="80" height="80"/>
                  </div>
               </div>
               <div style="width: 33%;">
@@ -2116,8 +2117,10 @@ function printPO() {
               </div>
               <div style="width: 34%;">
                  AUTHORISED BY :
-                 <div class="sig-line"></div>
-                 (Authorised Signatories Only)
+                 <div style="margin-top:8px">
+                   <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('PO:'+form.value.po_number+'|Authorised|Tgl:'+formatDate(form.value.po_date))}" width="80" height="80"/>
+                 </div>
+                 <div style="margin-top:4px">(Authorised Signatories Only)</div>
               </div>
             </div>
             
@@ -2157,7 +2160,7 @@ function printPO() {
   if (printWindow) {
     printWindow.document.write(printContent);
     printWindow.document.close();
-    setTimeout(() => printWindow.print(), 250);
+    setTimeout(() => printWindow.print(), 500);
   }
 }
 

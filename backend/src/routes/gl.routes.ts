@@ -1,7 +1,14 @@
 import express, { Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import {
+  createManualJournal, submitJournal, approveJournal,
+  postJournal, reverseJournal
+} from '../services/accounting-posting.service';
+import {
+  softClosePeriod, closePeriod, reopenPeriod
+} from '../services/fiscal-period.service';
 
 const router = express.Router();
 
@@ -51,18 +58,25 @@ router.get('/coa/:id', authMiddleware, async (req: Request, res: Response) => {
 // POST /gl/coa — Create account
 router.post('/coa', authMiddleware, requirePermission('finance.general-ledger', 'create'), async (req: Request, res: Response) => {
   try {
-    const { account_code, account_name, account_type, parent_id, level, is_header, normal_balance, description, opening_balance, currency } = req.body;
+    const { account_code, account_name, account_type, parent_id, level, is_header, normal_balance,
+            description, currency, is_control_account, control_subledger, financial_statement_section } = req.body;
     if (!account_code || !account_name || !account_type || !normal_balance) {
-      return res.status(400).json({ error: 'account_code, account_name, account_type, and normal_balance are required' });
+      return res.status(422).json({ error: 'account_code, account_name, account_type, and normal_balance are required', code: 'VALIDATION_ERROR' });
     }
 
     const existing = await dbGet('SELECT id FROM chart_of_accounts WHERE account_code = ?', [account_code]);
-    if (existing) return res.status(400).json({ error: 'Account code already exists' });
+    if (existing) return res.status(409).json({ error: 'Account code already exists', code: 'DUPLICATE_ACCOUNT' });
 
+    const isHeader = is_header || 0;
     const result = await dbRun(
-      `INSERT INTO chart_of_accounts (account_code, account_name, account_type, parent_id, level, is_header, normal_balance, description, opening_balance, current_balance, currency)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [account_code, account_name, account_type, parent_id || null, level || 1, is_header || 0, normal_balance, description || null, opening_balance || 0, opening_balance || 0, currency || 'IDR']
+      `INSERT INTO chart_of_accounts (account_code, account_name, account_type, parent_id, level,
+       is_header, is_postable, normal_balance, description, currency,
+       is_control_account, control_subledger, allow_manual_posting, financial_statement_section)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [account_code, account_name, account_type, parent_id || null, level || 1,
+       isHeader, isHeader ? 0 : 1, normal_balance, description || null, currency || 'IDR',
+       is_control_account || 0, control_subledger || null,
+       is_control_account ? 0 : 1, financial_statement_section || null]
     );
     res.status(201).json({ success: true, data: { id: result.insertId } });
   } catch (error) {
@@ -124,16 +138,48 @@ router.get('/fiscal-periods', authMiddleware, async (req: Request, res: Response
   }
 });
 
-// ===========================
-// JOURNAL ENTRIES
-// ===========================
+// period management endpoints
+router.post('/fiscal-periods/:id/soft-close', authMiddleware, requirePermission('finance.general-ledger', 'period_close'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    await dbTransaction(async (conn: any) => {
+      await softClosePeriod(conn, Number(req.params.id), userId);
+    });
+    res.json({ success: true, message: 'Period soft-closed' });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
 
-const generateJournalNumber = () => {
-  const now = new Date();
-  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `JE-${datePart}-${rand}`;
-};
+router.post('/fiscal-periods/:id/close', authMiddleware, requirePermission('finance.general-ledger', 'period_close'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    await dbTransaction(async (conn: any) => {
+      await closePeriod(conn, Number(req.params.id), userId);
+    });
+    res.json({ success: true, message: 'Period closed' });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
+
+router.post('/fiscal-periods/:id/reopen', authMiddleware, requirePermission('finance.general-ledger', 'period_close'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const { reason } = req.body;
+    await dbTransaction(async (conn: any) => {
+      await reopenPeriod(conn, Number(req.params.id), userId, reason);
+    });
+    res.json({ success: true, message: 'Period reopened' });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
+
+// journal entries
 
 // GET /gl/journal-entries
 router.get('/journal-entries', authMiddleware, async (req: Request, res: Response) => {
@@ -190,143 +236,151 @@ router.get('/journal-entries/:id', authMiddleware, async (req: Request, res: Res
   }
 });
 
-// POST /gl/journal-entries — Create manual journal entry
+// POST /gl/journal-entries — Create manual journal (transactional via AccountingPostingService)
 router.post('/journal-entries', authMiddleware, requirePermission('finance.general-ledger', 'create'), async (req: Request, res: Response) => {
   try {
-    const { entry_date, description, reference_type, reference_id, reference_number, lines } = req.body;
+    const { entry_date, description, lines, transaction_currency } = req.body;
+    const idempotencyKey = req.headers['idempotency-key'] as string || req.body.idempotency_key;
+    const userId = (req as any).user?.userId;
 
     if (!entry_date || !description) {
-      return res.status(400).json({ error: 'entry_date and description are required' });
+      return res.status(422).json({ error: 'entry_date and description are required', code: 'VALIDATION_ERROR' });
     }
-    if (!lines || !Array.isArray(lines) || lines.length < 2) {
-      return res.status(400).json({ error: 'At least 2 journal lines required' });
-    }
-
-    // Validate debit = credit
-    let totalDebit = 0, totalCredit = 0;
-    for (const line of lines) {
-      totalDebit += Number(line.debit || 0);
-      totalCredit += Number(line.credit || 0);
-    }
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      return res.status(400).json({ error: `Debit (${totalDebit}) must equal Credit (${totalCredit})` });
+    if (!idempotencyKey) {
+      return res.status(422).json({ error: 'Idempotency-Key header or idempotency_key body field is required', code: 'VALIDATION_ERROR' });
     }
 
-    // Find fiscal period
-    const period = await dbGet(
-      'SELECT id FROM fiscal_periods WHERE ? BETWEEN start_date AND end_date AND status = ?',
-      [entry_date, 'open']
-    ) as any;
+    // map frontend field names to service input
+    const mappedLines = (lines || []).map((l: any) => ({
+      accountId: l.account_id || l.accountId,
+      description: l.description,
+      debit: String(l.debit || '0'),
+      credit: String(l.credit || '0'),
+      currency: l.currency,
+      exchangeRate: l.exchange_rate ? String(l.exchange_rate) : undefined,
+      costCenterId: l.cost_center_id,
+      projectId: l.project_id,
+      productId: l.product_id,
+      warehouseId: l.warehouse_id,
+      lotId: l.lot_id,
+      vendorId: l.vendor_id,
+      customerId: l.customer_id,
+    }));
 
-    const entryNumber = generateJournalNumber();
-    const userId = (req as any).user?.id || (req as any).user?.userId || null;
+    const result = await dbTransaction(async (conn: any) => {
+      return createManualJournal(conn, {
+        entryDate: entry_date,
+        description,
+        lines: mappedLines,
+        transactionCurrency: transaction_currency,
+        idempotencyKey,
+        userId,
+      });
+    });
 
-    const result = await dbRun(
-      `INSERT INTO journal_entries (entry_number, entry_date, fiscal_period_id, description, reference_type, reference_id, reference_number, total_debit, total_credit, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)`,
-      [entryNumber, entry_date, period?.id || null, description, reference_type || null, reference_id || null, reference_number || null, totalDebit, totalCredit, userId]
-    );
-    const jeId = result.insertId;
-
-    // Insert lines
-    for (const line of lines) {
-      const debit = Number(line.debit || 0);
-      const credit = Number(line.credit || 0);
-      const rate = Number(line.exchange_rate || 1);
-      await dbRun(
-        `INSERT INTO journal_lines (journal_entry_id, account_id, description, debit, credit, currency, exchange_rate, base_debit, base_credit)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [jeId, line.account_id, line.description || null, debit, credit, line.currency || 'IDR', rate, debit * rate, credit * rate]
-      );
-    }
-
-    res.status(201).json({ success: true, data: { id: jeId, entry_number: entryNumber } });
-  } catch (error) {
+    res.status(201).json({ success: true, data: result });
+  } catch (error: any) {
     console.error('Error creating journal entry:', error);
-    res.status(500).json({ error: 'Failed to create journal entry' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
   }
 });
 
-// PUT /gl/journal-entries/:id/post — Post journal entry (update account balances)
-router.put('/journal-entries/:id/post', authMiddleware, requirePermission('finance.general-ledger', 'update'), async (req: Request, res: Response) => {
+// POST /gl/journal-entries/:id/submit — Submit for approval (DRAFT -> PENDING_APPROVAL)
+router.post('/journal-entries/:id/submit', authMiddleware, requirePermission('finance.general-ledger', 'submit'), async (req: Request, res: Response) => {
   try {
-    const entry = await dbGet('SELECT * FROM journal_entries WHERE id = ?', [req.params.id]) as any;
-    if (!entry) return res.status(404).json({ error: 'Journal entry not found' });
-    if (entry.status !== 'draft') return res.status(400).json({ error: 'Only draft entries can be posted' });
+    const userId = (req as any).user?.userId;
+    const idempotencyKey = req.headers['idempotency-key'] as string || req.body.idempotency_key || `submit-${req.params.id}-${Date.now()}`;
+    const result = await dbTransaction(async (conn: any) => {
+      return submitJournal(conn, { journalId: Number(req.params.id), userId, idempotencyKey });
+    });
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
 
-    const lines = await dbAll('SELECT * FROM journal_lines WHERE journal_entry_id = ?', [req.params.id]) as any[];
-    const userId = (req as any).user?.id || (req as any).user?.userId || null;
+// POST /gl/journal-entries/:id/approve — Approve (PENDING_APPROVAL -> APPROVED, SoD enforced)
+router.post('/journal-entries/:id/approve', authMiddleware, requirePermission('finance.general-ledger', 'approve'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const idempotencyKey = req.headers['idempotency-key'] as string || req.body.idempotency_key || `approve-${req.params.id}-${Date.now()}`;
+    const result = await dbTransaction(async (conn: any) => {
+      return approveJournal(conn, { journalId: Number(req.params.id), userId, idempotencyKey });
+    });
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
 
-    // Update account balances
-    for (const line of lines) {
-      const account = await dbGet('SELECT * FROM chart_of_accounts WHERE id = ?', [line.account_id]) as any;
-      if (!account) continue;
-
-      // For debit-normal accounts (assets, expenses, COGS): debit increases, credit decreases
-      // For credit-normal accounts (liabilities, equity, revenue): credit increases, debit decreases
-      let balanceChange = 0;
-      if (account.normal_balance === 'debit') {
-        balanceChange = Number(line.base_debit || 0) - Number(line.base_credit || 0);
-      } else {
-        balanceChange = Number(line.base_credit || 0) - Number(line.base_debit || 0);
-      }
-
-      await dbRun(
-        'UPDATE chart_of_accounts SET current_balance = current_balance + ? WHERE id = ?',
-        [balanceChange, line.account_id]
-      );
+// POST /gl/journal-entries/:id/post — Post journal (APPROVED -> POSTED, SoD enforced)
+router.post('/journal-entries/:id/post', authMiddleware, requirePermission('finance.general-ledger', 'post'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const idempotencyKey = req.headers['idempotency-key'] as string || req.body.idempotency_key;
+    if (!idempotencyKey) {
+      return res.status(422).json({ error: 'Idempotency-Key is required for posting', code: 'VALIDATION_ERROR' });
     }
-
-    // Mark as posted
-    await dbRun(
-      `UPDATE journal_entries SET status = 'posted', posted_by = ?, posted_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [userId, req.params.id]
-    );
-
-    res.json({ success: true, message: 'Journal entry posted' });
-  } catch (error) {
-    console.error('Error posting journal entry:', error);
-    res.status(500).json({ error: 'Failed to post journal entry' });
+    const result = await dbTransaction(async (conn: any) => {
+      return postJournal(conn, { journalId: Number(req.params.id), userId, idempotencyKey });
+    });
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
   }
 });
 
-// PUT /gl/journal-entries/:id/void — Void a posted journal entry (reverse balances)
-router.put('/journal-entries/:id/void', authMiddleware, requirePermission('finance.general-ledger', 'update'), async (req: Request, res: Response) => {
+// keep legacy PUT route for backward compatibility
+router.put('/journal-entries/:id/post', authMiddleware, requirePermission('finance.general-ledger', 'post'), async (req: Request, res: Response) => {
   try {
-    const entry = await dbGet('SELECT * FROM journal_entries WHERE id = ?', [req.params.id]) as any;
-    if (!entry) return res.status(404).json({ error: 'Journal entry not found' });
-    if (entry.status !== 'posted') return res.status(400).json({ error: 'Only posted entries can be voided' });
+    const userId = (req as any).user?.userId;
+    const idempotencyKey = req.headers['idempotency-key'] as string || `legacy-post-${req.params.id}-${Date.now()}`;
+    const result = await dbTransaction(async (conn: any) => {
+      return postJournal(conn, { journalId: Number(req.params.id), userId, idempotencyKey });
+    });
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
 
+// POST /gl/journal-entries/:id/reverse — Immutable reversal (creates opposite journal)
+router.post('/journal-entries/:id/reverse', authMiddleware, requirePermission('finance.general-ledger', 'reverse'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
     const { reason } = req.body;
-    const lines = await dbAll('SELECT * FROM journal_lines WHERE journal_entry_id = ?', [req.params.id]) as any[];
-    const userId = (req as any).user?.id || (req as any).user?.userId || null;
-
-    // Reverse account balances
-    for (const line of lines) {
-      const account = await dbGet('SELECT * FROM chart_of_accounts WHERE id = ?', [line.account_id]) as any;
-      if (!account) continue;
-
-      let balanceChange = 0;
-      if (account.normal_balance === 'debit') {
-        balanceChange = -(Number(line.base_debit || 0) - Number(line.base_credit || 0));
-      } else {
-        balanceChange = -(Number(line.base_credit || 0) - Number(line.base_debit || 0));
-      }
-
-      await dbRun(
-        'UPDATE chart_of_accounts SET current_balance = current_balance + ? WHERE id = ?',
-        [balanceChange, line.account_id]
-      );
+    const idempotencyKey = req.headers['idempotency-key'] as string || req.body.idempotency_key;
+    if (!idempotencyKey) {
+      return res.status(422).json({ error: 'Idempotency-Key is required for reversal', code: 'VALIDATION_ERROR' });
     }
+    const result = await dbTransaction(async (conn: any) => {
+      return reverseJournal(conn, { journalId: Number(req.params.id), userId, idempotencyKey, reason });
+    });
+    res.status(201).json({ success: true, data: result });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
+  }
+});
 
-    await dbRun(
-      `UPDATE journal_entries SET status = 'voided', voided_by = ?, voided_at = CURRENT_TIMESTAMP, void_reason = ? WHERE id = ?`,
-      [userId, reason || null, req.params.id]
-    );
-
-    res.json({ success: true, message: 'Journal entry voided' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to void journal entry' });
+// legacy void route — redirects to reversal
+router.put('/journal-entries/:id/void', authMiddleware, requirePermission('finance.general-ledger', 'reverse'), async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const { reason } = req.body;
+    const idempotencyKey = `legacy-void-${req.params.id}-${Date.now()}`;
+    const result = await dbTransaction(async (conn: any) => {
+      return reverseJournal(conn, { journalId: Number(req.params.id), userId, idempotencyKey, reason: reason || 'Voided via legacy endpoint' });
+    });
+    res.json({ success: true, data: result, message: 'Journal reversed (immutable reversal replaces void)' });
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message, code: error.code });
   }
 });
 
@@ -337,39 +391,50 @@ router.put('/journal-entries/:id/void', authMiddleware, requirePermission('finan
 router.get('/trial-balance', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { as_of_date } = req.query;
+    const asOf = as_of_date || new Date().toISOString().split('T')[0];
 
-    let sql: string;
-    let params: any[] = [];
+    // always derive from posted journals only (blueprint §19 rule: posted journals only)
+    const sql = `
+      SELECT coa.id, coa.account_code, coa.account_name, coa.account_type,
+             coa.normal_balance, coa.is_header, coa.financial_statement_section,
+             COALESCE(SUM(jl.base_debit), 0) as total_debit,
+             COALESCE(SUM(jl.base_credit), 0) as total_credit,
+             CASE WHEN coa.normal_balance = 'debit'
+               THEN COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0)
+               ELSE COALESCE(SUM(jl.base_credit), 0) - COALESCE(SUM(jl.base_debit), 0)
+             END as balance
+      FROM chart_of_accounts coa
+      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
+        AND jl.journal_entry_id IN (
+          SELECT id FROM journal_entries WHERE status = 'posted' AND posting_date <= ?
+        )
+      WHERE coa.is_active = 1 AND coa.is_header = 0
+      GROUP BY coa.id
+      HAVING total_debit > 0 OR total_credit > 0
+      ORDER BY coa.account_code ASC`;
 
-    if (as_of_date) {
-      // Calculate balances from posted journals up to date
-      sql = `
-        SELECT coa.id, coa.account_code, coa.account_name, coa.account_type,
-               coa.normal_balance, coa.is_header, coa.opening_balance,
-               COALESCE(SUM(jl.base_debit), 0) as total_debit,
-               COALESCE(SUM(jl.base_credit), 0) as total_credit,
-               coa.opening_balance + COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0) as ending_balance_debit_basis
-        FROM chart_of_accounts coa
-        LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-        LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date <= ?
-        WHERE coa.is_active = 1
-        GROUP BY coa.id
-        ORDER BY coa.account_code ASC`;
-      params = [as_of_date];
-    } else {
-      // Use current_balance from COA
-      sql = `
-        SELECT id, account_code, account_name, account_type, normal_balance, is_header,
-               opening_balance, current_balance,
-               CASE WHEN normal_balance = 'debit' THEN current_balance ELSE 0 END as debit_balance,
-               CASE WHEN normal_balance = 'credit' THEN current_balance ELSE 0 END as credit_balance
-        FROM chart_of_accounts
-        WHERE is_active = 1
-        ORDER BY account_code ASC`;
+    const accounts = await dbAll(sql, [asOf]);
+
+    // compute TB totals
+    let tbDebit = 0, tbCredit = 0;
+    for (const a of accounts as any[]) {
+      if ((a as any).normal_balance === 'debit') {
+        tbDebit += Number((a as any).balance || 0);
+      } else {
+        tbCredit += Number((a as any).balance || 0);
+      }
     }
 
-    const accounts = await dbAll(sql, params);
-    res.json({ success: true, data: accounts });
+    res.json({
+      success: true,
+      data: accounts,
+      summary: {
+        as_of_date: asOf,
+        total_debit_balance: tbDebit,
+        total_credit_balance: tbCredit,
+        is_balanced: Math.abs(tbDebit - tbCredit) < 0.005,
+      },
+    });
   } catch (error) {
     console.error('Error fetching trial balance:', error);
     res.status(500).json({ error: 'Failed to fetch trial balance' });
@@ -389,12 +454,14 @@ router.get('/reports/income-statement', authMiddleware, async (req: Request, res
     }
 
     // Revenue (4xxx)
-    const revenue = await dbAll(`
+     const revenue = await dbAll(`
       SELECT coa.account_code, coa.account_name,
              COALESCE(SUM(jl.base_credit), 0) - COALESCE(SUM(jl.base_debit), 0) as amount
       FROM chart_of_accounts coa
-      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-      LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date BETWEEN ? AND ?
+      LEFT JOIN (
+        SELECT jl2.account_id, jl2.base_debit, jl2.base_credit FROM journal_lines jl2
+        INNER JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id AND je2.status = 'posted' AND je2.posting_date BETWEEN ? AND ?
+      ) jl ON coa.id = jl.account_id
       WHERE coa.account_type = 'revenue' AND coa.is_header = 0
       GROUP BY coa.id ORDER BY coa.account_code`, [from_date, to_date]);
 
@@ -403,8 +470,10 @@ router.get('/reports/income-statement', authMiddleware, async (req: Request, res
       SELECT coa.account_code, coa.account_name,
              COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0) as amount
       FROM chart_of_accounts coa
-      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-      LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date BETWEEN ? AND ?
+      LEFT JOIN (
+        SELECT jl2.account_id, jl2.base_debit, jl2.base_credit FROM journal_lines jl2
+        INNER JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id AND je2.status = 'posted' AND je2.posting_date BETWEEN ? AND ?
+      ) jl ON coa.id = jl.account_id
       WHERE coa.account_type = 'cogs' AND coa.is_header = 0
       GROUP BY coa.id ORDER BY coa.account_code`, [from_date, to_date]);
 
@@ -413,8 +482,10 @@ router.get('/reports/income-statement', authMiddleware, async (req: Request, res
       SELECT coa.account_code, coa.account_name,
              COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0) as amount
       FROM chart_of_accounts coa
-      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-      LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date BETWEEN ? AND ?
+      LEFT JOIN (
+        SELECT jl2.account_id, jl2.base_debit, jl2.base_credit FROM journal_lines jl2
+        INNER JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id AND je2.status = 'posted' AND je2.posting_date BETWEEN ? AND ?
+      ) jl ON coa.id = jl.account_id
       WHERE coa.account_type = 'expense' AND coa.is_header = 0
       GROUP BY coa.id ORDER BY coa.account_code`, [from_date, to_date]);
 
@@ -426,8 +497,10 @@ router.get('/reports/income-statement', authMiddleware, async (req: Request, res
                ELSE -(COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0))
              END as amount
       FROM chart_of_accounts coa
-      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-      LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date BETWEEN ? AND ?
+      LEFT JOIN (
+        SELECT jl2.account_id, jl2.base_debit, jl2.base_credit FROM journal_lines jl2
+        INNER JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id AND je2.status = 'posted' AND je2.posting_date BETWEEN ? AND ?
+      ) jl ON coa.id = jl.account_id
       WHERE coa.account_type = 'other_income' AND coa.is_header = 0
       GROUP BY coa.id ORDER BY coa.account_code`, [from_date, to_date]);
 
@@ -436,8 +509,10 @@ router.get('/reports/income-statement', authMiddleware, async (req: Request, res
       SELECT coa.account_code, coa.account_name,
              COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0) as amount
       FROM chart_of_accounts coa
-      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-      LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date BETWEEN ? AND ?
+      LEFT JOIN (
+        SELECT jl2.account_id, jl2.base_debit, jl2.base_credit FROM journal_lines jl2
+        INNER JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id AND je2.status = 'posted' AND je2.posting_date BETWEEN ? AND ?
+      ) jl ON coa.id = jl.account_id
       WHERE coa.account_type = 'tax' AND coa.is_header = 0
       GROUP BY coa.id ORDER BY coa.account_code`, [from_date, to_date]);
 
@@ -482,16 +557,18 @@ router.get('/reports/balance-sheet', authMiddleware, async (req: Request, res: R
     const getBalances = async (type: string) => {
       return await dbAll(`
         SELECT coa.account_code, coa.account_name, coa.is_header, coa.normal_balance,
-               coa.opening_balance,
+               coa.financial_statement_section,
                COALESCE(SUM(jl.base_debit), 0) as total_debit,
                COALESCE(SUM(jl.base_credit), 0) as total_credit,
                CASE WHEN coa.normal_balance = 'debit'
-                 THEN coa.opening_balance + COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0)
-                 ELSE coa.opening_balance + COALESCE(SUM(jl.base_credit), 0) - COALESCE(SUM(jl.base_debit), 0)
+                 THEN COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0)
+                 ELSE COALESCE(SUM(jl.base_credit), 0) - COALESCE(SUM(jl.base_debit), 0)
                END as balance
         FROM chart_of_accounts coa
-        LEFT JOIN journal_lines jl ON coa.id = jl.account_id
-        LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date <= ?
+        LEFT JOIN (
+          SELECT jl2.account_id, jl2.base_debit, jl2.base_credit FROM journal_lines jl2
+          INNER JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id AND je2.status = 'posted' AND je2.posting_date <= ?
+        ) jl ON coa.id = jl.account_id
         WHERE coa.account_type = ? AND coa.is_active = 1 AND coa.is_header = 0
         GROUP BY coa.id ORDER BY coa.account_code`, [asOf, type]);
     };
@@ -521,7 +598,7 @@ router.get('/reports/balance-sheet', authMiddleware, async (req: Request, res: R
   }
 });
 
-// GET /gl/reports/cash-flow
+// GET /gl/reports/cash-flow — uses account roles instead of hardcoded codes
 router.get('/reports/cash-flow', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { from_date, to_date } = req.query;
@@ -529,38 +606,47 @@ router.get('/reports/cash-flow', authMiddleware, async (req: Request, res: Respo
       return res.status(400).json({ error: 'from_date and to_date are required' });
     }
 
-    // Cash accounts movement (1110, 1111, 1112, 1113)
+    // resolve cash/bank accounts from account_roles table
+    const cashRoles = await dbAll(
+      `SELECT DISTINCT ar.account_id FROM account_roles ar
+       WHERE ar.role_code IN ('CASH_ON_HAND', 'BANK_OPERATING') AND ar.company_id = 1
+         AND ar.effective_from <= ? AND (ar.effective_to IS NULL OR ar.effective_to >= ?)`,
+      [to_date, from_date]
+    ) as any[];
+
+    // fallback to hardcoded if no roles configured yet
+    let cashAccountFilter: string;
+    let cashParams: any[] = [];
+    if (cashRoles.length > 0) {
+      const ids = cashRoles.map((r: any) => r.account_id);
+      cashAccountFilter = `coa.id IN (${ids.map(() => '?').join(',')})`;
+      cashParams = ids;
+    } else {
+      cashAccountFilter = `coa.account_code IN ('1110', '1111', '1112', '1113')`;
+    }
+
     const cashFlow = await dbAll(`
       SELECT je.reference_type,
              COALESCE(SUM(jl.base_debit), 0) as cash_in,
              COALESCE(SUM(jl.base_credit), 0) as cash_out,
              COALESCE(SUM(jl.base_debit), 0) - COALESCE(SUM(jl.base_credit), 0) as net_flow
       FROM journal_lines jl
-      JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted'
+      INNER JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted'
       JOIN chart_of_accounts coa ON jl.account_id = coa.id
-      WHERE coa.account_code IN ('1110', '1111', '1112', '1113')
-        AND je.entry_date BETWEEN ? AND ?
+      WHERE ${cashAccountFilter}
+        AND je.posting_date BETWEEN ? AND ?
       GROUP BY je.reference_type
-      ORDER BY net_flow DESC`, [from_date, to_date]);
+      ORDER BY net_flow DESC`, [...cashParams, from_date, to_date]);
 
-    // Opening cash balance
+    // opening cash balance from posted journals only
     const openingCash = await dbGet(`
-      SELECT COALESCE(SUM(
-        CASE WHEN coa.normal_balance = 'debit'
-          THEN coa.opening_balance + COALESCE(d.total_debit, 0) - COALESCE(d.total_credit, 0)
-          ELSE coa.opening_balance + COALESCE(d.total_credit, 0) - COALESCE(d.total_debit, 0)
-        END
-      ), 0) as balance
-      FROM chart_of_accounts coa
-      LEFT JOIN (
-        SELECT jl.account_id, SUM(jl.base_debit) as total_debit, SUM(jl.base_credit) as total_credit
-        FROM journal_lines jl
-        JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.entry_date < ?
-        GROUP BY jl.account_id
-      ) d ON coa.id = d.account_id
-      WHERE coa.account_code IN ('1110', '1111', '1112', '1113')`, [from_date]) as any;
+      SELECT COALESCE(SUM(jl.base_debit - jl.base_credit), 0) as balance
+      FROM journal_lines jl
+      INNER JOIN journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted' AND je.posting_date < ?
+      JOIN chart_of_accounts coa ON jl.account_id = coa.id
+      WHERE ${cashAccountFilter}`, [...cashParams, from_date]) as any;
 
-    const totalNetFlow = (cashFlow as any[]).reduce((s, f) => s + Number(f.net_flow || 0), 0);
+    const totalNetFlow = (cashFlow as any[]).reduce((s: number, f: any) => s + Number(f.net_flow || 0), 0);
 
     res.json({
       success: true,
@@ -606,14 +692,19 @@ router.get('/dashboard', authMiddleware, async (req: Request, res: Response) => 
       ORDER BY je.created_at DESC LIMIT 10`
     );
 
-    // Account type summary
+    // account type summary derived from posted journals
     const typeSummary = await dbAll(`
-      SELECT account_type, COUNT(*) as count,
-             SUM(current_balance) as total_balance
-      FROM chart_of_accounts
-      WHERE is_active = 1 AND is_header = 0
-      GROUP BY account_type
-      ORDER BY account_type`
+      SELECT coa.account_type, COUNT(DISTINCT coa.id) as count,
+             SUM(CASE WHEN coa.normal_balance = 'debit'
+               THEN COALESCE(jl.base_debit, 0) - COALESCE(jl.base_credit, 0)
+               ELSE COALESCE(jl.base_credit, 0) - COALESCE(jl.base_debit, 0)
+             END) as total_balance
+      FROM chart_of_accounts coa
+      LEFT JOIN journal_lines jl ON coa.id = jl.account_id
+        AND jl.journal_entry_id IN (SELECT id FROM journal_entries WHERE status = 'posted')
+      WHERE coa.is_active = 1 AND coa.is_header = 0
+      GROUP BY coa.account_type
+      ORDER BY coa.account_type`
     );
 
     res.json({

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { dbAll, dbGet, dbRun } from '../config/database';
+import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { canReleaseBatch, autoCreateFpa } from '../services/qc.service';
@@ -626,48 +626,54 @@ router.put('/rework/:id/status', authMiddleware, requirePermission('quality.rewo
     const { status } = req.body;
     const reworkId = Number(req.params.id);
     const userId = (req as any).user?.userId || null;
-    await dbRun('UPDATE qc_rework_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [status, reworkId]);
 
-    // when rework completed, auto-create re-test FPA
-    let retestFpa: { fpaId: number; fpaNumber: string } | null = null;
-    if (status === 'completed') {
-      try {
-        const rework = await dbGet(
-          `SELECT r.*, b.batch_number FROM qc_rework_orders r
-           LEFT JOIN batches b ON b.id = r.batch_id
-           WHERE r.id = ?`,
-          [reworkId]
-        ) as any;
-        if (rework && rework.product_id) {
-          retestFpa = await autoCreateFpa({
-            type: 'FG',
-            productId: rework.product_id,
-            batchNo: rework.batch_number || null,
-            woId: rework.wo_id || null,
-            notes: `Re-test after rework ${rework.rework_number || reworkId}`,
-            createdBy: userId,
-            quantity: rework.quantity || null
-          });
-          if (retestFpa) {
-            await dbRun('UPDATE qc_rework_orders SET retest_fpa_id = ? WHERE id = ?', [retestFpa.fpaId, reworkId]);
-          }
-        }
-        // update linked NCR status to investigating
-        if (rework && rework.ncr_id) {
-          await dbRun(
-            "UPDATE qc_ncr SET status = 'investigating', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'open'",
-            [rework.ncr_id]
-          );
-        }
-      } catch (retestErr: any) {
-        console.error('Failed to auto-create re-test FPA on rework complete:', retestErr.message);
-      }
+    // non-completion status updates are simple
+    if (status !== 'completed') {
+      await dbRun('UPDATE qc_rework_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [status, reworkId]);
+      return res.json({ success: true, message: 'Rework status updated' });
     }
 
+    // completion: atomic transaction — rework + retest FPA + NCR all-or-nothing
+    let retestFpa: { fpaId: number; fpaNumber: string } | null = null;
+    await dbTransaction(async (conn: any) => {
+      await conn.execute('UPDATE qc_rework_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [status, reworkId]);
+
+      const [reworkRows] = await conn.execute(
+        `SELECT r.*, b.batch_number FROM qc_rework_orders r
+         LEFT JOIN batches b ON b.id = r.batch_id
+         WHERE r.id = ?`,
+        [reworkId]
+      );
+      const rework = reworkRows[0];
+
+      if (rework && rework.product_id) {
+        retestFpa = await autoCreateFpa({
+          type: 'FG',
+          productId: rework.product_id,
+          batchNo: rework.batch_number || null,
+          woId: rework.wo_id || null,
+          notes: `Re-test after rework ${rework.rework_number || reworkId}`,
+          createdBy: userId,
+          quantity: rework.quantity || null
+        });
+        if (retestFpa) {
+          await conn.execute('UPDATE qc_rework_orders SET retest_fpa_id = ? WHERE id = ?', [retestFpa.fpaId, reworkId]);
+        }
+      }
+
+      if (rework && rework.ncr_id) {
+        await conn.execute(
+          "UPDATE qc_ncr SET status = 'investigating', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'open'",
+          [rework.ncr_id]
+        );
+      }
+    });
+
+    const result = retestFpa as { fpaId: number; fpaNumber: string } | null;
     res.json({
       success: true,
-      message: 'Rework status updated' + (retestFpa ? `, re-test FPA ${retestFpa.fpaNumber} created` : ''),
-      retest_fpa: retestFpa
+      message: 'Rework status updated' + (result ? `, re-test FPA ${result.fpaNumber} created` : ''),
+      retest_fpa: result
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update rework status' });

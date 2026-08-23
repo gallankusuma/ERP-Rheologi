@@ -127,7 +127,7 @@
                 </td>
                 <td class="px-4 py-3 text-right text-sm font-medium text-gray-800">{{ formatN(mat.quantity_required) }}</td>
                 <td class="px-4 py-3 text-right text-sm">
-                  <span :class="mat.stock_available >= mat.pending_qty ? 'text-emerald-600 font-semibold' : 'text-red-600 font-bold'">
+                  <span :class="Number(mat.stock_available) >= Number(mat.pending_qty) ? 'text-emerald-600 font-semibold' : 'text-red-600 font-bold'">
                     {{ formatN(mat.stock_available) }}
                   </span>
                 </td>
@@ -140,17 +140,24 @@
                 <td class="px-4 py-3 text-center">
                   <span v-if="mat.pending_qty <= 0"
                     class="px-2.5 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full">✓ Done</span>
-                  <span v-else-if="mat.stock_available < mat.pending_qty"
+                  <span v-else-if="Number(mat.stock_available) < Number(mat.pending_qty)"
                     class="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">Stok Kurang</span>
                   <span v-else
                     class="px-2.5 py-1 bg-orange-100 text-orange-700 text-xs font-bold rounded-full">Pending</span>
                 </td>
                 <td class="px-4 py-3 text-center">
-                  <button v-if="mat.pending_qty > 0"
-                    @click="openIssueModal(mat)"
-                    class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all">
-                    Issue
-                  </button>
+                  <div class="flex gap-1.5 justify-center">
+                    <button v-if="mat.pending_qty > 0"
+                      @click="openIssueModal(mat)"
+                      class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all">
+                      Issue
+                    </button>
+                    <button v-if="Number(mat.quantity_issued) > 0"
+                      @click="openReturnModal(mat)"
+                      class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-all">
+                      Return
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -175,7 +182,7 @@
               <div class="flex justify-between mt-3 text-sm">
                 <div><span class="text-gray-500">Dibutuhkan:</span> <strong>{{ formatN(issueModal.pending_qty) }}</strong></div>
                 <div><span class="text-gray-500">Stok:</span>
-                  <strong :class="issueModal.stock_available >= issueModal.pending_qty ? 'text-emerald-600' : 'text-red-600'">
+                  <strong :class="Number(issueModal.stock_available) >= Number(issueModal.pending_qty) ? 'text-emerald-600' : 'text-red-600'">
                     {{ formatN(issueModal.stock_available) }}
                   </strong>
                 </div>
@@ -205,9 +212,10 @@
             </div>
 
             <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1.5">Batch Number <span class="text-gray-400">(opsional)</span></label>
-              <input v-model="issueForm.batch_number" type="text" placeholder="cth: BATCH-2024-001"
+              <label class="block text-sm font-semibold text-gray-700 mb-1.5">Batch / Lot Number <span class="text-red-500">*</span></label>
+              <input v-model="issueForm.batch_number" type="text" placeholder="cth: BATCH-2024-001" required
                 class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500" />
+              <p v-if="!issueForm.batch_number" class="text-xs text-red-500 mt-1">Batch/lot wajib dipilih untuk material issue</p>
             </div>
 
             <!-- Stock warning -->
@@ -222,9 +230,55 @@
               Batal
             </button>
             <button @click="submitIssue"
-              :disabled="submitting || !issueForm.quantity || issueForm.quantity <= 0"
+              :disabled="submitting || !issueForm.quantity || issueForm.quantity <= 0 || !issueForm.batch_number"
               class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
               {{ submitting ? '⏳ Proses...' : '✅ Konfirmasi Issue' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Return Modal -->
+    <Teleport to="body">
+      <div v-if="returnModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+          <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="font-bold text-gray-900">Return Material ke Gudang</h3>
+            <button @click="returnModal = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+          </div>
+          <div class="px-6 py-5 space-y-4">
+            <div class="bg-amber-50 rounded-xl p-4">
+              <div class="font-semibold text-gray-900">{{ returnModal.material_name }}</div>
+              <div class="text-xs text-gray-400 font-mono mt-0.5">{{ returnModal.material_sku }}</div>
+              <div class="flex justify-between mt-3 text-sm">
+                <div><span class="text-gray-500">Sudah Di-issue:</span> <strong>{{ formatN(returnModal.quantity_issued) }}</strong></div>
+                <div><span class="text-gray-500">Dibutuhkan:</span> <strong>{{ formatN(returnModal.quantity_required) }}</strong></div>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1.5">Jumlah yang Dikembalikan *</label>
+              <input v-model.number="returnForm.quantity" type="number"
+                :max="Number(returnModal.quantity_issued)" :min="0.001" step="0.001"
+                class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1.5">Catatan (opsional)</label>
+              <input v-model="returnForm.notes" type="text" placeholder="cth: Sisa 22 kg dikembalikan ke gudang"
+                class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500" />
+            </div>
+          </div>
+          <div class="px-6 pb-5 flex gap-3">
+            <button @click="returnModal = null"
+              class="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              Batal
+            </button>
+            <button @click="submitReturn"
+              :disabled="submittingReturn || !returnForm.quantity || returnForm.quantity <= 0"
+              class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
+              {{ submittingReturn ? 'Proses...' : 'Kembalikan ke Gudang' }}
             </button>
           </div>
         </div>
@@ -268,6 +322,10 @@ const issueModal = ref<any>(null);
 const toast = ref<{ msg: string; type: 'success' | 'error' } | null>(null);
 
 const issueForm = ref({ quantity: 0, warehouse_id: '', batch_number: '' });
+const issueIntentKey = ref('');
+const returnModal = ref<any>(null);
+const returnForm = ref({ quantity: 0, notes: '' });
+const submittingReturn = ref(false);
 
 const pendingMaterials = computed(() => woMaterials.value.filter(m => m.pending_qty > 0));
 
@@ -358,6 +416,8 @@ const generateFromBOM = async () => {
 // Open issue modal for a single material
 const openIssueModal = (mat: any) => {
   issueModal.value = mat;
+  // generate stable idempotency key at intent time (not at submit time)
+  issueIntentKey.value = `issue-${mat.id}-${Date.now()}`;
   issueForm.value = {
     quantity: mat.pending_qty,
     warehouse_id: mat.warehouse_id || '',
@@ -373,8 +433,9 @@ const submitIssue = async () => {
     await api.post('/production/issue-material', {
       wo_material_id: issueModal.value.id,
       quantity: issueForm.value.quantity,
-      warehouse_id: issueForm.value.warehouse_id || undefined,
-      batch_number: issueForm.value.batch_number || undefined
+      warehouse_id: issueForm.value.warehouse_id || 1,
+      batch_number: issueForm.value.batch_number || undefined,
+      idempotency_key: issueIntentKey.value
     });
     showToast(`✓ ${issueModal.value.material_name} berhasil di-issue`);
     issueModal.value = null;
@@ -392,12 +453,16 @@ const issueAllPending = async () => {
   issuingAll.value = true;
   let success = 0;
   let failed = 0;
+  // one stable batch key for the entire bulk operation
+  const bulkTs = Date.now();
   for (const mat of pendingMaterials.value) {
     try {
       await api.post('/production/issue-material', {
         wo_material_id: mat.id,
         quantity: mat.pending_qty,
-        warehouse_id: mat.warehouse_id || undefined
+        warehouse_id: mat.warehouse_id || 1,
+        batch_number: mat.batch_number || undefined,
+        idempotency_key: `bulk-${mat.id}-${bulkTs}`
       });
       success++;
     } catch {
@@ -406,8 +471,38 @@ const issueAllPending = async () => {
   }
   issuingAll.value = false;
   await loadWOMaterials(selectedWO.value.id);
-  if (failed === 0) showToast(`✅ ${success} material berhasil di-issue semua`);
+  if (failed === 0) showToast(`${success} material berhasil di-issue semua`);
   else showToast(`${success} berhasil, ${failed} gagal`, failed > 0 ? 'error' : 'success');
+};
+
+// Return material to warehouse
+const openReturnModal = (mat: any) => {
+  returnModal.value = mat;
+  returnForm.value = {
+    quantity: Number(mat.quantity_issued),
+    notes: ''
+  };
+};
+
+const submitReturn = async () => {
+  if (!returnModal.value || !returnForm.value.quantity) return;
+  submittingReturn.value = true;
+  try {
+    await api.post('/production/issue-material/return', {
+      wo_material_id: returnModal.value.id,
+      quantity: returnForm.value.quantity,
+      warehouse_id: returnModal.value.warehouse_id || 1,
+      notes: returnForm.value.notes || undefined,
+      idempotency_key: `return-${returnModal.value.id}-${Date.now()}`
+    });
+    showToast(`${returnModal.value.material_name} dikembalikan ke gudang`);
+    returnModal.value = null;
+    await loadWOMaterials(selectedWO.value.id);
+  } catch (err: any) {
+    showToast(err?.response?.data?.error || 'Gagal return material', 'error');
+  } finally {
+    submittingReturn.value = false;
+  }
 };
 
 onMounted(() => { loadData(); });

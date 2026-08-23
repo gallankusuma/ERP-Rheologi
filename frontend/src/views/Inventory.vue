@@ -3,9 +3,17 @@
     <!-- Header -->
     <PageHeader title="Stock Overview" icon="📦" subtitle="Manage warehouse inventory levels and transactions">
       <template #actions>
-        <button @click="showUpdateModal = true" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 font-medium transition-colors">
-          + Update Stock
-        </button>
+        <div class="flex gap-2">
+          <button @click="downloadTemplate" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium transition-colors text-sm">
+            📥 Download Template
+          </button>
+          <button @click="showImportModal = true" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium transition-colors text-sm">
+            📤 Import Stock
+          </button>
+          <button @click="showUpdateModal = true" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 font-medium transition-colors text-sm">
+            + Update Stock
+          </button>
+        </div>
       </template>
     </PageHeader>
 
@@ -99,6 +107,76 @@
         <button @click="updateInventory()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 font-medium">Update</button>
       </template>
     </Dialog>
+
+    <!-- Import Modal -->
+    <Teleport to="body">
+      <div v-if="showImportModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg">
+          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+            <h3 class="font-bold text-gray-900 dark:text-gray-100">📤 Import Initial Stock</h3>
+            <button @click="closeImport" class="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+          </div>
+          <div class="px-6 py-5 space-y-4">
+            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl p-3 text-sm text-blue-700 dark:text-blue-300">
+              <p class="font-semibold mb-1">Format kolom Excel/CSV:</p>
+              <p><b>sku</b> — SKU produk (wajib)</p>
+              <p><b>warehouse_code</b> — Kode gudang (default: WH-001)</p>
+              <p><b>quantity</b> — Jumlah stok (wajib)</p>
+              <p><b>batch_number</b> — Nomor batch (opsional)</p>
+              <p><b>mode</b> — "replace" (timpa) atau "add" (tambah)</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Upload File</label>
+              <input ref="fileInput" type="file" accept=".xlsx,.xls,.csv"
+                @change="handleFileSelect"
+                class="w-full border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-gray-700" />
+            </div>
+
+            <!-- Preview -->
+            <div v-if="importPreview" class="space-y-2">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                  {{ importPreview.totalRows }} baris ditemukan
+                </span>
+                <span v-if="importPreview.validRows === importPreview.totalRows" class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">Semua valid</span>
+                <span v-else class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">{{ importPreview.invalidRows.length }} error</span>
+              </div>
+              <div v-if="importPreview.firstError" class="bg-red-50 dark:bg-red-900/20 border border-red-200 rounded-lg p-2 text-xs text-red-700 dark:text-red-400">
+                Baris {{ importPreview.firstError.rowNumber }}: {{ importPreview.firstError.errors.join(', ') }}
+              </div>
+              <div v-if="importPreview.preview?.length" class="overflow-x-auto rounded-lg border border-gray-200">
+                <table class="min-w-full text-xs">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th v-for="col in Object.keys(importPreview.preview[0])" :key="col" class="px-2 py-1 text-left font-semibold text-gray-600">{{ col }}</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100">
+                    <tr v-for="(row, idx) in importPreview.preview" :key="idx">
+                      <td v-for="col in Object.keys(row)" :key="col" class="px-2 py-1 text-gray-700">{{ row[col] }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Import result -->
+            <div v-if="importResult" class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-700 dark:text-emerald-300 font-semibold">
+              {{ importResult }}
+            </div>
+          </div>
+          <div class="px-6 pb-5 flex gap-3">
+            <button @click="closeImport"
+              class="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50">Tutup</button>
+            <button @click="executeImport" :disabled="!importFile || importing || (importPreview && importPreview.validRows !== importPreview.totalRows)"
+              class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
+              {{ importing ? '⏳ Importing...' : '🚀 Import' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -120,6 +198,12 @@ const productStore = useProductStore();
 
 const showUpdateModal = ref(false);
 const showTransactions = ref(false);
+const showImportModal = ref(false);
+const importFile = ref<File | null>(null);
+const importPreview = ref<any>(null);
+const importResult = ref('');
+const importing = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
 const search = ref('');
 const form = ref({
   product_id: '',
@@ -247,5 +331,52 @@ const closeModal = () => {
     location: '',
     notes: '',
   };
+};
+
+const downloadTemplate = () => {
+  window.open('/api/import/template/inventory', '_blank');
+};
+
+const handleFileSelect = async (e: Event) => {
+  const target = e.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+  importFile.value = file;
+  importResult.value = '';
+
+  // preview
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await api.post('/import/preview/inventory', formData);
+    importPreview.value = res.data.validation || res.data;
+  } catch (err: any) {
+    importPreview.value = { totalRows: 0, validRows: 0, invalidRows: [], firstError: { rowNumber: 0, errors: [err.response?.data?.error || err.message] } };
+  }
+};
+
+const executeImport = async () => {
+  if (!importFile.value) return;
+  importing.value = true;
+  importResult.value = '';
+  try {
+    const formData = new FormData();
+    formData.append('file', importFile.value);
+    const res = await api.post('/import/import/inventory', formData);
+    importResult.value = res.data.message || `Berhasil import ${res.data.importedCount} item`;
+    await store.fetchInventory();
+  } catch (err: any) {
+    importResult.value = 'Error: ' + (err.response?.data?.error || err.message);
+  } finally {
+    importing.value = false;
+  }
+};
+
+const closeImport = () => {
+  showImportModal.value = false;
+  importFile.value = null;
+  importPreview.value = null;
+  importResult.value = '';
+  if (fileInput.value) fileInput.value.value = '';
 };
 </script>

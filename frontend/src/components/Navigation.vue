@@ -161,13 +161,13 @@ const menus = [
   {
     label: 'Inventory',
     submenus: [
-      { to: '/inventory/overview', label: 'Stock Overview', status: 'pending' },
-      { to: '/inventory/stock-card', label: 'Stock Card', status: 'pending' },
-      { to: '/inventory/transfer', label: 'Stock Transfer', status: 'pending' },
-      { to: '/inventory/adjustment', label: 'Stock Adjustment', status: 'pending' },
-      { to: '/inventory/opname', label: 'Stock Opname', status: 'pending' },
-      { to: '/inventory/batch-tracking', label: 'Batch/Lot Tracking', status: 'pending' },
-      { to: '/inventory/expiry', label: 'Expiry Monitoring', status: 'pending' },
+      { to: '/inventory/overview', label: 'Stock Overview', status: 'active' },
+      { to: '/inventory/stock-card', label: 'Stock Card', status: 'active' },
+      { to: '/inventory/transfer', label: 'Stock Transfer', status: 'active' },
+      { to: '/inventory/adjustment', label: 'Stock Adjustment', status: 'active' },
+      { to: '/inventory/opname', label: 'Stock Opname', status: 'active' },
+      { to: '/inventory/batch-tracking', label: 'Batch/Lot Tracking', status: 'active' },
+      { to: '/inventory/expiry', label: 'Expiry Monitoring', status: 'active' },
     ]
   },
   {

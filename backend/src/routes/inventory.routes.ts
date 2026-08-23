@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission, checkUserPermission } from '../middleware/permission';
+import { queryStockCard } from '../services/inventory-ledger.service';
 
 const router = Router();
 
@@ -508,12 +509,13 @@ router.post('/opname', authMiddleware, requirePermission('inventory.stock-opname
       [opnameNumber, warehouse_id, notes || null, userId]
     ) as any;
 
-    // auto-populate items from inventory_stocks
+    // lot-aware auto-populate: one item per inventory_stocks row with lot lineage
     await dbRun(`
-      INSERT INTO stock_opname_items (opname_id, product_id, system_qty)
-      SELECT ?, ist.product_id, ist.quantity
+      INSERT INTO stock_opname_items (opname_id, product_id, lot_id, inventory_stock_id, system_qty, status_snapshot, batch_number)
+      SELECT ?, ist.product_id, ist.lot_id, ist.id, ist.quantity, ist.status, ist.batch_number
       FROM inventory_stocks ist
-      WHERE ist.warehouse_id = ?
+      WHERE ist.warehouse_id = ? AND ist.status = 'available'
+      ORDER BY ist.product_id ASC, ist.lot_id ASC
     `, [result.insertId, warehouse_id]);
 
     res.json({ data: { id: result.insertId, opname_number: opnameNumber } });
@@ -567,32 +569,92 @@ router.put('/opname/:id/items', authMiddleware, requirePermission('inventory.sto
 router.post('/opname/:id/post', authMiddleware, requirePermission('inventory.stock-opname', 'approve'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
-    const session = await dbGet('SELECT * FROM stock_opname WHERE id = ?', [req.params.id]) as any;
-    if (!session) return res.status(404).json({ error: 'Session not found' });
-    if (session.status !== 'draft') return res.status(400).json({ error: 'Only draft sessions can be posted' });
 
-    // apply differences to inventory
-    const items = await dbAll('SELECT * FROM stock_opname_items WHERE opname_id = ? AND actual_qty IS NOT NULL', [req.params.id]) as any[];
-    for (const item of items) {
-      const diff = Number(item.actual_qty) - Number(item.system_qty);
-      if (diff !== 0) {
-        await dbRun(`
-          UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP
-          WHERE product_id = ? AND warehouse_id = ?
-        `, [diff, item.product_id, session.warehouse_id]);
+    await dbTransaction(async (conn: any) => {
+      // lock the opname session
+      const [sessionRows] = await conn.execute(
+        'SELECT * FROM stock_opname WHERE id = ? FOR UPDATE', [req.params.id]
+      );
+      const session = (sessionRows as any[])[0];
+      if (!session) throw new Error('Session not found');
+      if (session.status !== 'draft') throw new Error('Only draft sessions can be posted');
 
-        await dbRun(`
-          INSERT INTO stock_movements (warehouse_id, product_id, movement_type, quantity, notes, created_by, moved_at)
-          VALUES (?, ?, 'adjustment', ?, ?, ?, CURRENT_TIMESTAMP)
-        `, [session.warehouse_id, item.product_id, diff, `Stock opname: ${session.opname_number}`, userId]);
+      // set cutoff timestamp at post time
+      const cutoffAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+      // get all counted items, ordered by id for deterministic locking
+      const [items] = await conn.execute(
+        'SELECT * FROM stock_opname_items WHERE opname_id = ? AND actual_qty IS NOT NULL ORDER BY id ASC',
+        [req.params.id]
+      );
+
+      for (const item of (items as any[])) {
+        const diff = Number(item.actual_qty) - Number(item.system_qty);
+        if (diff === 0) continue;
+
+        // lock exact inventory row by id (lot-specific)
+        if (item.inventory_stock_id) {
+          const [stockRows] = await conn.execute(
+            'SELECT * FROM inventory_stocks WHERE id = ? FOR UPDATE',
+            [item.inventory_stock_id]
+          );
+          const stock = (stockRows as any[])[0];
+          if (!stock) {
+            throw new Error(`Inventory stock row ${item.inventory_stock_id} not found for product ${item.product_id}. Cannot apply opname adjustment.`);
+          }
+
+          const currentStockQty = Number(stock.quantity) || 0;
+          if (currentStockQty + diff < 0) {
+            throw new Error(`Opname adjustment would result in negative stock for product ${item.product_id} lot ${item.lot_id} (current: ${currentStockQty}, diff: ${diff})`);
+          }
+
+          await conn.execute(
+            'UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+            [diff, stock.id]
+          );
+        } else {
+          // fallback for legacy items without inventory_stock_id
+          const [stockRows] = await conn.execute(
+            "SELECT * FROM inventory_stocks WHERE product_id = ? AND warehouse_id = ? AND status = 'available' ORDER BY id ASC LIMIT 1 FOR UPDATE",
+            [item.product_id, session.warehouse_id]
+          );
+          const stock = (stockRows as any[])[0];
+          if (!stock) {
+            throw new Error(`No available inventory row for product ${item.product_id} in warehouse ${session.warehouse_id}. Cannot apply opname adjustment.`);
+          }
+
+          const currentStockQty = Number(stock.quantity) || 0;
+          if (currentStockQty + diff < 0) {
+            throw new Error(`Opname adjustment would result in negative stock for product ${item.product_id} (current: ${currentStockQty}, diff: ${diff})`);
+          }
+
+          await conn.execute(
+            'UPDATE inventory_stocks SET quantity = quantity + ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+            [diff, stock.id]
+          );
+        }
+
+        // immutable movement record with lot reference
+        await conn.execute(
+          `INSERT INTO stock_movements (warehouse_id, product_id, movement_type, quantity, lot_id, notes, created_by, moved_at)
+           VALUES (?, ?, 'adjustment', ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          [session.warehouse_id, item.product_id, diff, item.lot_id || null, `Stock opname: ${session.opname_number}`, userId]
+        );
       }
-    }
 
-    await dbRun('UPDATE stock_opname SET status = ?, posted_by = ?, posted_at = CURRENT_TIMESTAMP WHERE id = ?',
-      ['posted', userId, req.params.id]);
+      // mark session as posted with cutoff
+      await conn.execute(
+        'UPDATE stock_opname SET status = ?, posted_by = ?, posted_at = CURRENT_TIMESTAMP, cutoff_at = ? WHERE id = ?',
+        ['posted', userId, cutoffAt, req.params.id]
+      );
+    });
+
     res.json({ message: 'Stock opname posted' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error posting opname:', error);
+    if (error.message?.includes('No available inventory') || error.message?.includes('Only draft') || error.message?.includes('not found') || error.message?.includes('negative stock')) {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to post stock opname' });
   }
 });
@@ -712,6 +774,42 @@ router.get('/', authMiddleware, requirePermission('inventory.dashboard', 'view')
   }
 });
 
+// GET /api/inventory/stock-card - Authoritative stock card from InventoryLedgerQueryService
+router.get('/stock-card', authMiddleware, requirePermission('inventory.stock-card', 'view'), async (req: Request, res: Response) => {
+  try {
+    const { product_id, warehouse_id, from, to, limit, cursor_moved_at, cursor_id } = req.query;
+
+    if (!product_id) {
+      return res.status(422).json({ error: 'product_id is required', code: 'VALIDATION_ERROR' });
+    }
+
+    const cursor = (cursor_moved_at && cursor_id)
+      ? { movedAt: cursor_moved_at as string, id: Number(cursor_id) }
+      : undefined;
+
+    const result = await queryStockCard({
+      productId: Number(product_id),
+      warehouseId: warehouse_id ? Number(warehouse_id) : undefined,
+      from: from as string | undefined,
+      to: to as string | undefined,
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+    });
+
+    res.json({
+      data: result.movements,
+      opening_quantity: result.opening_quantity,
+      closing_quantity: result.closing_quantity,
+      as_of: result.as_of,
+      product_id: result.product_id,
+      warehouse_id: result.warehouse_id,
+    });
+  } catch (error) {
+    console.error('Error fetching stock card:', error);
+    res.status(500).json({ error: 'Failed to fetch stock card' });
+  }
+});
+
 // GET /api/inventory/:id - Get single inventory item
 router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
@@ -769,13 +867,18 @@ router.post('/', authMiddleware, requirePermission('inventory.dashboard', 'creat
 // PUT /api/inventory/:id - Update inventory
 router.put('/:id', authMiddleware, requirePermission('inventory.dashboard', 'update'), async (req: Request, res: Response) => {
   try {
-    const { quantity } = req.body;
+    // P0-6: block direct quantity overwrite — all balance changes must go through stock movements
+    if (req.body.quantity !== undefined) {
+      return res.status(400).json({
+        error: 'Direct quantity update is not allowed. Use stock adjustment or stock opname to change inventory quantities.'
+      });
+    }
 
-    await dbRun(`
-      UPDATE inventory_stocks 
-      SET quantity = ?, last_updated = CURRENT_TIMESTAMP 
-      WHERE id = ?
-    `, [quantity, req.params.id]);
+    const { reorder_point } = req.body;
+    await dbRun(
+      'UPDATE inventory_stocks SET reorder_point = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?',
+      [reorder_point, req.params.id]
+    );
 
     res.json({ message: 'Inventory updated successfully' });
   } catch (error) {
@@ -807,6 +910,7 @@ router.post('/:id/transaction', authMiddleware, requirePermission('inventory.sto
     res.status(500).json({ error: 'Failed to record transaction' });
   }
 });
+
 
 // GET /api/inventory/transactions/:productId - List transactions by product
 router.get('/transactions/:productId', authMiddleware, async (req: Request, res: Response) => {

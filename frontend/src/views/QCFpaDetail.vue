@@ -110,6 +110,27 @@
             <span class="text-sm" :class="fpa.data_complete ? 'text-green-600 font-bold' : 'text-gray-400'">{{ fpa.data_complete ? 'Yes' : 'No' }}</span>
           </div>
         </div>
+        <!-- Disposition Panel (show when failed/rejected) -->
+        <div v-if="(fpa.result === 'Failed' || fpa.status === 'Rejected') && !isDisposed" class="px-4 pb-3">
+          <div class="bg-red-50 border border-red-200 rounded-lg p-3">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-sm font-bold text-red-700">⚠️ QC Failed — Select Disposition</span>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+              <button @click="applyDisposition('rework')" class="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-bold hover:bg-orange-600">🔧 Rework</button>
+              <button @click="applyDisposition('use_as_is')" class="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-bold hover:bg-yellow-600">✅ Use As Is</button>
+              <button @click="applyDisposition('reject_vendor')" class="px-3 py-1.5 bg-purple-500 text-white rounded-lg text-xs font-bold hover:bg-purple-600">📦 Vendor Claim</button>
+              <button @click="applyDisposition('disposal')" class="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700">🗑️ Disposal</button>
+            </div>
+            <input v-model="dispositionNotes" placeholder="Disposition notes (optional)" class="mt-2 w-full px-3 py-1.5 border rounded text-sm" />
+          </div>
+        </div>
+        <div v-if="fpa.disposition && fpa.disposition !== 'Pending'" class="px-4 pb-3">
+          <div class="bg-gray-50 border rounded-lg p-3 flex items-center gap-3">
+            <span class="text-xs font-bold text-gray-500">Disposition:</span>
+            <span class="px-2 py-0.5 rounded text-xs font-bold" :class="dispositionColor(fpa.disposition)">{{ fpa.disposition }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Status Filter Tabs -->
@@ -316,6 +337,28 @@
           </table>
         </div>
       </div>
+      <!-- Log History -->
+      <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden mt-4">
+        <button @click="showAuditLog = !showAuditLog" class="w-full px-4 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition">
+          <span class="font-semibold text-sm text-gray-700">📜 Log History</span>
+          <span class="text-xs text-gray-400">{{ auditLogs.length }} events {{ showAuditLog ? '▲' : '▼' }}</span>
+        </button>
+        <div v-if="showAuditLog" class="p-4">
+          <div v-if="!auditLogs.length" class="text-center py-4 text-gray-400 text-sm">No events recorded yet</div>
+          <div v-else class="space-y-2">
+            <div v-for="log in auditLogs" :key="log.id" class="flex items-start gap-3 px-3 py-2 rounded-lg bg-gray-50 border border-gray-100">
+              <span class="text-lg">{{ eventIcon(log.event_type) }}</span>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="font-semibold text-sm text-gray-800">{{ eventLabel(log.event_type) }}</span>
+                  <span class="text-xs text-gray-400">{{ formatDate(log.created_at) }}</span>
+                </div>
+                <div class="text-xs text-gray-500">by {{ log.actor_name || 'System' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -455,6 +498,35 @@ const printFPA = () => window.print();
 const printCOA = (sp: any) => { alert(`Print COA for ${sp.fpa_number}`); };
 const showCOA = (sp: any) => { alert(`Show on COA: ${sp.fpa_number}`); };
 
+// disposition
+const dispositionNotes = ref('');
+const isDisposed = computed(() => fpa.value.disposition && fpa.value.disposition !== 'Pending');
+
+const applyDisposition = async (action: string) => {
+  const labels: Record<string, string> = { rework: 'Rework', use_as_is: 'Use As Is', reject_vendor: 'Vendor Claim', disposal: 'Disposal' };
+  if (!confirm(`Apply disposition "${labels[action]}"? This action cannot be undone.`)) return;
+  try {
+    const { data } = await api.put(`/qc/fpa/${fpaId.value}/disposition`, {
+      action,
+      notes: dispositionNotes.value
+    });
+    if (data.success) {
+      alert(`Disposition "${labels[action]}" applied.${data.ncr_id ? ' NCR #' + data.ncr_id + ' created.' : ''}${data.rework_id ? ' Rework #' + data.rework_id + ' created.' : ''}`);
+      await loadFpa();
+      loadAuditLog();
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Failed to apply disposition');
+  }
+};
+
+const dispositionColor = (d: string) => ({
+  'Rework': 'bg-orange-100 text-orange-700',
+  'Use As Is': 'bg-yellow-100 text-yellow-700',
+  'Vendor Claim': 'bg-purple-100 text-purple-700',
+  'Disposal': 'bg-red-100 text-red-700',
+}[d] || 'bg-gray-100 text-gray-600');
+
 const statusColor = (s: string) => ({
   'Pending': 'bg-yellow-100 text-yellow-700',
   'Sample Diterima': 'bg-blue-100 text-blue-700',
@@ -468,6 +540,28 @@ const statusColor = (s: string) => ({
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const formatN = (n: any) => { const v = Number(n); return isNaN(v) ? '—' : v.toLocaleString('id-ID', { maximumFractionDigits: 2 }); };
 
-onMounted(loadFpa);
-watch(fpaId, loadFpa);
+const showAuditLog = ref(false);
+const auditLogs = ref<any[]>([]);
+
+const loadAuditLog = async () => {
+  try {
+    const { data } = await api.get(`/qc/fpa/${fpaId.value}/audit-log`);
+    if (data.success) auditLogs.value = data.data;
+  } catch { /* silent */ }
+};
+
+const eventIcon = (t: string) => ({
+  fpa_created: '📋', sample_received: '📦', results_saved: '🔬',
+  data_complete: '✅', approve_l1: '👤', approve_l2: '👥',
+  rejected: '❌', resampled: '🔄', disposition: '⚖️', status_changed: '🔃',
+}[t] || '📝');
+
+const eventLabel = (t: string) => ({
+  fpa_created: 'FPA Created', sample_received: 'Sample Received', results_saved: 'Results Saved',
+  data_complete: 'Data Complete', approve_l1: 'Approve #1', approve_l2: 'Approve #2',
+  rejected: 'Rejected', resampled: 'Resampled', disposition: 'Disposition', status_changed: 'Status Changed',
+}[t] || t);
+
+onMounted(() => { loadFpa(); loadAuditLog(); });
+watch(fpaId, () => { loadFpa(); loadAuditLog(); });
 </script>

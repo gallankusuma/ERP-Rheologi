@@ -220,7 +220,7 @@ const sendInboxNotif = async (
 // lead stages CRUD
 
 // GET /leads/stages — List all stages ordered
-router.get('/stages', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/stages', authMiddleware, requirePermission('crm.leads', 'view'), async (_req: Request, res: Response) => {
   try {
     const stages = await dbAll('SELECT * FROM lead_stages ORDER BY sort_order ASC, id ASC');
     res.json({ success: true, data: stages });
@@ -420,7 +420,7 @@ router.get('/stats/summary', authMiddleware, requirePermission('crm.leads', 'vie
 });
 
 // GET /leads/labels — List all available labels
-router.get('/labels', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/labels', authMiddleware, requirePermission('crm.leads', 'view'), async (_req: Request, res: Response) => {
   try {
     const labels = await dbAll('SELECT * FROM lead_labels ORDER BY name');
     res.json(labels);
@@ -430,7 +430,7 @@ router.get('/labels', authMiddleware, async (_req: Request, res: Response) => {
 });
 
 // POST /leads/labels — Create new label
-router.post('/labels', authMiddleware, async (req: Request, res: Response) => {
+router.post('/labels', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { name, color } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
@@ -442,7 +442,7 @@ router.post('/labels', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // DELETE /leads/labels/:labelId
-router.delete('/labels/:labelId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/labels/:labelId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM lead_labels WHERE id = ?', [req.params.labelId]);
     res.json({ message: 'Label deleted' });
@@ -551,7 +551,7 @@ router.put('/:id', authMiddleware, requirePermission('crm.leads', 'update'), asy
 });
 
 // PATCH /leads/:id/stage — Move lead to new stage (drag-drop)
-router.patch('/:id/stage', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/:id/stage', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { stage } = req.body;
     if (!stage) return res.status(400).json({ success: false, error: 'Stage is required' });
@@ -590,7 +590,7 @@ router.patch('/:id/stage', authMiddleware, async (req: Request, res: Response) =
 });
 
 // PATCH /leads/:id/color — Change card color
-router.patch('/:id/color', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/:id/color', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { color } = req.body;
     await dbRun('UPDATE leads SET color=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [color || null, req.params.id]);
@@ -601,7 +601,7 @@ router.patch('/:id/color', authMiddleware, async (req: Request, res: Response) =
 });
 
 // PATCH /leads/:id/due-date
-router.patch('/:id/due-date', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/:id/due-date', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { due_date } = req.body;
     await dbRun('UPDATE leads SET due_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [due_date || null, req.params.id]);
@@ -688,7 +688,7 @@ router.patch('/:id/assign', authMiddleware, requirePermission('crm.leads', 'upda
 });
 
 // PATCH /leads/:id/description
-router.patch('/:id/description', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/:id/description', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { description } = req.body;
     await dbRun('UPDATE leads SET description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [description || null, req.params.id]);
@@ -762,7 +762,7 @@ router.get('/:id/checklists', authMiddleware, requirePermission('crm.leads', 'vi
 });
 
 // POST /leads/:id/checklists
-router.post('/:id/checklists', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/checklists', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { title } = req.body;
     const result = await dbRun('INSERT INTO lead_checklists (lead_id, title) VALUES (?,?)', [req.params.id, title || 'Checklist']);
@@ -773,7 +773,7 @@ router.post('/:id/checklists', authMiddleware, async (req: Request, res: Respons
 });
 
 // DELETE /leads/checklists/:checklistId
-router.delete('/checklists/:checklistId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/checklists/:checklistId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM lead_checklists WHERE id=?', [req.params.checklistId]);
     res.json({ message: 'Checklist deleted' });
@@ -783,7 +783,7 @@ router.delete('/checklists/:checklistId', authMiddleware, async (req: Request, r
 });
 
 // POST /leads/checklists/:checklistId/items
-router.post('/checklists/:checklistId/items', authMiddleware, async (req: Request, res: Response) => {
+router.post('/checklists/:checklistId/items', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'Text is required' });
@@ -795,7 +795,7 @@ router.post('/checklists/:checklistId/items', authMiddleware, async (req: Reques
 });
 
 // PATCH /leads/checklists/items/:itemId — toggle or edit
-router.patch('/checklists/items/:itemId', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/checklists/items/:itemId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { is_checked, text } = req.body;
     if (is_checked !== undefined) {
@@ -811,7 +811,7 @@ router.patch('/checklists/items/:itemId', authMiddleware, async (req: Request, r
 });
 
 // DELETE /leads/checklists/items/:itemId
-router.delete('/checklists/items/:itemId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/checklists/items/:itemId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM lead_checklist_items WHERE id=?', [req.params.itemId]);
     res.json({ message: 'Item deleted' });
@@ -825,7 +825,7 @@ router.delete('/checklists/items/:itemId', authMiddleware, async (req: Request, 
 // ========================
 
 // POST /leads/:id/labels — assign label
-router.post('/:id/labels', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/labels', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { label_id } = req.body;
     await dbRun('INSERT IGNORE INTO lead_label_assignments (lead_id, label_id) VALUES (?,?)', [req.params.id, label_id]);
@@ -836,7 +836,7 @@ router.post('/:id/labels', authMiddleware, async (req: Request, res: Response) =
 });
 
 // DELETE /leads/:id/labels/:labelId — remove label
-router.delete('/:id/labels/:labelId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id/labels/:labelId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM lead_label_assignments WHERE lead_id=? AND label_id=?', [req.params.id, req.params.labelId]);
     res.json({ success: true });
@@ -863,7 +863,7 @@ router.get('/:id/comments', authMiddleware, requirePermission('crm.leads', 'view
 });
 
 // POST /leads/:id/comments
-router.post('/:id/comments', authMiddleware, async (req: Request, res: Response) => {
+router.post('/:id/comments', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
@@ -881,7 +881,7 @@ router.post('/:id/comments', authMiddleware, async (req: Request, res: Response)
 });
 
 // DELETE /leads/comments/:commentId
-router.delete('/comments/:commentId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/comments/:commentId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     await dbRun('DELETE FROM lead_comments WHERE id=?', [req.params.commentId]);
     res.json({ message: 'Comment deleted' });
@@ -925,7 +925,7 @@ router.get('/:id/attachments', authMiddleware, requirePermission('crm.leads', 'v
 });
 
 // POST /leads/:id/attachments
-router.post('/:id/attachments', authMiddleware, upload.single('file'), async (req: Request, res: Response) => {
+router.post('/:id/attachments', authMiddleware, requirePermission('crm.leads', 'update'), upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const { originalname, filename, size, mimetype } = req.file;
@@ -947,7 +947,7 @@ router.post('/:id/attachments', authMiddleware, upload.single('file'), async (re
 });
 
 // DELETE /leads/attachments/:attachmentId
-router.delete('/attachments/:attachmentId', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/attachments/:attachmentId', authMiddleware, requirePermission('crm.leads', 'update'), async (req: Request, res: Response) => {
   try {
     const file = await dbGet('SELECT * FROM lead_attachments WHERE id=?', [req.params.attachmentId]) as any;
     if (!file) return res.status(404).json({ error: 'Not found' });

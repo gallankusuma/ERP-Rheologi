@@ -117,10 +117,13 @@
                   <div class="bg-blue-600 text-white rounded px-2 py-1.5 text-[11px] font-bold text-center">📦 Forecast Qty</div>
                 </td>
                 <td class="px-2 py-1 text-center border-r font-bold bg-blue-50 text-blue-700">{{ formatN(monthlyBrandTotal(brand, 'forecast_qty')) }}</td>
-                <td v-for="m in 12" :key="'fq-'+brand.id+'-'+m" class="px-0 py-0.5 text-center border-r">
+                <td v-for="m in 12" :key="'fq-'+brand.id+'-'+m" class="px-0 py-0.5 text-center border-r"
+                  :class="isMonthPast(m) ? 'bg-gray-100' : ''">
                   <input v-model.number="getMonthData(brand, m).forecast_qty" type="number" min="0"
+                    :disabled="isMonthPast(m)"
                     @input="onMonthlyChange(brand, m)"
-                    class="w-full text-center py-1.5 text-sm border-0 focus:ring-2 focus:ring-blue-400 rounded bg-transparent text-gray-900" />
+                    class="w-full text-center py-1.5 text-sm border-0 focus:ring-2 focus:ring-blue-400 rounded bg-transparent"
+                    :class="isMonthPast(m) ? 'text-gray-400 cursor-not-allowed' : 'text-gray-900'" />
                 </td>
               </tr>
               <tr class="border-b-2 border-gray-200 hover:bg-orange-50/30">
@@ -175,11 +178,12 @@
                   <div class="bg-blue-600 text-white rounded px-2 py-1.5 text-[11px] font-bold text-center">📦 Forecast Qty</div>
                 </td>
                 <td class="px-2 py-1 text-center border-r font-bold bg-blue-50 text-blue-700">{{ formatN(brandTotal(brand, 'forecast_qty')) }}</td>
-                <td v-for="wc in weekColumns" :key="'fq-'+brand.id+'-'+wc.week+'-'+wc.year" class="px-0 py-0.5 text-center border-r">
+                <td v-for="wc in weekColumns" :key="'fq-'+brand.id+'-'+wc.week+'-'+wc.year" class="px-0 py-0.5 text-center border-r"
+                  :class="isWeekPast(wc) ? 'bg-gray-100' : ''">
                   <input v-model.number="getWeekData(brand, wc).forecast_qty" type="number" min="0"
-                    :disabled="activeForecast.status !== 'Draft'" @input="onForecastChange(brand, wc)"
+                    :disabled="activeForecast.status !== 'Draft' || isWeekPast(wc)" @input="onForecastChange(brand, wc)"
                     class="w-full text-center py-1.5 text-sm border-0 focus:ring-2 focus:ring-blue-400 rounded bg-transparent"
-                    :class="activeForecast.status !== 'Draft' ? 'text-gray-500' : 'text-gray-900'" />
+                    :class="(activeForecast.status !== 'Draft' || isWeekPast(wc)) ? 'text-gray-400 cursor-not-allowed' : 'text-gray-900'" />
                 </td>
               </tr>
               <tr class="border-b-2 border-gray-200 hover:bg-orange-50/30">
@@ -239,6 +243,31 @@ const monthlyDirty = ref(false);
 const formatN = (v: number) => {
   if (!v && v !== 0) return '-';
   return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+};
+
+// auto-lock past periods: month is past if year+month is before current
+const isMonthPast = (month: number): boolean => {
+  const today = new Date();
+  const curYear = today.getFullYear();
+  const curMonth = today.getMonth() + 1;
+  return selectedYear.value < curYear || (selectedYear.value === curYear && month < curMonth);
+};
+
+// ISO 8601 week number matching backend
+const getISOWeek = (d: Date): { week: number; year: number } => {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { week, year: date.getUTCFullYear() };
+};
+
+// weekly: past if ISO week is before current ISO week
+const isWeekPast = (wc: any): boolean => {
+  if (!wc) return false;
+  const cur = getISOWeek(new Date());
+  return wc.year < cur.year || (wc.year === cur.year && wc.week < cur.week);
 };
 
 const productOptions = computed(() => {

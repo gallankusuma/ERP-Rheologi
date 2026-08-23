@@ -9,8 +9,8 @@
           <button @click="mobileMenuOpen = !mobileMenuOpen" class="md:hidden p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
           </button>
-          <span class="text-2xl hidden sm:inline text-blue-500 font-bold">{{ appName.charAt(0) }}</span>
-          <span class="font-bold text-cyan-700 dark:text-cyan-400 text-sm md:text-lg truncate">{{ appName }}</span>
+          <img src="/logo-rheologi-v2.png" alt="Rheologi" class="h-28 hidden sm:inline -my-10" />
+          <span class="font-bold text-cyan-700 dark:text-cyan-400 text-sm md:text-lg truncate sm:hidden">{{ appName }}</span>
           <span class="text-gray-400 dark:text-gray-500 hidden lg:inline">|</span>
           <span class="text-sm md:text-base font-semibold text-gray-700 dark:text-gray-300 hidden lg:inline truncate">{{ companyName }}</span>
         </div>
@@ -182,7 +182,20 @@
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <nav class="space-y-0.5">
+          <!-- permission loading state -->
+          <div v-if="authStore.isPermissionLoading" class="flex flex-col items-center gap-2 py-8 text-gray-400">
+            <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="30 70"/></svg>
+            <span class="text-xs">Loading menus...</span>
+          </div>
+          <!-- permission failed state -->
+          <div v-else-if="authStore.isPermissionFailed" class="flex flex-col items-center gap-3 py-8 px-3">
+            <div class="text-red-500 text-xs text-center">Menu load failed</div>
+            <div v-if="authStore.permissionError" class="text-gray-400 text-[10px] text-center">{{ authStore.permissionError }}</div>
+            <button @click="authStore.retryPermissions()" class="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">Retry</button>
+            <button @click="handleLogout" class="text-xs text-gray-400 hover:text-gray-300 underline">Logout</button>
+          </div>
+          <!-- normal menu when READY -->
+          <nav v-else class="space-y-0.5">
             <button
               v-for="submenu in getSubmenus()"
               :key="submenu.id"
@@ -471,7 +484,7 @@ const selectedSubmenu = ref('');
 // Computed properties that always reflect current route
 const activeMenuId = computed(() => {
   for (const menu of mainMenus) {
-    if (menu.submenus.find(s => s.route === route.path)) {
+    if (menu.submenus.find(s => route.path === s.route || route.path.startsWith(s.route + '/'))) {
       return menu.id;
     }
   }
@@ -479,9 +492,14 @@ const activeMenuId = computed(() => {
 });
 
 const activeSubmenuId = computed(() => {
+  // try exact match first, then prefix match for detail pages
   for (const menu of mainMenus) {
-    const sub = menu.submenus.find(s => s.route === route.path);
-    if (sub) return sub.id;
+    const exact = menu.submenus.find(s => s.route === route.path);
+    if (exact) return exact.id;
+  }
+  for (const menu of mainMenus) {
+    const prefix = menu.submenus.find(s => route.path.startsWith(s.route + '/'));
+    if (prefix) return prefix.id;
   }
   return selectedSubmenu.value;
 });
@@ -519,16 +537,17 @@ const mainMenus: MenuItem[] = [
       { id: 'dashboard-alerts', label: 'Alerts', route: '/dashboard/alerts' },
     ]
   },
-  {
-    id: 'estimator',
-    label: 'Estimator',
-    icon: '🧮',
-    submenus: [
-      { id: 'estimator-proposals', label: 'Proposal', route: '/estimator' },
-      { id: 'estimator-ahsp', label: 'AHSP', route: '/estimator/ahsp' },
-      { id: 'estimator-masters', label: 'Satuan Dasar Harga', route: '/estimator/masters' },
-    ]
-  },
+  // estimator module hidden
+  // {
+  //   id: 'estimator',
+  //   label: 'Estimator',
+  //   icon: '🧮',
+  //   submenus: [
+  //     { id: 'estimator-proposals', label: 'Proposal', route: '/estimator' },
+  //     { id: 'estimator-ahsp', label: 'AHSP', route: '/estimator/ahsp' },
+  //     { id: 'estimator-masters', label: 'Satuan Dasar Harga', route: '/estimator/masters' },
+  //   ]
+  // },
   {
     id: 'rnd',
     label: 'R&D',
@@ -605,8 +624,6 @@ const mainMenus: MenuItem[] = [
     submenus: [
       { id: 'qc-master', label: 'QC Master Data', route: '/qc/master' },
       { id: 'qc-fpa', label: 'QC FPA', route: '/qc/fpa' },
-      { id: 'qc-test-methods', label: 'Test Methods', route: '/quality/test-methods' },
-      { id: 'qc-sampling', label: 'Sampling', route: '/quality/sampling' },
       { id: 'qc-results', label: 'Results', route: '/quality/results' },
       { id: 'batch-release', label: 'Batch Release', route: '/quality/batch-release' },
       { id: 'ncr', label: 'Non-Conformance', route: '/quality/ncr' },
@@ -628,6 +645,19 @@ const mainMenus: MenuItem[] = [
       { id: 'margin-analysis', label: 'Margin Analysis', route: '/finance/margin' },
       { id: 'financial-summary', label: 'Financial Summary', route: '/finance/summary' },
       { id: 'fund-requests', label: 'Fund Requests', route: '/finance/fund-requests' },
+    ]
+  },
+  {
+    id: 'hr',
+    label: 'HR',
+    icon: '👥',
+    submenus: [
+      { id: 'hr-employees', label: 'Employees', route: '/hr/employees' },
+      { id: 'hr-attendance', label: 'Attendance', route: '/hr/attendance' },
+      { id: 'hr-payroll', label: 'Payroll', route: '/hr/payroll' },
+      { id: 'hr-position-rates', label: 'Position Rates', route: '/hr/position-rates' },
+      { id: 'hr-salary-advances', label: 'Salary Advances', route: '/hr/salary-advances' },
+      { id: 'hr-mobile-portal', label: 'Mobile Portal', route: '/hr/mobile-portal' },
     ]
   },
   {
@@ -749,9 +779,10 @@ const selectSubmenu = async (submenu: Submenu) => {
 // Watch route changes to update menu highlights
 watch(() => route.path, (newPath) => {
   for (const menu of mainMenus) {
-    const submenu = menu.submenus.find(s => s.route === newPath);
+    const submenu = menu.submenus.find(s => s.route === newPath || newPath.startsWith(s.route + '/'));
     if (submenu) {
       selectedMainMenu.value = menu.id;
+      selectedSubmenu.value = submenu.id;
       break;
     }
   }

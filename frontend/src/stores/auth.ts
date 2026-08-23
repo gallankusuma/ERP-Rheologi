@@ -14,11 +14,15 @@ interface User {
   permission_version?: string | null;
 }
 
+type PermissionState = 'LOADING' | 'READY' | 'FAILED';
+
 interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
   permissionsHydrated: boolean;
+  permissionState: PermissionState;
+  permissionError: string | null;
 }
 
 // in-flight hydration promise so multiple callers don't race
@@ -30,6 +34,8 @@ export const useAuthStore = defineStore('auth', {
     token: localStorage.getItem('token'),
     isAuthenticated: !!localStorage.getItem('token'),
     permissionsHydrated: false,
+    permissionState: 'LOADING',
+    permissionError: null,
   }),
 
   getters: {
@@ -38,8 +44,14 @@ export const useAuthStore = defineStore('auth', {
       if (!state.user) return false;
       // fail-closed: if permissions aren't hydrated, deny
       if (!state.permissionsHydrated) return false;
+      if (state.permissionState !== 'READY') return false;
       return state.user.permissions?.includes(permission) || false;
     },
+
+    /** True when permission state is explicitly FAILED (not just loading) */
+    isPermissionFailed: (state) => state.permissionState === 'FAILED',
+    /** True when permissions are still loading */
+    isPermissionLoading: (state) => state.permissionState === 'LOADING',
   },
 
   actions: {
@@ -49,10 +61,23 @@ export const useAuthStore = defineStore('auth', {
         this.token = response.data.token;
         this.user = response.data.user;
         this.isAuthenticated = true;
-        this.permissionsHydrated = true;
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
         setAuthToken(response.data.token);
+
+        // validate that login returned a proper permissions array
+        if (Array.isArray(response.data.user?.permissions)) {
+          this.permissionsHydrated = true;
+          this.permissionState = 'READY';
+          this.permissionError = null;
+        } else {
+          // login succeeded but permissions missing — hydrate from /auth/me
+          const hydrated = await this.refreshPermissions();
+          this.permissionsHydrated = hydrated;
+          this.permissionState = hydrated ? 'READY' : 'FAILED';
+          if (!hydrated) this.permissionError = 'Login succeeded but permissions could not be loaded';
+        }
+
         return response.data;
       } catch (error: any) {
         throw error.response?.data || error;
@@ -71,8 +96,11 @@ export const useAuthStore = defineStore('auth', {
 
         // register response doesn't include role_id/permissions,
         // so hydrate from /auth/me before marking ready
+        this.permissionState = 'LOADING';
         const hydrated = await this.refreshPermissions();
         this.permissionsHydrated = hydrated;
+        this.permissionState = hydrated ? 'READY' : 'FAILED';
+        if (!hydrated) this.permissionError = 'Registration succeeded but permissions could not be loaded';
 
         return response.data;
       } catch (error: any) {
@@ -85,6 +113,8 @@ export const useAuthStore = defineStore('auth', {
       this.user = null;
       this.isAuthenticated = false;
       this.permissionsHydrated = false;
+      this.permissionState = 'LOADING';
+      this.permissionError = null;
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       setAuthToken(null);
@@ -105,25 +135,44 @@ export const useAuthStore = defineStore('auth', {
           console.warn('Failed to parse stored user');
         }
       }
-      // hydrate permissions from server — only mark ready on success
+      // hydrate permissions from server — explicit state tracking
       if (this.isAuthenticated) {
+        this.permissionState = 'LOADING';
+        this.permissionError = null;
         const hydrated = await this.refreshPermissions();
         this.permissionsHydrated = hydrated;
+        this.permissionState = hydrated ? 'READY' : 'FAILED';
+        if (!hydrated) this.permissionError = 'Permission bootstrap failed — server may be unreachable';
       } else {
         // not authenticated, nothing to hydrate
         this.permissionsHydrated = true;
+        this.permissionState = 'READY';
       }
     },
 
     async ensureHydrated(): Promise<void> {
-      if (this.permissionsHydrated) return;
+      if (this.permissionsHydrated && this.permissionState === 'READY') return;
       if (!hydrationPromise) {
+        this.permissionState = 'LOADING';
         hydrationPromise = this.refreshPermissions().then((ok) => {
           this.permissionsHydrated = ok;
+          this.permissionState = ok ? 'READY' : 'FAILED';
+          if (!ok) this.permissionError = 'Permission refresh failed';
           hydrationPromise = null;
         });
       }
       return hydrationPromise;
+    },
+
+    // retry after FAILED state
+    async retryPermissions(): Promise<boolean> {
+      this.permissionState = 'LOADING';
+      this.permissionError = null;
+      const ok = await this.refreshPermissions();
+      this.permissionsHydrated = ok;
+      this.permissionState = ok ? 'READY' : 'FAILED';
+      if (!ok) this.permissionError = 'Permission retry failed — check connection and try again';
+      return ok;
     },
 
     // returns true if /auth/me succeeded, false otherwise
@@ -133,11 +182,19 @@ export const useAuthStore = defineStore('auth', {
         if (response.data?.user) {
           this.user = response.data.user;
           localStorage.setItem('user', JSON.stringify(response.data.user));
+          // validate permissions array
+          if (!Array.isArray(response.data.user.permissions)) {
+            console.warn('auth/me returned user without permissions array');
+          }
           return true;
         }
         return false;
-      } catch (e) {
-        // fail-closed: caller knows hydration failed
+      } catch (e: any) {
+        // 401 = token expired/invalid — force logout
+        if (e.response?.status === 401) {
+          this.logout();
+        }
+        console.warn('Permission hydration failed:', e.message || e);
         return false;
       }
     },

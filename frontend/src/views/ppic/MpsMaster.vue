@@ -1,5 +1,5 @@
 <template>
-  <div class="h-full flex flex-col bg-slate-100">
+  <div class="flex flex-col bg-slate-100">
     <!-- Toast notification -->
     <transition name="toast-fade">
       <div v-if="toastMsg"
@@ -31,7 +31,7 @@
       </div>
     </div>
 
-    <div class="flex-1 overflow-auto p-4">
+    <div class="p-4">
       <!-- MPS List -->
       <div v-if="!activeMps" class="space-y-3 max-w-2xl mx-auto">
         <div v-if="mpsList.length === 0" class="text-center py-16">
@@ -165,22 +165,23 @@
         </div>
 
         <!-- ========== MAIN GRID: 7 ROWS PER PRODUCT ========== -->
-        <div v-if="mpsDetails.length > 0" class="bg-white rounded-lg shadow-sm overflow-hidden">
-          <div class="overflow-x-auto">
+        <div v-if="mpsDetails.length > 0" class="bg-white rounded-lg shadow-sm overflow-auto" style="max-height: calc(100vh - 280px)">
             <table class="w-full border-collapse text-sm" style="min-width: 1600px">
               <!-- HEADER -->
-              <thead>
+              <thead class="sticky top-0 z-40">
                 <tr class="bg-gradient-to-r from-teal-600 to-cyan-600 text-white">
-                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-10 sticky left-0 z-30 bg-teal-600 text-sm">No</th>
-                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-[160px] min-w-[160px] sticky left-[40px] z-30 bg-teal-600 text-sm">INFO</th>
-                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-[130px] min-w-[130px] sticky left-[200px] z-30 bg-teal-600 text-sm">PRODUCT</th>
-                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-[150px] min-w-[150px] sticky left-[330px] z-30 bg-teal-600 text-sm">ROW</th>
+                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-10 sticky left-0 z-50 bg-teal-600 text-sm">No</th>
+                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-[160px] min-w-[160px] sticky left-[40px] z-50 bg-teal-600 text-sm">INFO</th>
+                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-[130px] min-w-[130px] sticky left-[200px] z-50 bg-teal-600 text-sm">PRODUCT</th>
+                  <th class="px-3 py-2.5 text-center border-r border-teal-500 w-[150px] min-w-[150px] sticky left-[330px] z-50 bg-teal-600 text-sm">ROW</th>
                   <th class="px-2 py-2.5 text-center border-r border-teal-500 w-[65px] text-sm">TOTAL</th>
                   <th class="px-2 py-2.5 text-center border-r border-teal-500 w-[50px] text-sm">UOM</th>
                   <th v-for="wc in weekColumns" :key="wc.week+'-'+wc.year"
-                    class="px-1 py-2.5 text-center border-r border-teal-500 w-[90px] min-w-[90px]">
+                    class="px-1 py-2.5 text-center border-r border-teal-500 w-[90px] min-w-[90px]"
+                    :class="isWeekPast(wc) ? 'bg-gray-500 opacity-70' : 'bg-teal-600'">
                     <div class="font-bold text-sm">{{ wc.label }}</div>
-                    <div class="text-[10px] text-teal-200 font-normal">{{ wc.dateRange }}</div>
+                    <div class="text-[10px] font-normal" :class="isWeekPast(wc) ? 'text-gray-300' : 'text-teal-200'">{{ wc.dateRange }}</div>
+                    <div v-if="isWeekPast(wc)" class="text-[9px] text-red-300 font-bold leading-none mt-0.5">PAST</div>
                   </th>
                 </tr>
               </thead>
@@ -269,12 +270,15 @@
                     </td>
                     <!-- Week cells: SO Qty — always editable, show ref hint -->
                     <td v-for="wc in weekColumns" :key="'so-'+wc.week+'-'+wc.year"
-                      class="px-0 py-0.5 text-center border-r relative group">
+                      class="px-0 py-0.5 text-center border-r relative group"
+                      :class="isWeekPast(wc) ? 'bg-gray-100' : ''">
                       <input v-model.number="getWeekData(item, wc).so_qty" type="number" min="0"
+                        :disabled="isWeekPast(wc)"
                         @input="onDemandChange"
                         :placeholder="item.demand_qty > 0 ? String(Math.round(item.demand_qty / weekColumns.length)) : ''"
                         :title="item.demand_qty > 0 ? 'Ref SO per minggu ≈ ' + Math.round(item.demand_qty / weekColumns.length) : 'Masukkan qty SO demand'"
-                        class="w-full border-0 bg-teal-50 text-center text-[11px] font-medium py-1.5 text-teal-800 focus:bg-teal-100 focus:ring-1 focus:ring-teal-300 placeholder:text-teal-300" />
+                        class="w-full border-0 text-center text-[11px] font-medium py-1.5 focus:ring-1 focus:ring-teal-300 placeholder:text-teal-300"
+                        :class="isWeekPast(wc) ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-teal-50 text-teal-800 focus:bg-teal-100'" />
                     </td>
                   </tr>
 
@@ -289,10 +293,13 @@
                       {{ formatN(taskTotal(item, 'forecast_qty')) }}
                     </td>
                     <td v-for="wc in weekColumns" :key="'f-'+wc.week+'-'+wc.year"
-                      class="px-0 py-0.5 text-center border-r">
+                      class="px-0 py-0.5 text-center border-r"
+                      :class="isWeekPast(wc) ? 'bg-gray-100' : ''">
                       <input v-model.number="getWeekData(item, wc).forecast_qty" type="number" min="0"
+                        :disabled="isWeekPast(wc)"
                         @input="onDemandChange"
-                        class="w-full border-0 bg-blue-50 text-center text-[11px] font-medium py-1.5 text-blue-800 focus:bg-blue-100 focus:ring-1 focus:ring-blue-300" />
+                        class="w-full border-0 text-center text-[11px] font-medium py-1.5 focus:ring-1 focus:ring-blue-300"
+                        :class="isWeekPast(wc) ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-blue-50 text-blue-800 focus:bg-blue-100'" />
                     </td>
                   </tr>
 
@@ -401,12 +408,14 @@
                       </div>
                       <input v-model.number="getWeekData(item, wc).production_qty" type="number" min="0"
                         :max="item.max_weekly_capacity > 0 ? item.max_weekly_capacity : undefined"
+                        :disabled="isWeekPast(wc)"
                         @input="clampProduction(item, wc)"
                         :title="item.max_weekly_capacity > 0
                           ? `Kapasitas mesin: ${formatN(item.max_weekly_capacity)}/wk\nMesin terpakai: ${formatN(getLineProcWeekTotal(item.line_process_id, wc))}\nEnding Inv: ${formatN(getEndingInv(item, wIdx))}`
                           : `Ending Inv: ${formatN(getEndingInv(item, wIdx))}`"
                         class="w-full border-0 text-center text-[11px] font-bold pt-1 pb-0 focus:ring-1 transition-colors"
-                        :class="getCellCapacityPct(item, wc) >= 100 ? 'bg-red-100 text-red-700 focus:ring-red-400'
+                        :class="isWeekPast(wc) ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          : getCellCapacityPct(item, wc) >= 100 ? 'bg-red-100 text-red-700 focus:ring-red-400'
                           : getCellCapacityPct(item, wc) >= 75 ? 'bg-amber-50 text-amber-800 focus:ring-amber-400'
                           : getEndingInv(item, wIdx) >= 0
                             ? 'bg-green-50 text-green-700 focus:bg-green-100 focus:ring-green-300'
@@ -489,7 +498,6 @@
                 </template>
               </tbody>
             </table>
-          </div>
         </div>
 
         <!-- Demand Provenance Panel -->
@@ -660,8 +668,16 @@
             <p class="text-xs font-bold text-green-700 mb-2">✅ WO Sudah Ada ({{ woModalPreview.existing_wos.length }})</p>
             <div class="flex flex-wrap gap-2">
               <span v-for="wo in woModalPreview.existing_wos" :key="wo.wo_number"
-                class="px-2.5 py-1 bg-green-100 text-green-800 text-xs font-mono rounded-lg border border-green-200">
+                class="px-2.5 py-1 text-xs font-mono rounded-lg border inline-flex items-center gap-1.5"
+                :class="wo.reschedule_count > 0
+                  ? 'bg-purple-100 text-purple-800 border-purple-300'
+                  : 'bg-green-100 text-green-800 border-green-200'">
                 {{ wo.wo_number }} · W{{ wo.week_number }} · Qty {{ wo.quantity?.toLocaleString('id') }}
+                <span v-if="wo.reschedule_count > 0"
+                  class="inline-flex items-center px-1.5 py-0.5 bg-purple-200 text-purple-900 text-[9px] font-bold rounded-full"
+                  :title="'Rescheduled ' + wo.reschedule_count + 'x' + (wo.original_week ? ' (asal W' + wo.original_week + ')' : '')">
+                  W{{ wo.original_week }} → W{{ wo.week_number }}
+                </span>
               </span>
             </div>
           </div>
@@ -1045,6 +1061,23 @@ const activeMps = ref<any>(null);
 const mpsDetails = ref<any[]>([]);
 const weekColumns = ref<any[]>([]);
 const isDirty = ref(false);
+
+// auto-lock past weeks — uses ISO 8601 week number matching backend
+const getISOWeek = (d: Date): { week: number; year: number } => {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { week, year: date.getUTCFullYear() };
+};
+
+const isWeekPast = (wc: any): boolean => {
+  if (!wc) return false;
+  const today = new Date();
+  const cur = getISOWeek(today);
+  return wc.year < cur.year || (wc.year === cur.year && wc.week < cur.week);
+};
 const saving = ref(false);
 const pulling = ref(false);
 const toastMsg = ref('');
@@ -1232,8 +1265,17 @@ const getMaterialStatus = (item: any, wc: any): string => {
   const prodQty = Number(getWeekData(item, wc).production_qty) || 0;
   if (prodQty === 0) return 'none';
   if (!item.bom_materials || item.bom_materials.length === 0) return 'none';
+
+  // cumulative check: sum all production up to and including this week,
+  // then see if total stock can cover it
+  const allWeeks = weekColumns.value || [];
+  const currentIdx = allWeeks.findIndex((w: any) => w.week === wc.week && w.year === wc.year);
+  let cumulativeProd = 0;
+  for (let i = 0; i <= currentIdx; i++) {
+    cumulativeProd += Number(getWeekData(item, allWeeks[i]).production_qty) || 0;
+  }
   const maxProducible = item.material_max_producible || 0;
-  return prodQty <= maxProducible ? 'ok' : 'short';
+  return cumulativeProd <= maxProducible ? 'ok' : 'short';
 };
 
 // ========== CAPACITY SUMMARY HELPERS ==========
@@ -1290,10 +1332,12 @@ const autoRecommendItem = (item: any) => {
   const buffer = Number(item.buffer_stock) || 0;
   for (let wIdx = 0; wIdx < weekColumns.value.length; wIdx++) {
     const wc = weekColumns.value[wIdx];
+    // skip past weeks — cannot schedule production in the past
+    if (isWeekPast(wc)) continue;
     const wd = getWeekData(item, wc);
     const demand = getTotalDemand(item, wc);
     const beginInv = getBeginningInv(item, wIdx);
-    // Need to produce enough to cover demand AND maintain buffer
+    // need to produce enough to cover demand AND maintain buffer
     let recProd = Math.max(0, (demand + buffer) - Math.max(beginInv, 0));
     if (item.max_weekly_capacity > 0) {
       recProd = Math.min(recProd, item.max_weekly_capacity);
@@ -1355,6 +1399,8 @@ const fillMaxProduction = (item: any) => {
   if (cap <= 0) return;
   for (let wIdx = 0; wIdx < weekColumns.value.length; wIdx++) {
     const wc = weekColumns.value[wIdx];
+    // skip past weeks — cannot schedule production in the past
+    if (isWeekPast(wc)) continue;
     const wd = getWeekData(item, wc);
     const demand = getTotalDemand(item, wc);
     const beginInv = getBeginningInv(item, wIdx);
@@ -1622,9 +1668,10 @@ const getMrpNetReq = (mat: any, weekIdx: number): number => {
   const w = mat.weeks[weekIdx];
   if (!w) return 0;
   const gross = Number(w.gross_requirements) || 0;
+  const scheduled = Number(w.scheduled_receipt) || 0;
   const planned = Number(w.planned_order_receipt) || 0;
   const oh = weekIdx > 0 ? getMrpProjectedOH(mat, weekIdx - 1) : (Number(mat.first_stock) || 0);
-  const net = gross - planned - Math.max(oh, 0);
+  const net = gross - scheduled - planned - Math.max(oh, 0);
   return Math.max(net, 0);
 };
 
@@ -1633,7 +1680,7 @@ const getMrpProjectedOH = (mat: any, weekIdx: number): number => {
   for (let i = 0; i <= weekIdx; i++) {
     const w = mat.weeks[i];
     if (!w) continue;
-    oh = oh + (Number(w.planned_order_receipt) || 0) - (Number(w.gross_requirements) || 0);
+    oh = oh + (Number(w.scheduled_receipt) || 0) + (Number(w.planned_order_receipt) || 0) - (Number(w.gross_requirements) || 0);
   }
   return Math.round(oh * 100) / 100;
 };

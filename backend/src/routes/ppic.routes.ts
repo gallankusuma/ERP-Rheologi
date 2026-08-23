@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { generatePurchaseRequestFromMrp } from '../services/ppic.service';
+import { explodeBom } from '../services/bom.service';
 
 const router = Router();
 
@@ -218,26 +220,38 @@ router.get('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'view'), as
       const weeklyHours = Number(lineInfo?.working_hours_per_week || 40);
       detail.max_weekly_capacity = detail.capacity_per_hour > 0 ? detail.capacity_per_hour * weeklyHours : 0;
 
-      // 4. BOM material availability
+      // 4. BOM material availability (stock + open PO outstanding)
       if (d.bom_id) {
         const bomDetails = await dbAll(`
           SELECT bd.raw_material_id, bd.quantity as quantity_per_unit, bd.unit_of_measure_id,
             p.name as material_name, p.sku as material_sku,
-            COALESCE((SELECT SUM(quantity) FROM inventory_stocks WHERE product_id = bd.raw_material_id AND status = 'available'), 0) as stock_qty
+            COALESCE((SELECT SUM(quantity) FROM inventory_stocks WHERE product_id = bd.raw_material_id AND status = 'available'), 0) as stock_qty,
+            COALESCE((SELECT SUM(GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0))
+              FROM purchase_order_items poi
+              JOIN purchase_orders po ON poi.purchase_order_id = po.id
+              WHERE po.status IN ('APPROVED','PROCESSING','PARTIAL')
+                AND po.approval_status = 2
+                AND poi.product_id = bd.raw_material_id
+                AND GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) > 0
+            ), 0) as po_outstanding_qty
           FROM bom_details bd
           LEFT JOIN products p ON bd.raw_material_id = p.id
           WHERE bd.bom_header_id = ?
           ORDER BY bd.sequence ASC
         `, [d.bom_id]) as any[];
-        detail.bom_materials = bomDetails.map((m: any) => ({
-          material_id: m.raw_material_id,
-          material_name: m.material_name,
-          material_sku: m.material_sku,
-          qty_per_unit: Number(m.quantity_per_unit || 0),
-          stock_qty: Number(m.stock_qty || 0),
-          // Max producible from this material alone
-          max_producible: m.quantity_per_unit > 0 ? Math.floor(Number(m.stock_qty) / Number(m.quantity_per_unit)) : 999999
-        }));
+        detail.bom_materials = bomDetails.map((m: any) => {
+          const availableQty = Number(m.stock_qty || 0) + Number(m.po_outstanding_qty || 0);
+          return {
+            material_id: m.raw_material_id,
+            material_name: m.material_name,
+            material_sku: m.material_sku,
+            qty_per_unit: Number(m.quantity_per_unit || 0),
+            stock_qty: Number(m.stock_qty || 0),
+            po_outstanding_qty: Number(m.po_outstanding_qty || 0),
+            available_qty: availableQty,
+            max_producible: m.quantity_per_unit > 0 ? Math.floor(availableQty / Number(m.quantity_per_unit)) : 999999
+          };
+        });
         // Material bottleneck = min of all max_producible
         detail.material_max_producible = detail.bom_materials.length > 0
           ? Math.min(...detail.bom_materials.map((m: any) => m.max_producible))
@@ -682,40 +696,54 @@ router.put('/mps/:id/week-data', authMiddleware, requirePermission('ppic.mps', '
     const { id } = req.params;
     const { entries } = req.body; // [{ mps_detail_id, week_number, year, field, value }]
 
-    const header = await dbGet('SELECT status FROM mps_headers WHERE id = ?', [id]) as any;
-    if (!header) return res.status(404).json({ error: 'MPS not found' });
-    if (header.status !== 'Draft') return res.status(400).json({ error: 'Cannot modify Confirmed MPS. Revert to Draft first.' });
+    await dbTransaction(async (conn: any) => {
+      // lock header to prevent race with concurrent confirm
+      const [headerRows] = await conn.execute('SELECT status FROM mps_headers WHERE id = ? FOR UPDATE', [id]);
+      const header = (headerRows as any[])[0];
+      if (!header) throw Object.assign(new Error('MPS not found'), { statusCode: 404 });
+      if (header.status !== 'Draft') throw Object.assign(new Error('Cannot modify Confirmed MPS. Revert to Draft first.'), { statusCode: 400 });
 
-    for (const entry of (entries || [])) {
-      const allowedFields = ['forecast_qty', 'so_qty', 'start_process_qty', 'fg_qty', 'production_qty'];
-      if (!allowedFields.includes(entry.field)) continue;
+      // collect valid detail IDs for this header to validate ownership
+      const [detailRows] = await conn.execute('SELECT id FROM mps_details WHERE mps_header_id = ?', [id]);
+      const validDetailIds = new Set((detailRows as any[]).map((d: any) => String(d.id)));
 
-      // Upsert
-      const existing = await dbGet(
-        'SELECT id FROM mps_week_data WHERE mps_detail_id = ? AND year = ? AND week_number = ?',
-        [entry.mps_detail_id, entry.year, entry.week_number]
-      );
+      for (const entry of (entries || [])) {
+        // validate detail belongs to this header
+        if (!validDetailIds.has(String(entry.mps_detail_id))) {
+          throw Object.assign(new Error(`Detail ${entry.mps_detail_id} does not belong to MPS ${id}`), { statusCode: 400 });
+        }
 
-      if (existing) {
-        await dbRun(
-          `UPDATE mps_week_data SET ${entry.field} = ? WHERE mps_detail_id = ? AND year = ? AND week_number = ?`,
-          [entry.value || 0, entry.mps_detail_id, entry.year, entry.week_number]
+        const allowedFields = ['forecast_qty', 'so_qty', 'start_process_qty', 'fg_qty', 'production_qty'];
+        if (!allowedFields.includes(entry.field)) continue;
+
+        // upsert
+        const [existingRows] = await conn.execute(
+          'SELECT id FROM mps_week_data WHERE mps_detail_id = ? AND year = ? AND week_number = ?',
+          [entry.mps_detail_id, entry.year, entry.week_number]
         );
-      } else {
-        const insertObj: any = { forecast_qty: 0, so_qty: 0, start_process_qty: 0, fg_qty: 0, production_qty: 0 };
-        insertObj[entry.field] = entry.value || 0;
-        await dbRun(`
-          INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [entry.mps_detail_id, entry.week_number, entry.year, insertObj.forecast_qty, insertObj.so_qty, insertObj.start_process_qty, insertObj.fg_qty, insertObj.production_qty]);
-      }
-    }
 
-      await ppicLog(req, 'SAVE_WEEK_DATA', 'MPS', id, null, { entries_count: entries.length });
-      res.json({ message: 'Week data updated' });
-  } catch (error) {
+        if ((existingRows as any[]).length > 0) {
+          await conn.execute(
+            `UPDATE mps_week_data SET ${entry.field} = ? WHERE mps_detail_id = ? AND year = ? AND week_number = ?`,
+            [entry.value || 0, entry.mps_detail_id, entry.year, entry.week_number]
+          );
+        } else {
+          const insertObj: any = { forecast_qty: 0, so_qty: 0, start_process_qty: 0, fg_qty: 0, production_qty: 0 };
+          insertObj[entry.field] = entry.value || 0;
+          await conn.execute(`
+            INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [entry.mps_detail_id, entry.week_number, entry.year, insertObj.forecast_qty, insertObj.so_qty, insertObj.start_process_qty, insertObj.fg_qty, insertObj.production_qty]);
+        }
+      }
+    });
+
+    await ppicLog(req, 'SAVE_WEEK_DATA', 'MPS', id, null, { entries_count: entries.length });
+    res.json({ message: 'Week data updated' });
+  } catch (error: any) {
     console.error('Error updating week data:', error);
-    res.status(500).json({ error: 'Failed to update week data' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to update week data' });
   }
 });
 
@@ -724,35 +752,77 @@ router.post('/mps/:id/confirm', authMiddleware, requirePermission('ppic.mps', 'c
   try {
     const { id } = req.params;
     const userId = (req as any).user?.userId || null;
-    const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
-    if (!header) return res.status(404).json({ error: 'MPS not found' });
-    if (header.status !== 'Draft') return res.status(400).json({ error: 'Only Draft MPS can be confirmed' });
 
-    const detailCount = await dbGet('SELECT COUNT(*) as cnt FROM mps_details WHERE mps_header_id = ?', [id]) as any;
-    if (!detailCount || detailCount.cnt === 0) return res.status(400).json({ error: 'Cannot confirm empty MPS' });
+    await dbTransaction(async (conn: any) => {
+      // lock header row
+      const [headerRows] = await conn.execute('SELECT * FROM mps_headers WHERE id = ? FOR UPDATE', [id]);
+      const header = (headerRows as any[])[0];
+      if (!header) throw Object.assign(new Error('MPS not found'), { statusCode: 404 });
+      if (header.status !== 'Draft') throw Object.assign(new Error('Only Draft MPS can be confirmed'), { statusCode: 400 });
 
-    await dbRun('UPDATE mps_headers SET status = ?, confirmed_by = ?, confirmed_at = NOW() WHERE id = ?', ['Confirmed', userId, id]);
-    await dbRun('UPDATE mps_details SET status = ? WHERE mps_header_id = ? AND status = ?', ['Scheduled', id, 'Pending']);
+      const [detailRows] = await conn.execute('SELECT COUNT(*) as cnt FROM mps_details WHERE mps_header_id = ?', [id]);
+      if (!detailRows[0] || detailRows[0].cnt === 0) throw Object.assign(new Error('Cannot confirm empty MPS'), { statusCode: 400 });
+
+      await conn.execute('UPDATE mps_headers SET status = ?, confirmed_by = ?, confirmed_at = NOW() WHERE id = ?', ['Confirmed', userId, id]);
+      await conn.execute("UPDATE mps_details SET status = 'Scheduled' WHERE mps_header_id = ? AND status = 'Pending'", [id]);
+    });
+
     await ppicLog(req, 'CONFIRM', 'MPS', id, { status: 'Draft' }, { status: 'Confirmed' });
     res.json({ message: 'MPS confirmed' });
-  } catch (error) { res.status(500).json({ error: 'Failed to confirm MPS' }); }
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to confirm MPS' });
+  }
 });
 
 // POST /mps/:id/revert - Revert Confirmed MPS back to Draft
 router.post('/mps/:id/revert', authMiddleware, requirePermission('ppic.mps', 'create'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
-    if (!header) return res.status(404).json({ error: 'MPS not found' });
-    if (header.status !== 'Confirmed') return res.status(400).json({ error: 'Only Confirmed MPS can be reverted to Draft' });
 
-    await dbRun('UPDATE mps_headers SET status = ?, confirmed_by = NULL, confirmed_at = NULL WHERE id = ?', ['Draft', id]);
-    await dbRun("UPDATE mps_details SET status = 'Pending' WHERE mps_header_id = ? AND status = 'Scheduled'", [id]);
+    await dbTransaction(async (conn: any) => {
+      // lock header to prevent concurrent revert/WO creation
+      const [headerRows] = await conn.execute('SELECT * FROM mps_headers WHERE id = ? FOR UPDATE', [id]);
+      const header = (headerRows as any[])[0];
+      if (!header) throw Object.assign(new Error('MPS not found'), { statusCode: 404 });
+      if (header.status !== 'Confirmed') throw Object.assign(new Error('Only Confirmed MPS can be reverted to Draft'), { statusCode: 400 });
+
+      // lock details
+      const [detailRows] = await conn.execute('SELECT id FROM mps_details WHERE mps_header_id = ? FOR UPDATE', [id]);
+      const detailIds = (detailRows as any[]).map((d: any) => d.id);
+
+      if (detailIds.length > 0) {
+        const dPlaceholders = detailIds.map(() => '?').join(',');
+
+        // check for approved PRs using proper FK instead of notes LIKE
+        const [prRows] = await conn.execute(
+          `SELECT COUNT(*) as cnt FROM purchase_requests
+           WHERE mps_header_id = ? AND approval_status >= 1`,
+          [id]
+        );
+        if (Number((prRows as any[])[0]?.cnt || 0) > 0) {
+          throw Object.assign(new Error(
+            `Cannot revert: ${(prRows as any[])[0].cnt} approved Purchase Request(s) reference this MPS. Reject or cancel them first.`
+          ), { statusCode: 409, code: 'MPS_HAS_DOWNSTREAM_ACTIVITY' });
+        }
+
+        // cancel DRAFT WOs instead of deleting (preserve history)
+        await conn.execute(
+          `UPDATE work_orders SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE mps_detail_id IN (${dPlaceholders}) AND UPPER(status) = 'DRAFT'`,
+          detailIds
+        );
+      }
+
+      await conn.execute('UPDATE mps_headers SET status = ?, confirmed_by = NULL, confirmed_at = NULL WHERE id = ?', ['Draft', id]);
+      await conn.execute("UPDATE mps_details SET status = 'Pending' WHERE mps_header_id = ? AND status = 'Scheduled'", [id]);
+    });
+
     await ppicLog(req, 'REVERT', 'MPS', id, { status: 'Confirmed' }, { status: 'Draft' });
     res.json({ message: 'MPS reverted to Draft' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error reverting MPS:', error);
-    res.status(500).json({ error: 'Failed to revert MPS' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to revert MPS', code: error.code });
   }
 });
 
@@ -782,9 +852,12 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
       'SELECT * FROM mps_week_data WHERE mps_detail_id = ? ORDER BY year, week_number', [detailId]
     ) as any[];
 
-    // get existing WOs for this detail
+    // get existing WOs for this detail (include reschedule info)
     const existingWOs = await dbAll(
-      'SELECT id, wo_number, week_number, quantity, status FROM work_orders WHERE mps_detail_id = ? ORDER BY week_number', [detailId]
+      `SELECT w.id, w.wo_number, w.week_number, w.quantity, w.status,
+        (SELECT COUNT(*) FROM wo_reschedule_log WHERE wo_id = w.id) as reschedule_count,
+        (SELECT old_week_number FROM wo_reschedule_log WHERE wo_id = w.id ORDER BY created_at ASC LIMIT 1) as original_week
+       FROM work_orders w WHERE w.mps_detail_id = ? ORDER BY w.week_number`, [detailId]
     ) as any[];
 
     const previewWeeks = weekData
@@ -821,6 +894,8 @@ router.get('/mps/:id/details/:detailId/generate-wo/preview', authMiddleware, req
       week_number: wo.week_number,
       quantity: Number(wo.quantity),
       status: wo.status,
+      reschedule_count: Number(wo.reschedule_count || 0),
+      original_week: wo.original_week || null,
     }));
 
     res.json({ data: {
@@ -845,85 +920,137 @@ router.post('/mps/:id/details/:detailId/generate-wo', authMiddleware, requirePer
     const { selected_weeks, weeks: weeksAlt } = req.body;
     const weeks = selected_weeks || weeksAlt; // frontend sends selected_weeks
     const userId = (req as any).user?.userId || null;
-    const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
-    if (!header) return res.status(404).json({ error: 'MPS not found' });
-    if (header.status !== 'Confirmed') return res.status(400).json({ error: 'MPS must be Confirmed' });
 
-    const detail = await dbGet('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]) as any;
-    if (!detail) return res.status(404).json({ error: 'MPS detail not found' });
+    // all reads + writes inside one transaction to prevent generate-vs-revert race
+    const { created, skipped, headerNum } = await dbTransaction(async (conn: any) => {
+      // lock MPS header — prevents concurrent revert
+      const [headerRows] = await conn.execute('SELECT * FROM mps_headers WHERE id = ? FOR UPDATE', [id]);
+      const header = (headerRows as any[])[0];
+      if (!header) throw Object.assign(new Error('MPS not found'), { statusCode: 404 });
+      if (header.status !== 'Confirmed') throw Object.assign(new Error('MPS must be Confirmed'), { statusCode: 400 });
 
-    // resolve production line for this product
-    const lineInfo = await dbGet(`
-      SELECT lp.id as line_process_id
-      FROM line_process_products lpp
-      JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
-      WHERE lpp.product_id = ?
-      LIMIT 1
-    `, [detail.product_id]) as any;
-    const lineProcessId = lineInfo?.line_process_id || null;
-    if (!lineProcessId) {
-      return res.status(400).json({ error: 'No active production line mapped to this product. Please assign a line in Line Process management first.' });
-    }
+      // lock detail
+      const [detailRows] = await conn.execute('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ? FOR UPDATE', [detailId, id]);
+      const detail = (detailRows as any[])[0];
+      if (!detail) throw Object.assign(new Error('MPS detail not found'), { statusCode: 404 });
 
-    // get weekly data with production_qty > 0
-    let weekData = await dbAll(
-      'SELECT * FROM mps_week_data WHERE mps_detail_id = ? AND production_qty > 0 ORDER BY year, week_number', [detailId]
-    ) as any[];
-
-    // filter to selected weeks if provided
-    if (weeks && Array.isArray(weeks) && weeks.length > 0) {
-      weekData = weekData.filter((w: any) =>
-        weeks.some((sel: any) => sel.week_number === w.week_number && sel.year === w.year)
-      );
-    }
-
-    if (weekData.length === 0) return res.status(400).json({ error: 'No production weeks to generate WO' });
-
-    const created: any[] = [];
-    const skipped: any[] = [];
-
-    for (const w of weekData) {
-      // duplicate check: existing WO for same detail + week
-      const existingWO = await dbGet(
-        'SELECT id, wo_number, status FROM work_orders WHERE mps_detail_id = ? AND week_number = ?',
-        [detailId, w.week_number]
-      ) as any;
-      if (existingWO) {
-        skipped.push({ week: w.week_number, wo_number: existingWO.wo_number, reason: 'already exists' });
-        continue;
+      // resolve production line
+      const [lineRows] = await conn.execute(`
+        SELECT lp.id as line_process_id
+        FROM line_process_products lpp
+        JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
+        WHERE lpp.product_id = ?
+        LIMIT 1
+      `, [detail.product_id]);
+      const lineProcessId = (lineRows as any[])[0]?.line_process_id || null;
+      if (!lineProcessId) {
+        throw Object.assign(new Error('No active production line mapped to this product. Please assign a line in Line Process management first.'), { statusCode: 400 });
       }
 
-      const qty = Number(w.production_qty);
-      if (qty <= 0) continue;
+      // get weekly data inside transaction
+      const [weekRows] = await conn.execute(
+        'SELECT * FROM mps_week_data WHERE mps_detail_id = ? AND production_qty > 0 ORDER BY year, week_number', [detailId]
+      );
+      let weekData = weekRows as any[];
 
-      const woCount = await dbGet('SELECT COUNT(*) as cnt FROM work_orders') as any;
-      const woNumber = `WO-${String((woCount?.cnt || 0) + 1).padStart(5, '0')}`;
+      // filter to selected weeks if provided
+      if (weeks && Array.isArray(weeks) && weeks.length > 0) {
+        weekData = weekData.filter((w: any) =>
+          weeks.some((sel: any) => sel.week_number === w.week_number && sel.year === w.year)
+        );
+      }
 
-      // schedule: week start/end
-      const jan4 = new Date(w.year, 0, 4);
-      const dayOfWeek = jan4.getDay() || 7;
-      const monday = new Date(jan4);
-      monday.setDate(jan4.getDate() - dayOfWeek + 1 + (w.week_number - 1) * 7);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+      if (weekData.length === 0) {
+        throw Object.assign(new Error('No production weeks to generate WO'), { statusCode: 400 });
+      }
 
-      await dbRun(`
-        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes, source_type)
-        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, 'MPS')
-      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number}`]);
+      const created: any[] = [];
+      const skipped: any[] = [];
 
-      created.push({ week_number: w.week_number, wo_number: woNumber, quantity: qty });
-    }
+      for (const w of weekData) {
+        // duplicate check
+        const [existingRows] = await conn.execute(
+          'SELECT id, wo_number, status FROM work_orders WHERE mps_detail_id = ? AND week_number = ? AND year = ?',
+          [detailId, w.week_number, w.year]
+        );
+        if ((existingRows as any[]).length > 0) {
+          skipped.push({ week: w.week_number, wo_number: (existingRows as any[])[0].wo_number, reason: 'already exists' });
+          continue;
+        }
+
+        const qty = Number(w.production_qty);
+        if (qty <= 0) continue;
+
+        const ts = Date.now().toString(36).toUpperCase();
+        const rand = Math.floor(100 + Math.random() * 900);
+        const woNumber = `WO-${w.year}W${String(w.week_number).padStart(2, '0')}-${ts}${rand}`;
+
+        // schedule: week start/end
+        const jan4 = new Date(w.year, 0, 4);
+        const dayOfWeek = jan4.getDay() || 7;
+        const monday = new Date(jan4);
+        monday.setDate(jan4.getDate() - dayOfWeek + 1 + (w.week_number - 1) * 7);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+        try {
+          // pin BOM revision at WO creation time
+          await conn.execute(`
+            INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, year, line_process_id, created_by, notes, source_type)
+            VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, 'MPS')
+          `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, w.year, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number}`]);
+
+          created.push({ week_number: w.week_number, wo_number: woNumber, quantity: qty });
+
+          // auto-generate wo_materials from BOM (mandatory if bom_id exists)
+          if (detail.bom_id) {
+            const [newWoRows] = await conn.execute(
+              'SELECT id FROM work_orders WHERE wo_number = ? LIMIT 1', [woNumber]
+            );
+            const newWoId = (newWoRows as any[])[0]?.id;
+            if (!newWoId) throw new Error(`Failed to retrieve WO ID for ${woNumber}`);
+
+            const [bomRows] = await conn.execute('SELECT qty FROM bom_headers WHERE id = ?', [detail.bom_id]);
+            const batchQty = Number((bomRows as any[])[0]?.qty || 0);
+            if (batchQty <= 0) throw new Error(`BOM ${detail.bom_id} has invalid batch qty. Cannot generate WO materials.`);
+
+            const multiplier = qty / batchQty;
+            const [compRows] = await conn.execute(
+              'SELECT raw_material_id, quantity FROM bom_details WHERE bom_header_id = ?', [detail.bom_id]
+            );
+            if ((compRows as any[]).length === 0) {
+              throw new Error(`BOM ${detail.bom_id} has no components. Cannot generate WO materials.`);
+            }
+            for (const comp of (compRows as any[])) {
+              const matQty = Number(comp.quantity) * multiplier;
+              await conn.execute(
+                `INSERT INTO wo_materials (wo_id, product_id, quantity_required, quantity_issued) VALUES (?, ?, ?, 0)`,
+                [newWoId, comp.raw_material_id, matQty]
+              );
+            }
+          }
+        } catch (insertErr: any) {
+          if (insertErr.code === 'ER_DUP_ENTRY') {
+            skipped.push({ week: w.week_number, reason: 'concurrent duplicate' });
+          } else {
+            throw insertErr;
+          }
+        }
+      }
+
+      return { created, skipped, headerNum: header.mps_number };
+    });
 
     await ppicLog(req, 'GENERATE_WO', 'WORK_ORDER', detailId, null, { created: created.length, skipped: skipped.length });
     res.json({
       message: `${created.length} WO(s) generated` + (skipped.length > 0 ? `, ${skipped.length} skipped (duplicate)` : ''),
       data: { created, skipped }
     });
-  } catch (error) {
-    console.error('Error generating WOs:', error);
-    res.status(500).json({ error: 'Failed to generate WOs' });
+  } catch (error: any) {
+    console.error('Error generating WO:', error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to generate WO' });
   }
 });
 
@@ -939,20 +1066,21 @@ router.post('/mps/:id/details/:detailId/sync-wo', authMiddleware, requirePermiss
 
     // only sync DRAFT WOs
     const draftWOs = await dbAll(
-      "SELECT wo.id, wo.wo_number, wo.week_number FROM work_orders wo WHERE wo.mps_detail_id = ? AND wo.status = 'DRAFT'",
+      "SELECT wo.id, wo.wo_number, wo.week_number, wo.year FROM work_orders wo WHERE wo.mps_detail_id = ? AND wo.status = 'DRAFT'",
       [detailId]
     ) as any[];
 
     const updated: any[] = [];
     const skipped: any[] = [];
     for (const wo of draftWOs) {
+      // include year to prevent cross-year week collision
       const weekData = await dbGet(
-        'SELECT production_qty FROM mps_week_data WHERE mps_detail_id = ? AND week_number = ?',
-        [detailId, wo.week_number]
+        'SELECT production_qty FROM mps_week_data WHERE mps_detail_id = ? AND week_number = ? AND year = ?',
+        [detailId, wo.week_number, wo.year]
       ) as any;
       const newQty = Number(weekData?.production_qty || 0);
       await dbRun('UPDATE work_orders SET quantity = ? WHERE id = ?', [newQty, wo.id]);
-      updated.push({ wo_number: wo.wo_number, week: wo.week_number, qty: newQty });
+      updated.push({ wo_number: wo.wo_number, week: wo.week_number, year: wo.year, qty: newQty });
     }
 
     await ppicLog(req, 'SYNC_WO', 'WORK_ORDER', detailId, null, { updated: updated.length });
@@ -968,85 +1096,117 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
   try {
     const { id, detailId } = req.params;
     const userId = (req as any).user?.userId || null;
-    const header = await dbGet('SELECT * FROM mps_headers WHERE id = ?', [id]) as any;
-    if (!header) return res.status(404).json({ error: 'MPS not found' });
 
-    const detail = await dbGet('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]) as any;
-    if (!detail) return res.status(404).json({ error: 'MPS detail not found' });
+    // all reads + checks + mutations inside one transaction
+    const { deleted, created } = await dbTransaction(async (conn: any) => {
+      // lock MPS header
+      const [headerRows] = await conn.execute('SELECT * FROM mps_headers WHERE id = ? FOR UPDATE', [id]);
+      const header = (headerRows as any[])[0];
+      if (!header) throw Object.assign(new Error('MPS not found'), { statusCode: 404 });
 
-    // resolve production line for this product
-    const lineInfo = await dbGet(`
-      SELECT lp.id as line_process_id
-      FROM line_process_products lpp
-      JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
-      WHERE lpp.product_id = ?
-      LIMIT 1
-    `, [detail.product_id]) as any;
-    const lineProcessId = lineInfo?.line_process_id || null;
-    if (!lineProcessId) {
-      return res.status(400).json({ error: 'No active production line mapped to this product. Please assign a line in Line Process management first.' });
-    }
+      // lock detail
+      const [detailRows] = await conn.execute('SELECT * FROM mps_details WHERE id = ? AND mps_header_id = ? FOR UPDATE', [detailId, id]);
+      const detail = (detailRows as any[])[0];
+      if (!detail) throw Object.assign(new Error('MPS detail not found'), { statusCode: 404 });
 
-    // collect DRAFT WOs to report what was deleted
-    const draftWOs = await dbAll(
-      "SELECT wo_number, week_number FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT'", [detailId]
-    ) as any[];
-    const deleted = draftWOs.map((wo: any) => ({ wo_number: wo.wo_number, week: wo.week_number }));
+      // resolve production line
+      const [lineRows] = await conn.execute(`
+        SELECT lp.id as line_process_id
+        FROM line_process_products lpp
+        JOIN line_processes lp ON lpp.line_process_id = lp.id AND lp.active = 1
+        WHERE lpp.product_id = ?
+        LIMIT 1
+      `, [detail.product_id]);
+      const lineProcessId = (lineRows as any[])[0]?.line_process_id || null;
+      if (!lineProcessId) {
+        throw Object.assign(new Error('No active production line mapped to this product.'), { statusCode: 400 });
+      }
 
-    // delete DRAFT WOs only
-    await dbRun("DELETE FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT'", [detailId]);
+      // lock DRAFT WOs and check for downstream activity
+      const [draftWORows] = await conn.execute(
+        "SELECT id, wo_number, week_number FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT' FOR UPDATE", [detailId]
+      );
+      const draftWOs = draftWORows as any[];
 
-    // regenerate from current production_qty > 0 weeks
-    const weekData = await dbAll(
-      'SELECT * FROM mps_week_data WHERE mps_detail_id = ? AND production_qty > 0 ORDER BY year, week_number', [detailId]
-    ) as any[];
+      if (draftWOs.length > 0) {
+        const woIds = draftWOs.map((w: any) => w.id);
+        const woPlaceholders = woIds.map(() => '?').join(',');
 
-    const created: any[] = [];
-    for (const w of weekData) {
-      // skip if non-DRAFT WO already exists for this week
-      const existing = await dbGet(
-        'SELECT id FROM work_orders WHERE mps_detail_id = ? AND week_number = ?', [detailId, w.week_number]
-      ) as any;
-      if (existing) continue;
+        // check material issues under lock
+        const [issueRows] = await conn.execute(
+          `SELECT COUNT(*) as cnt FROM wo_materials WHERE wo_id IN (${woPlaceholders}) AND quantity_issued > 0`,
+          woIds
+        );
+        if (Number((issueRows as any[])[0]?.cnt || 0) > 0) {
+          throw Object.assign(new Error('Cannot reset: some DRAFT WOs already have material issues. Cancel those issues first.'), { statusCode: 409 });
+        }
+      }
 
-      const qty = Number(w.production_qty);
-      if (qty <= 0) continue;
+      // collect what will be deleted
+      const deleted = draftWOs.map((wo: any) => ({ wo_number: wo.wo_number, week: wo.week_number }));
 
-      const woCount = await dbGet('SELECT COUNT(*) as cnt FROM work_orders') as any;
-      const woNumber = `WO-${String((woCount?.cnt || 0) + 1).padStart(5, '0')}`;
+      // cancel DRAFT WOs instead of deleting (preserve history)
+      await conn.execute(
+        "UPDATE work_orders SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE mps_detail_id = ? AND status = 'DRAFT'",
+        [detailId]
+      );
 
-      const jan4 = new Date(w.year, 0, 4);
-      const dayOfWeek = jan4.getDay() || 7;
-      const monday = new Date(jan4);
-      monday.setDate(jan4.getDate() - dayOfWeek + 1 + (w.week_number - 1) * 7);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+      // regenerate from current production_qty > 0 weeks
+      const [weekRows] = await conn.execute(
+        'SELECT * FROM mps_week_data WHERE mps_detail_id = ? AND production_qty > 0 ORDER BY year, week_number', [detailId]
+      );
 
-      await dbRun(`
-        INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, line_process_id, created_by, notes, source_type)
-        VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, 'MPS')
-      `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
+      const created: any[] = [];
+      for (const w of (weekRows as any[])) {
+        // skip if non-DRAFT WO already exists for this week
+        const [existingRows] = await conn.execute(
+          "SELECT id FROM work_orders WHERE mps_detail_id = ? AND week_number = ? AND year = ? AND status != 'CANCELLED'", [detailId, w.week_number, w.year]
+        );
+        if ((existingRows as any[]).length > 0) continue;
 
-      created.push({ wo_number: woNumber, week_number: w.week_number, quantity: qty });
-    }
+        const qty = Number(w.production_qty);
+        if (qty <= 0) continue;
 
-    // update detail status
-    const remaining = await dbGet(
-      'SELECT COUNT(*) as cnt FROM work_orders WHERE mps_detail_id = ?', [detailId]
-    ) as any;
-    if (!remaining || remaining.cnt === 0) {
-      await dbRun("UPDATE mps_details SET wo_id = NULL, status = 'Scheduled' WHERE id = ?", [detailId]);
-    }
+        const ts = Date.now().toString(36).toUpperCase();
+        const rand = Math.floor(100 + Math.random() * 900);
+        const woNumber = `WO-${w.year}W${String(w.week_number).padStart(2, '0')}-${ts}${rand}`;
+
+        const jan4 = new Date(w.year, 0, 4);
+        const dayOfWeek = jan4.getDay() || 7;
+        const monday = new Date(jan4);
+        monday.setDate(jan4.getDate() - dayOfWeek + 1 + (w.week_number - 1) * 7);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+        await conn.execute(`
+          INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, year, line_process_id, created_by, notes, source_type)
+          VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, 'MPS')
+        `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, w.year, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
+
+        created.push({ wo_number: woNumber, week_number: w.week_number, quantity: qty });
+      }
+
+      // update detail status
+      const [remaining] = await conn.execute(
+        'SELECT COUNT(*) as cnt FROM work_orders WHERE mps_detail_id = ?', [detailId]
+      );
+      if (!(remaining as any[])[0] || (remaining as any[])[0].cnt === 0) {
+        await conn.execute("UPDATE mps_details SET wo_id = NULL, status = 'Scheduled' WHERE id = ?", [detailId]);
+      }
+
+      return { deleted, created };
+    });
 
     await ppicLog(req, 'RESET_WO', 'WORK_ORDER', detailId, null, { deleted: deleted.length, created: created.length });
     res.json({
       message: `${deleted.length} DRAFT WO(s) deleted, ${created.length} new WO(s) created`,
       data: { deleted, created }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error resetting WOs:', error);
-    res.status(500).json({ error: 'Failed to reset WOs' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to reset WOs' });
   }
 });
 
@@ -1160,8 +1320,11 @@ router.get('/mps/:id/details/:detailId/mrp', authMiddleware, async (req: Request
       weekColumns.push({ week: wk, year: yr, label: `W${wk}`, dateRange: `${range.start}-${range.end}` });
     }
 
-    // batch size from bom_headers.qty (e.g. 200 for "@200 ltr")
-    const bomBatchSize = Number(detail.bom_batch_qty) || 1;
+    // batch size from bom_headers.qty — reject missing/zero
+    const bomBatchSize = Number(detail.bom_batch_qty);
+    if (!bomBatchSize || bomBatchSize <= 0) {
+      return res.status(422).json({ error: `BOM batch quantity not defined for product ${detail.product_name}. Set bom_headers.qty before running MRP.`, code: 'BOM_BASIS_REQUIRED' });
+    }
 
     // For each BOM material, calculate MRP with actual data
     const materials = [];
@@ -1311,40 +1474,13 @@ router.put('/mps/:id/details/:detailId/mrp', authMiddleware, requirePermission('
   }
 });
 
-// POST /mps/:id/details/:detailId/mrp/generate-pr - Embedded MRP → PR from MPS detail
+// POST /mps/:id/details/:detailId/mrp/generate-pr - Backend-authoritative MRP → PR
 router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'create'), async (req: Request, res: Response) => {
   try {
     const { id, detailId } = req.params;
-    const { material_net_reqs, needed_by_week, needed_by_year } = req.body;
+    const { material_ids, needed_by_week, needed_by_year } = req.body;
 
-    if (!material_net_reqs || !Array.isArray(material_net_reqs) || material_net_reqs.length === 0) {
-      return res.status(400).json({ error: 'No materials with net requirements provided.' });
-    }
-
-    const validMaterials = material_net_reqs.filter((m: any) => Number(m.net_req_qty) > 0);
-    if (validMaterials.length === 0) {
-      return res.status(400).json({ error: 'No materials have net requirements > 0.' });
-    }
-
-    const header = await dbGet('SELECT mps_number, period_year, period_month, status FROM mps_headers WHERE id = ?', [id]) as any;
-    if (!header || header.status !== 'Confirmed') {
-      return res.status(400).json({ error: 'PR can only be generated from a Confirmed MPS. Please confirm the MPS first.' });
-    }
     const userId = (req as any).user?.userId || null;
-
-    // duplicate safety: check if a PR was already generated from this MPS detail
-    const existingPr = await dbGet(
-      `SELECT pr.id, pr.pr_number FROM purchase_requests pr
-       WHERE pr.notes LIKE ? AND pr.status != 'CANCELLED'
-       ORDER BY pr.id DESC LIMIT 1`,
-      [`%Detail #${detailId}]%`]
-    ) as any;
-    if (existingPr) {
-      return res.status(409).json({
-        error: `PR sudah pernah dibuat untuk MPS detail ini: ${existingPr.pr_number}. Batalkan PR lama terlebih dahulu jika ingin membuat ulang.`,
-        existing_pr: existingPr.pr_number,
-      });
-    }
 
     const now = new Date();
     const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -1360,27 +1496,73 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
       friday.setDate(jan4.getDate() - dayOfWeek + 5 + (needed_by_week - 1) * 7);
       neededByDate = friday.toISOString().slice(0, 10);
     } else {
-      const maxLead = Math.max(...validMaterials.map((m: any) => 2)); // default lead
       const nb = new Date();
-      nb.setDate(nb.getDate() + maxLead * 7);
+      nb.setDate(nb.getDate() + 14);
       neededByDate = nb.toISOString().slice(0, 10);
     }
 
-    // build JSON notes matching procurement parseNotes() contract
-    const noteText = `[Auto-generated from MRP for MPS ${header?.mps_number || id}, Detail #${detailId}] | Materials: ${validMaterials.length} items | Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`;
-    const notesItems = validMaterials
-      .filter((m: any) => Number(m.net_req_qty) > 0)
-      .map((m: any) => ({
+    // everything inside one transaction to prevent parallel races
+    const result = await dbTransaction(async (conn: any) => {
+      // lock MPS header to serialize parallel requests
+      const [headerRows] = await conn.execute(
+        'SELECT mps_number, period_year, period_month, status FROM mps_headers WHERE id = ? FOR UPDATE', [id]
+      );
+      const header = (headerRows as any[])[0];
+      if (!header || header.status !== 'Confirmed') {
+        throw Object.assign(new Error('PR can only be generated from a Confirmed MPS.'), { statusCode: 400 });
+      }
+
+      // duplicate PR detection inside transaction
+      const [dupRows] = await conn.execute(
+        `SELECT pr.id, pr.pr_number FROM purchase_requests pr
+         WHERE pr.mps_detail_id = ? AND pr.status != 'CANCELLED'
+         ORDER BY pr.id DESC LIMIT 1`,
+        [detailId]
+      );
+      if ((dupRows as any[]).length > 0) {
+        const existingPr = (dupRows as any[])[0];
+        throw Object.assign(
+          new Error(`PR sudah pernah dibuat untuk MPS detail ini: ${existingPr.pr_number}. Batalkan PR lama terlebih dahulu jika ingin membuat ulang.`),
+          { statusCode: 409, code: 'DUPLICATE_PR', existing_pr: existingPr.pr_number }
+        );
+      }
+
+      // server-side recompute MRP quantities
+      const [mrpRows] = await conn.execute(
+        `SELECT mwd.material_id, SUM(mwd.planned_order_receipt) as total_planned,
+                p.name as material_name, u.name as uom_name
+         FROM mrp_week_data mwd
+         JOIN products p ON p.id = mwd.material_id
+         LEFT JOIN uom u ON u.id = p.uom_id
+         WHERE mwd.mps_detail_id = ? AND mwd.planned_order_receipt > 0
+         GROUP BY mwd.material_id, p.name, u.name`,
+        [detailId]
+      );
+      const mrpResults = mrpRows as any[];
+
+      let selectedResults = mrpResults;
+      if (material_ids && Array.isArray(material_ids) && material_ids.length > 0) {
+        const idSet = new Set(material_ids.map(Number));
+        selectedResults = mrpResults.filter((r: any) => idSet.has(Number(r.material_id)));
+      }
+
+      if (selectedResults.length === 0) {
+        throw Object.assign(new Error('No materials with planned order receipts found for this MPS detail.'), { statusCode: 400 });
+      }
+
+      // build notes for audit
+      const noteText = `[Auto-generated from MRP for MPS ${header?.mps_number || id}, Detail #${detailId}] | Materials: ${selectedResults.length} items | Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`;
+      const notesItems = selectedResults.map((m: any) => ({
         productId: m.material_id,
         productName: m.material_name || '',
         name: m.material_name || '',
-        qty: Number(m.net_req_qty),
+        qty: Number(m.total_planned),
         uom: m.uom_name || '-',
-        specification: `MRP Net Req`,
+        specification: 'MRP Net Req (server-computed)',
       }));
-    const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
+      const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
 
-    const result = await dbTransaction(async (conn: any) => {
+      // create PR header
       const [prInsert] = await conn.execute(
         `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type, mps_header_id, mps_detail_id) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP', ?, ?)`,
         [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededByDate, id, detailId]
@@ -1388,17 +1570,17 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
       const prId = prInsert.insertId;
 
       let itemCount = 0;
-      for (const mat of validMaterials) {
-        const qty = Number(mat.net_req_qty) || 0;
+      for (const mat of selectedResults) {
+        const qty = Number(mat.total_planned) || 0;
         if (qty <= 0) continue;
         await conn.execute(
           `INSERT INTO purchase_request_items (purchase_request_id, product_id, quantity, notes) VALUES (?, ?, ?, ?)`,
-          [prId, mat.material_id, qty, `MRP Net Req | ${mat.material_name || ''} | UOM: ${mat.uom_name || '-'}`]
+          [prId, mat.material_id, qty, `MRP Net Req (server) | ${mat.material_name || ''} | UOM: ${mat.uom_name || '-'}`]
         );
         itemCount++;
       }
       if (itemCount === 0) throw new Error('No valid items to insert');
-      return { prId, itemCount };
+      return { prId, itemCount, mpsNumber: header.mps_number };
     });
 
     console.log(`Embedded PR generated: ${prNumber} with ${result.itemCount} items (MPS detail ${detailId})`);
@@ -1412,10 +1594,11 @@ router.post('/mps/:id/details/:detailId/mrp/generate-pr', authMiddleware, requir
     });
   } catch (error: any) {
     console.error('Error generating embedded PR:', error);
-    if (error.message?.includes('UNIQUE')) {
-      return res.status(400).json({ error: 'PR number conflict. Please try again.' });
-    }
-    res.status(500).json({ error: 'Failed to generate Purchase Request from embedded MRP' });
+    const status = error.statusCode || (error.message?.includes('UNIQUE') ? 409 : 500);
+    const resp: any = { error: error.message || 'Failed to generate Purchase Request from embedded MRP' };
+    if (error.code) resp.code = error.code;
+    if (error.existing_pr) resp.existing_pr = error.existing_pr;
+    res.status(status).json(resp);
   }
 });
 
@@ -1537,8 +1720,11 @@ router.get('/mrp', authMiddleware, requirePermission('ppic.mrp', 'view'), async 
           };
         }
 
-        // batch size from bom_headers.qty (e.g. 200 for "@200 ltr")
-        const bomBatchSize = Number(detail.bom_batch_qty) || 1;
+        // batch size from bom_headers.qty — reject missing/zero
+        const bomBatchSize = Number(detail.bom_batch_qty);
+        if (!bomBatchSize || bomBatchSize <= 0) {
+          return res.status(422).json({ error: `BOM batch quantity not defined for product ${detail.product_name}. Set bom_headers.qty before running MRP.`, code: 'BOM_BASIS_REQUIRED' });
+        }
 
         // For each week column, add this detail's contribution to gross requirements
         for (const wc of weekColumns) {
@@ -1702,183 +1888,31 @@ router.put('/mrp', authMiddleware, requirePermission('ppic.mrp', 'update'), asyn
 router.post('/mrp/generate-pr', authMiddleware, requirePermission('ppic.mrp', 'create'), async (req: Request, res: Response) => {
   try {
     const { materials, year, notes } = req.body;
-
-    if (!materials || !Array.isArray(materials) || materials.length === 0) {
-      return res.status(400).json({ error: 'No materials provided. Select materials with net requirements > 0.' });
-    }
-
-    const validMaterials = materials.filter((m: any) => Number(m.total_net_requirement) > 0);
-    if (validMaterials.length === 0) {
-      return res.status(400).json({ error: 'No materials have net requirements > 0.' });
-    }
-
-    // P0-7: server-side recalculation — query PO scheduled receipts per material
-    // and reduce net requirement so duplicate procurement is prevented
-    for (const mat of validMaterials) {
-      const poOutstanding = await dbGet(`
-        SELECT COALESCE(SUM(GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0)), 0) as total_outstanding
-        FROM purchase_order_items poi
-        JOIN purchase_orders po ON poi.purchase_order_id = po.id
-        WHERE po.status IN ('APPROVED','PROCESSING','PARTIAL')
-          AND po.approval_status = 2
-          AND poi.product_id = ?
-          AND GREATEST(poi.quantity - COALESCE(poi.received_qty, 0), 0) > 0
-      `, [mat.material_id]) as any;
-
-      const scheduledReceipt = Number(poOutstanding?.total_outstanding || 0);
-      const browserNet = Number(mat.total_net_requirement);
-      // server-side adjusted: reduce by scheduled receipt that browser may not have accounted for
-      const serverNet = Math.max(browserNet - scheduledReceipt, 0);
-      mat.total_net_requirement = Math.round(serverNet * 100) / 100;
-    }
-
-    // re-filter after recalculation (some may now be 0)
-    const recalcMaterials = validMaterials.filter((m: any) => Number(m.total_net_requirement) > 0);
-    if (recalcMaterials.length === 0) {
-      return res.status(400).json({ error: 'After accounting for existing PO scheduled receipts, no materials have net requirements > 0.' });
-    }
-
-    // duplicate protection: check if a PR-MRP was generated today for same year
-    const today = new Date().toISOString().slice(0, 10);
-    const recentPR = await dbGet(
-      "SELECT id, pr_number FROM purchase_requests WHERE pr_number LIKE ? AND request_date = ?",
-      [`PR-MRP-${today.replace(/-/g, '')}%`, today]
-    ) as any;
-    if (recentPR) {
-      return res.status(409).json({
-        error: `An MRP Purchase Request was already generated today (${recentPR.pr_number}). Delete it first or wait until tomorrow.`,
-        existing_pr: recentPR.pr_number
-      });
-    }
-
     const userId = (req as any).user?.userId || null;
-    const now = new Date();
-    const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(100 + Math.random() * 900);
-    const prNumber = `PR-MRP-${datePart}-${rand}`;
 
-    const maxLeadTime = Math.max(...recalcMaterials.map((m: any) => Number(m.lead_time) || 2));
-    const neededBy = new Date();
-    neededBy.setDate(neededBy.getDate() + maxLeadTime * 7);
+    const result = await generatePurchaseRequestFromMrp({ materials, year, notes, userId });
 
-    // build JSON notes matching procurement parseNotes() contract
-    const noteText = [
-      notes || '',
-      `[Auto-generated from MRP Year ${year || now.getFullYear()}]`,
-      `Materials: ${recalcMaterials.length} items`,
-      `Generated: ${now.toISOString().slice(0, 19).replace('T', ' ')}`
-    ].filter(Boolean).join(' | ');
-    const notesItems = recalcMaterials
-      .filter((m: any) => Number(m.total_net_requirement) > 0)
-      .map((m: any) => ({
-        productId: m.material_id,
-        productName: m.material_name || '',
-        name: m.material_name || '',
-        qty: Number(m.total_net_requirement),
-        uom: m.uom_name || '-',
-        specification: `MRP Net Req | Lead Time: ${m.lead_time || 2} weeks`,
-      }));
-    const prNotes = JSON.stringify({ noteText, items: notesItems, itemType: 'inventory' });
-
-    // resolve confirmed MPS details + BOM mapping for per-item lineage
-    const mrpYear = year || now.getFullYear();
-    const mpsHeaders = await dbAll(
-      `SELECT id FROM mps_headers WHERE status = 'Confirmed' AND period_year = ?`,
-      [mrpYear]
-    ) as any[];
-    const headerIds = mpsHeaders.map((h: any) => h.id);
-
-    // build material→contributing mps_detail_ids map
-    const materialDetailMap: Record<number, number[]> = {};
-    if (headerIds.length > 0) {
-      const hPlaceholders = headerIds.map(() => '?').join(',');
-      const allDetails = await dbAll(`
-        SELECT d.id as detail_id, d.bom_id
-        FROM mps_details d
-        WHERE d.mps_header_id IN (${hPlaceholders}) AND d.bom_id IS NOT NULL
-      `, headerIds) as any[];
-
-      if (allDetails.length > 0) {
-        const detailIds = allDetails.map((d: any) => d.detail_id);
-        const dPlaceholders = detailIds.map(() => '?').join(',');
-
-        // only details with actual production in at least one week
-        const detailsWithProduction = await dbAll(`
-          SELECT DISTINCT mps_detail_id
-          FROM mps_week_data
-          WHERE mps_detail_id IN (${dPlaceholders}) AND production_qty > 0
-        `, detailIds) as any[];
-        const activeDetailIds = new Set(detailsWithProduction.map((r: any) => r.mps_detail_id));
-
-        const activeDetails = allDetails.filter((d: any) => activeDetailIds.has(d.detail_id));
-
-        const bomIds = [...new Set(activeDetails.map((d: any) => d.bom_id))];
-        if (bomIds.length > 0) {
-          const bPlaceholders = bomIds.map(() => '?').join(',');
-          const allBomItems = await dbAll(`
-            SELECT bom_header_id, raw_material_id FROM bom_details
-            WHERE bom_header_id IN (${bPlaceholders})
-          `, bomIds) as any[];
-
-          for (const mat of recalcMaterials) {
-            const matId = mat.material_id;
-            const contributingDetails = activeDetails.filter((d: any) =>
-              allBomItems.some((b: any) => b.bom_header_id === d.bom_id && b.raw_material_id === matId)
-            );
-            materialDetailMap[matId] = contributingDetails.map((d: any) => d.detail_id);
-          }
-        }
-      }
-    }
-
-    // transactional: PR header + all items, rollback if any item fails
-    const result = await dbTransaction(async (conn: any) => {
-      const [prInsert] = await conn.execute(
-        `INSERT INTO purchase_requests (pr_number, requestor_id, status, notes, request_date, needed_by, source_type) VALUES (?, ?, 'DRAFT', ?, ?, ?, 'MRP')`,
-        [prNumber, userId, prNotes, now.toISOString().slice(0, 10), neededBy.toISOString().slice(0, 10)]
-      );
-      const prId = prInsert.insertId;
-
-      let itemCount = 0;
-      for (const mat of recalcMaterials) {
-        const qty = Number(mat.total_net_requirement) || 0;
-        if (qty <= 0) continue;
-        const detailIds = materialDetailMap[mat.material_id] || [];
-        const detailIdsJson = detailIds.length > 0 ? JSON.stringify(detailIds) : null;
-        await conn.execute(
-          `INSERT INTO purchase_request_items (purchase_request_id, product_id, quantity, notes, mps_detail_ids) VALUES (?, ?, ?, ?, ?)`,
-          [prId, mat.material_id, qty, `MRP Net Req | Lead Time: ${mat.lead_time || 2} weeks | UOM: ${mat.uom_name || '-'}`, detailIdsJson]
-        );
-        itemCount++;
-      }
-
-      if (itemCount === 0) {
-        throw new Error('No valid items to insert');
-      }
-
-      return { prId, itemCount };
-    });
-
-    console.log(`PR generated from MRP: ${prNumber} with ${result.itemCount} items (PR ID: ${result.prId})`);
-
-    await ppicLog(req, 'GENERATE_PR', 'MRP', result.prId, null, { pr_number: prNumber, item_count: result.itemCount });
+    await ppicLog(req, 'GENERATE_PR', 'MRP', result.prId, null, { pr_number: result.prNumber, item_count: result.itemCount });
     res.status(201).json({
       success: true,
-      message: `Purchase Request ${prNumber} created with ${result.itemCount} materials`,
+      message: `Purchase Request ${result.prNumber} created with ${result.itemCount} materials`,
       data: {
         pr_id: result.prId,
-        pr_number: prNumber,
+        pr_number: result.prNumber,
         item_count: result.itemCount,
-        needed_by: neededBy.toISOString().slice(0, 10),
+        needed_by: result.neededBy,
       }
     });
   } catch (error: any) {
     console.error('Error generating PR from MRP:', error);
+    if (error.statusCode === 409) {
+      return res.status(409).json({ error: error.message, existing_pr: error.existing_pr });
+    }
     if (error.message?.includes('UNIQUE')) {
       return res.status(400).json({ error: 'PR number conflict. Please try again.' });
     }
-    if (error.message === 'No valid items to insert') {
-      return res.status(400).json({ error: 'No valid items to create PR. All quantities were 0.' });
+    if (error.message === 'No valid items to insert' || error.message?.includes('No materials')) {
+      return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Failed to generate Purchase Request from MRP' });
   }
@@ -2152,12 +2186,12 @@ router.post('/forecasts/:id/push-to-mps', authMiddleware, requirePermission('ppi
 
     if (forecastData.length === 0) return res.status(400).json({ error: 'No forecast data to push' });
 
-    // Find Draft MPS for the exact same period — no fallback to other periods
+    // Find MPS for the exact same period (Draft or Confirmed)
     const mps = await dbGet(
-      `SELECT * FROM mps_headers WHERE period_year = ? AND period_month = ? AND status = 'Draft' ORDER BY id DESC LIMIT 1`,
+      `SELECT * FROM mps_headers WHERE period_year = ? AND period_month = ? AND status IN ('Draft', 'Confirmed') ORDER BY id DESC LIMIT 1`,
       [forecast.period_year, forecast.period_month]
     ) as any;
-    if (!mps) return res.status(400).json({ error: `No Draft MPS found for period ${forecast.period_year}-${String(forecast.period_month).padStart(2, '0')}. Create an MPS for this period first.` });
+    if (!mps) return res.status(400).json({ error: `No MPS found for period ${forecast.period_year}-${String(forecast.period_month).padStart(2, '0')}. Create an MPS for this period first.` });
 
     // Get unique product_ids from forecast
     const productIds = [...new Set(forecastData.map((f: any) => f.product_id))];
@@ -2425,12 +2459,12 @@ router.post('/forecast-monthly/push-to-mps', authMiddleware, requirePermission('
     const { year, month } = req.body;
     if (!year || !month) return res.status(400).json({ error: 'year and month are required' });
 
-    // find Draft MPS for exact period
+    // find MPS for exact period (Draft or Confirmed)
     const mps = await dbGet(
-      `SELECT * FROM mps_headers WHERE period_year = ? AND period_month = ? AND status = 'Draft' ORDER BY id DESC LIMIT 1`,
+      `SELECT * FROM mps_headers WHERE period_year = ? AND period_month = ? AND status IN ('Draft', 'Confirmed') ORDER BY id DESC LIMIT 1`,
       [year, month]
     ) as any;
-    if (!mps) return res.status(400).json({ error: `No Draft MPS found for period ${year}-${String(month).padStart(2, '0')}. Create an MPS for this period first.` });
+    if (!mps) return res.status(400).json({ error: `No MPS found for period ${year}-${String(month).padStart(2, '0')}. Create an MPS for this period first.` });
 
     const monthlyData = await dbAll(
       'SELECT fmd.*, fb.product_id, fb.conversion_rate FROM forecast_monthly_data fmd JOIN forecast_brands fb ON fmd.brand_id = fb.id WHERE fmd.year = ? AND fmd.month = ? AND fmd.forecast_qty > 0 AND fb.product_id IS NOT NULL',
@@ -2600,10 +2634,12 @@ router.get('/stock-reports', authMiddleware, async (req: Request, res: Response)
     let data: any[] = [];
 
     if (tab === 'onhand' || tab === 'monthly') {
-      // inventory on hand
+      // P1-DELTA-3: separate available vs qc_hold vs total
       data = await dbAll(`
         SELECT p.id as product_id, p.sku, p.name as item,
           COALESCE(SUM(inv.quantity), 0) as qty,
+          COALESCE(SUM(CASE WHEN inv.status = 'available' THEN inv.quantity ELSE 0 END), 0) as available_qty,
+          COALESCE(SUM(CASE WHEN inv.status = 'qc_hold' THEN inv.quantity ELSE 0 END), 0) as qc_hold_qty,
           u.name as uom
         FROM products p
         LEFT JOIN inventory_stocks inv ON inv.product_id = p.id
@@ -2631,7 +2667,7 @@ router.get('/stock-reports', authMiddleware, async (req: Request, res: Response)
       // materials issued to production
       data = await dbAll(`
         SELECT p.id as product_id, p.sku, p.name as item,
-          COALESCE(SUM(wmi.quantity_issued), 0) as qty,
+          COALESCE(SUM(wmi.quantity), 0) as qty,
           u.name as uom
         FROM wo_material_issues wmi
         JOIN products p ON wmi.product_id = p.id

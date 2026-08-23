@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbGet } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import { decryptPassword } from './mail-account.routes';
 import nodemailer from 'nodemailer';
 
@@ -51,7 +52,7 @@ async function getSmtpTransporter(userId: number) {
 }
 
 // GET /api/mail/folders — list IMAP folders
-router.get('/folders', authMiddleware, async (req: Request, res: Response) => {
+router.get('/folders', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const { client } = await getImapClient(userId);
@@ -77,7 +78,7 @@ router.get('/folders', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/mail/messages — list messages in a folder (with optional search)
-router.get('/messages', authMiddleware, async (req: Request, res: Response) => {
+router.get('/messages', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const folder = (req.query.folder as string) || 'INBOX';
@@ -198,7 +199,7 @@ function formatMessage(msg: any) {
 }
 
 // GET /api/mail/messages/:uid — get full message with body
-router.get('/messages/:uid', authMiddleware, async (req: Request, res: Response) => {
+router.get('/messages/:uid', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const uid = parseInt(req.params.uid);
@@ -257,7 +258,7 @@ router.get('/messages/:uid', authMiddleware, async (req: Request, res: Response)
 });
 
 // GET /api/mail/messages/:uid/attachment/:attachmentId — download attachment
-router.get('/messages/:uid/attachment/:attachmentId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/messages/:uid/attachment/:attachmentId', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const uid = parseInt(req.params.uid);
@@ -294,7 +295,7 @@ router.get('/messages/:uid/attachment/:attachmentId', authMiddleware, async (req
 });
 
 // POST /api/mail/send — compose and send email
-router.post('/send', authMiddleware, async (req: Request, res: Response) => {
+router.post('/send', authMiddleware, requirePermission('crm.messages', 'create'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const { to, cc, bcc, subject, html, text, inReplyTo, references } = req.body;
@@ -328,7 +329,7 @@ router.post('/send', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // PATCH /api/mail/messages/:uid/read — mark as read/unread
-router.patch('/messages/:uid/read', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/messages/:uid/read', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const uid = parseInt(req.params.uid);
@@ -354,7 +355,7 @@ router.patch('/messages/:uid/read', authMiddleware, async (req: Request, res: Re
 });
 
 // PATCH /api/mail/messages/:uid/star — toggle star
-router.patch('/messages/:uid/star', authMiddleware, async (req: Request, res: Response) => {
+router.patch('/messages/:uid/star', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const uid = parseInt(req.params.uid);
@@ -380,7 +381,7 @@ router.patch('/messages/:uid/star', authMiddleware, async (req: Request, res: Re
 });
 
 // DELETE /api/mail/messages/:uid — move to trash
-router.delete('/messages/:uid', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/messages/:uid', authMiddleware, requirePermission('crm.messages', 'delete'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const uid = parseInt(req.params.uid);
@@ -407,7 +408,7 @@ router.delete('/messages/:uid', authMiddleware, async (req: Request, res: Respon
 });
 
 // GET /api/mail/unread-count — get unread count for badge
-router.get('/unread-count', authMiddleware, async (req: Request, res: Response) => {
+router.get('/unread-count', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const { client } = await getImapClient(userId);

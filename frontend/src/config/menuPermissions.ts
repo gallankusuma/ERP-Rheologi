@@ -9,6 +9,7 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   '/project/prospects': 'crm.prospects',
   '/leads': 'crm.leads',
   '/clients-management': 'crm.clients',
+  '/clients': 'crm.clients',
   '/projects': 'crm.projects',
   '/sample-requests': 'crm.sample-requests',
   '/project/events': 'crm.events',
@@ -55,6 +56,7 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
 
   // Inventory
   '/inventory': 'inventory.dashboard',
+  '/inventory/overview': 'inventory.dashboard',
   '/inventory/stock-card': 'inventory.stock-card',
   '/inventory/transfer': 'inventory.stock-transfer',
   '/inventory/adjustment': 'inventory.stock-adjustment',

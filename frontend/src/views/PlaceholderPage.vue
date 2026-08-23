@@ -5,7 +5,7 @@
       <div class="lg:col-span-2 bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-xs uppercase tracking-wide text-gray-500">Rheologi</p>
+            <img src="/logo-rheologi-v2.png" alt="Rheologi" class="h-12" />
             <h1 class="text-2xl font-bold text-gray-800">{{ pageTitle }}</h1>
             <p class="text-sm text-gray-600 mt-1">{{ pageDescription }}</p>
           </div>

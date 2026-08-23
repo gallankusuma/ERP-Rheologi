@@ -195,11 +195,10 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import { useQualityStore } from '../stores/quality';
 
 const route = useRoute();
-const router = useRouter();
 const store = useQualityStore();
 
 const ncr = ref<any>(null);

@@ -1,12 +1,13 @@
 import express, { Request, Response } from 'express';
 import { dbQuery, dbGet, dbAll, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
 
 // ===== NOTIFICATIONS ENDPOINTS =====
 
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const user_id = (req as any).user?.userId;
     if (!user_id) {
@@ -51,7 +52,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/unread-count', authMiddleware, async (req: Request, res: Response) => {
+router.get('/unread-count', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const user_id = (req as any).user?.userId;
     if (!user_id) {
@@ -70,7 +71,7 @@ router.get('/unread-count', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', authMiddleware, requirePermission('crm.messages', 'create'), async (req: Request, res: Response) => {
   try {
     const {
       recipient_id,
@@ -117,7 +118,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/:id/read', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id/read', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const notification = await dbGet(
       'SELECT * FROM notifications WHERE id = ?',
@@ -139,7 +140,7 @@ router.put('/:id/read', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/:id/unread', authMiddleware, async (req: Request, res: Response) => {
+router.put('/:id/unread', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const notification = await dbGet(
       'SELECT * FROM notifications WHERE id = ?',
@@ -161,7 +162,7 @@ router.put('/:id/unread', authMiddleware, async (req: Request, res: Response) =>
   }
 });
 
-router.post('/mark-all-read', authMiddleware, async (req: Request, res: Response) => {
+router.post('/mark-all-read', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const user_id = (req as any).user?.userId;
     if (!user_id) {
@@ -180,7 +181,7 @@ router.post('/mark-all-read', authMiddleware, async (req: Request, res: Response
   }
 });
 
-router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/:id', authMiddleware, requirePermission('crm.messages', 'delete'), async (req: Request, res: Response) => {
   try {
     const notification = await dbGet(
       'SELECT * FROM notifications WHERE id = ?',
@@ -200,7 +201,7 @@ router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/bulk-action', authMiddleware, async (req: Request, res: Response) => {
+router.post('/bulk-action', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const { ids, action } = req.body;
 

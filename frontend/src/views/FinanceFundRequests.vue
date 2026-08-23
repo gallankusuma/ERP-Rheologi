@@ -774,8 +774,7 @@ function printFundRequest() {
             <div style="width:60px"></div>
             <div class="title">FUNDING REQUEST FORM</div>
             <div class="logo">
-              <div class="logo-text">Rhe<span>o</span>logi</div>
-              <div class="logo-sub">INDONESIA</div>
+              <img src="/logo-rheologi-v2.png" alt="Rheologi" style="height:64px"/>
             </div>
           </div>
 
@@ -817,12 +816,14 @@ function printFundRequest() {
           <div class="signatures">
             <div class="sig-box">
               <div class="sig-title">Dibuat oleh,</div>
-              <div class="sig-line"></div>
-              <div class="sig-date">Date :</div>
+              <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('FR:'+reqNumber+'|Dibuat:'+printDept.value+'|Tgl:'+reqDate)}" width="80" height="80"/>
+              <div style="margin-top:4px"><strong>(${d.requester_name || '...........................'})</strong></div>
+              <div class="sig-date">Date : ${reqDate}</div>
             </div>
             <div class="sig-box">
               <div class="sig-title">Di setujui oleh,</div>
-              <div class="sig-line"></div>
+              <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('FR:'+reqNumber+'|Approve|Tgl:')}" width="80" height="80"/>
+              <div style="margin-top:4px"><strong>(................................)</strong></div>
               <div class="sig-date">Date :</div>
             </div>
           </div>

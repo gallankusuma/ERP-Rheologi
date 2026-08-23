@@ -291,6 +291,156 @@
       </div>
     </div>
 
+    <!-- Tab: Stability Study -->
+    <div v-if="activeTab === 'stability'">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="font-semibold text-gray-800">🧪 Stability Study</h3>
+        <div class="flex gap-2 items-center">
+          <select v-if="stabilities.length > 0" v-model.number="selectedStudyId" @change="loadStudyDetail" class="px-3 py-1.5 border rounded-lg text-sm bg-white">
+            <option v-for="s in stabilities" :key="s.id" :value="s.id">{{ s.study_code }} — {{ s.name }}</option>
+          </select>
+          <button @click="showCreateStudyModal = true" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm">+ New Study</button>
+        </div>
+      </div>
+
+      <div v-if="!stabilities.length" class="text-center text-gray-400 py-12 bg-white rounded-xl border">
+        No stability studies yet. Click "+ New Study" to create one.
+      </div>
+
+      <div v-else-if="selectedStudy" class="space-y-4">
+        <!-- Study info bar -->
+        <div class="bg-white rounded-xl border p-4 flex flex-wrap gap-6 text-sm">
+          <div><span class="text-gray-500">Code:</span> <span class="font-medium">{{ selectedStudy.study_code }}</span></div>
+          <div><span class="text-gray-500">Storage:</span> <span class="font-medium">{{ selectedStudy.storage_condition }}</span></div>
+          <div><span class="text-gray-500">Duration:</span> <span class="font-medium">{{ selectedStudy.duration_months }} months</span></div>
+          <div><span class="text-gray-500">Status:</span>
+            <span class="px-2 py-0.5 rounded-full text-xs font-medium" :class="{'bg-green-100 text-green-700': selectedStudy.status==='active','bg-gray-100 text-gray-600': selectedStudy.status==='planned','bg-blue-100 text-blue-700': selectedStudy.status==='completed'}">{{ selectedStudy.status }}</span>
+          </div>
+          <div><span class="text-gray-500">Start:</span> <span class="font-medium">{{ formatDate(selectedStudy.start_date) }}</span></div>
+        </div>
+
+        <!-- Actions bar -->
+        <div class="flex gap-2">
+          <button @click="showAddParamModal = true" class="px-3 py-1.5 border border-dashed rounded-lg text-xs text-gray-600 hover:border-indigo-400">+ Parameter Row</button>
+          <button @click="showAddCheckpointModal = true" class="px-3 py-1.5 border border-dashed rounded-lg text-xs text-gray-600 hover:border-indigo-400">+ Checkpoint Column</button>
+        </div>
+
+        <!-- The stability table -->
+        <div class="bg-white rounded-xl border overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full">
+              <thead>
+                <tr class="bg-green-100">
+                  <th class="px-4 py-2.5 text-left text-sm font-semibold text-gray-700 border-r min-w-[180px] sticky left-0 bg-green-100 z-10">Parameter</th>
+                  <th class="px-4 py-2.5 text-center text-sm font-semibold text-gray-700 border-r min-w-[120px]">Spec</th>
+                  <th v-for="cp in studyCheckpoints" :key="cp.id" class="border-r min-w-[100px] text-center">
+                    <div class="px-3 py-1 text-xs text-gray-500">{{ formatDate(cp.actual_date || cp.scheduled_date) }}</div>
+                    <div class="px-3 py-1 text-sm font-semibold text-gray-700">{{ cpLabel(cp) }}</div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="param in studyParams" :key="param.id" class="border-t hover:bg-gray-50/50">
+                  <td class="px-4 py-2 text-sm font-medium text-gray-800 border-r sticky left-0 bg-white z-10">
+                    <div class="flex items-center justify-between group">
+                      <span>{{ param.name }}</span>
+                      <button @click="removeParam(param.id)" class="text-red-400 text-xs opacity-0 group-hover:opacity-100 hover:text-red-600">✕</button>
+                    </div>
+                  </td>
+                  <td class="px-4 py-2 text-sm text-center text-gray-600 border-r bg-gray-50/50">{{ param.spec || '-' }}</td>
+                  <td v-for="cp in studyCheckpoints" :key="cp.id" class="px-1 py-1 border-r text-center">
+                    <input
+                      :value="getReading(param.id, cp.id)"
+                      @blur="saveReading(param.id, cp.id, ($event.target as HTMLInputElement).value)"
+                      @keydown.enter="($event.target as HTMLInputElement).blur()"
+                      class="w-full text-center text-sm px-2 py-1.5 rounded border-transparent hover:border-gray-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300 bg-transparent focus:bg-white transition-colors outline-none"
+                      :class="getReadingClass(param, getReading(param.id, cp.id))"
+                    />
+                  </td>
+                </tr>
+                <tr v-if="!studyParams.length">
+                  <td :colspan="2 + studyCheckpoints.length" class="px-4 py-8 text-center text-gray-400 text-sm">No parameters added yet</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Study Modal -->
+    <div v-if="showCreateStudyModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-t-2xl">
+          <h3 class="text-lg font-semibold">New Stability Study</h3>
+        </div>
+        <form @submit.prevent="createStudy" class="p-6 space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Study Code *</label>
+              <input v-model="studyForm.study_code" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="SS-001" /></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Name *</label>
+              <input v-model="studyForm.name" required class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Stability study name" /></div>
+          </div>
+          <div class="grid grid-cols-3 gap-4">
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Storage Condition</label>
+              <input v-model="studyForm.storage_condition" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Duration (months)</label>
+              <input v-model.number="studyForm.duration_months" type="number" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Status</label>
+              <select v-model="studyForm.status" class="w-full px-3 py-2 border rounded-lg text-sm">
+                <option value="planned">Planned</option><option value="active">Active</option><option value="completed">Completed</option>
+              </select></div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Start Date</label>
+              <input v-model="studyForm.start_date" type="date" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+            <div><label class="block text-xs font-medium text-gray-700 mb-1">Batch Number</label>
+              <input v-model="studyForm.batch_number" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+          </div>
+          <div class="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" @click="showCreateStudyModal=false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+            <button type="submit" class="px-6 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Parameter Modal -->
+    <div v-if="showAddParamModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+        <h3 class="font-semibold">Add Parameter</h3>
+        <div><label class="block text-xs font-medium text-gray-700 mb-1">Parameter Name *</label>
+          <input v-model="paramForm.name" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. Ai as Ethion" /></div>
+        <div><label class="block text-xs font-medium text-gray-700 mb-1">Spec</label>
+          <input v-model="paramForm.spec" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. 475-510" /></div>
+        <div class="flex justify-end gap-3"><button @click="showAddParamModal=false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+          <button @click="addParam" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm">Add</button></div>
+      </div>
+    </div>
+
+    <!-- Add Checkpoint Modal -->
+    <div v-if="showAddCheckpointModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+        <h3 class="font-semibold">Add Checkpoint</h3>
+        <div><label class="block text-xs font-medium text-gray-700 mb-1">Label *</label>
+          <select v-model="cpForm.label" class="w-full px-3 py-2 border rounded-lg text-sm">
+            <option value="RT">RT (Real Time / Initial)</option>
+            <option value="1W">1W (1 Week)</option><option value="2W">2W (2 Weeks)</option>
+            <option value="3W">3W (3 Weeks)</option><option value="4W">4W (4 Weeks)</option>
+            <option value="5W">5W (5 Weeks)</option><option value="6W">6W (6 Weeks)</option>
+            <option value="8W">8W (8 Weeks)</option>
+            <option value="1M">1M (1 Month)</option><option value="2M">2M (2 Months)</option>
+            <option value="3M">3M (3 Months)</option><option value="6M">6M (6 Months)</option>
+            <option value="9M">9M (9 Months)</option><option value="12M">12M (12 Months)</option>
+            <option value="18M">18M (18 Months)</option><option value="24M">24M (24 Months)</option>
+          </select></div>
+        <div><label class="block text-xs font-medium text-gray-700 mb-1">Date</label>
+          <input v-model="cpForm.date" type="date" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
+        <div class="flex justify-end gap-3"><button @click="showAddCheckpointModal=false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+          <button @click="addCheckpoint" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm">Add</button></div>
+      </div>
+    </div>
+
     <!-- Task Modal -->
     <div v-if="showTaskModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -406,6 +556,7 @@ const apiBase = import.meta.env.VITE_API_URL?.replace('/api','') || '';
 const tabs = [
   { id: 'overview', icon: '📋', label: 'Overview' },
   { id: 'milestones', icon: '🎯', label: 'Milestones' },
+  { id: 'stability', icon: '🧪', label: 'Stability Study' },
   { id: 'kanban', icon: '📊', label: 'Kanban' },
   { id: 'documents', icon: '📁', label: 'Documents' },
 ];
@@ -498,6 +649,7 @@ const phaseLabel = (p:string) => p?.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpp
 onMounted(async () => {
   try { const r = await api.get(`/rnd/projects/${projectId}`); project.value = r.data.data; } catch {}
   await fetchMs(); await fetchDocs(); await fetchFolders(); await fetchTasks(); loadKCols();
+  await fetchStabilities();
 });
 
 async function fetchMs() { try { const r = await api.get(`/rnd/projects/${projectId}/milestones`); milestones.value = r.data.data||[]; } catch {} }
@@ -552,7 +704,142 @@ async function deleteDoc(id:number) {
 }
 const deleteDocPreview = deleteDoc;
 
-// ====== Kanban per-project ======
+// stability study state
+const stabilities = ref<any[]>([]);
+const selectedStudyId = ref<number>(0);
+const selectedStudy = ref<any>(null);
+const studyCheckpoints = ref<any[]>([]);
+const studyParams = ref<any[]>([]);
+const studyReadings = ref<any[]>([]);
+const showCreateStudyModal = ref(false);
+const showAddParamModal = ref(false);
+const showAddCheckpointModal = ref(false);
+
+const studyForm = ref({ study_code: '', name: '', storage_condition: '25°C / 60% RH', duration_months: 12, status: 'active', start_date: '', batch_number: '' });
+const paramForm = ref({ name: '', spec: '' });
+const cpForm = ref({ label: 'RT', date: '' });
+
+const labelToMonth: Record<string,number> = { RT:0, '1W':0, '2W':0, '3W':1, '4W':1, '5W':1, '6W':2, '8W':2, '1M':1, '2M':2, '3M':3, '6M':6, '9M':9, '12M':12, '18M':18, '24M':24 };
+
+async function fetchStabilities() {
+  try {
+    const r = await api.get('/rnd/stability', { params: { project_id: projectId } });
+    stabilities.value = r.data.data || [];
+    if (stabilities.value.length > 0 && !selectedStudyId.value) {
+      selectedStudyId.value = stabilities.value[0].id;
+      await loadStudyDetail();
+    }
+  } catch {}
+}
+
+async function loadStudyDetail() {
+  if (!selectedStudyId.value) return;
+  try {
+    const [studyRes, paramsRes, readingsRes] = await Promise.all([
+      api.get(`/rnd/stability/${selectedStudyId.value}`),
+      api.get(`/rnd/stability/${selectedStudyId.value}/params`),
+      api.get(`/rnd/stability/${selectedStudyId.value}/readings`),
+    ]);
+    const data = studyRes.data.data;
+    selectedStudy.value = data;
+    studyCheckpoints.value = data.checkpoints || [];
+    studyParams.value = paramsRes.data.data || [];
+    studyReadings.value = readingsRes.data.data || [];
+  } catch (e: any) { console.error('loadStudyDetail error:', e); }
+}
+
+async function createStudy() {
+  try {
+    await api.post('/rnd/stability', { ...studyForm.value, project_id: projectId });
+    showCreateStudyModal.value = false;
+    studyForm.value = { study_code: '', name: '', storage_condition: '25°C / 60% RH', duration_months: 12, status: 'active', start_date: '', batch_number: '' };
+    await fetchStabilities();
+  } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+
+async function addParam() {
+  if (!paramForm.value.name.trim()) return;
+  try {
+    await api.post(`/rnd/stability/${selectedStudyId.value}/params`, paramForm.value);
+    showAddParamModal.value = false;
+    paramForm.value = { name: '', spec: '' };
+    await loadStudyDetail();
+  } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+
+async function removeParam(paramId: number) {
+  if (!confirm('Remove this parameter row?')) return;
+  try {
+    await api.delete(`/rnd/stability/params/${paramId}`);
+    await loadStudyDetail();
+  } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+
+async function addCheckpoint() {
+  if (!cpForm.value.label) return;
+  try {
+    const month = labelToMonth[cpForm.value.label] ?? 0;
+    await api.post(`/rnd/stability/${selectedStudyId.value}/checkpoints`, {
+      checkpoint_month: month,
+      label: cpForm.value.label,
+      scheduled_date: cpForm.value.date || null,
+    });
+    showAddCheckpointModal.value = false;
+    cpForm.value = { label: 'RT', date: '' };
+    await loadStudyDetail();
+  } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+
+function getReading(paramId: number, cpId: number): string {
+  const r = studyReadings.value.find((x: any) => x.param_id === paramId && x.checkpoint_id === cpId);
+  return r?.value ?? '';
+}
+
+function getReadingClass(param: any, value: string): string {
+  if (!value || !param.spec) return '';
+  const spec = param.spec.toLowerCase().trim();
+  const val = value.toLowerCase().trim();
+  if (val === 'pass') return 'text-green-700 font-medium';
+  if (val === 'fail') return 'text-red-700 font-medium';
+  // numeric range check
+  const rangeMatch = spec.match(/^([\d.]+)[\s]*[-–][\s]*([\d.]+)$/);
+  if (rangeMatch) {
+    const lo = parseFloat(rangeMatch[1]);
+    const hi = parseFloat(rangeMatch[2]);
+    const nv = parseFloat(value);
+    if (!isNaN(nv)) return nv >= lo && nv <= hi ? 'text-green-700' : 'text-red-600 font-medium';
+  }
+  // max X check
+  const maxMatch = spec.match(/^max\s+([\d.]+)$/i);
+  if (maxMatch) {
+    const mx = parseFloat(maxMatch[1]);
+    const nv = parseFloat(value);
+    if (!isNaN(nv)) return nv <= mx ? 'text-green-700' : 'text-red-600 font-medium';
+  }
+  return '';
+}
+
+async function saveReading(paramId: number, cpId: number, value: string) {
+  try {
+    await api.put(`/rnd/stability/${selectedStudyId.value}/readings`, {
+      readings: [{ param_id: paramId, checkpoint_id: cpId, value: value || null }]
+    });
+    // update local cache
+    const existing = studyReadings.value.find((x: any) => x.param_id === paramId && x.checkpoint_id === cpId);
+    if (existing) { existing.value = value; }
+    else { studyReadings.value.push({ param_id: paramId, checkpoint_id: cpId, value, study_id: selectedStudyId.value }); }
+  } catch (e: any) { console.error('saveReading error:', e); }
+}
+
+function cpLabel(cp: any): string {
+  if (cp.label) return cp.label;
+  const m = cp.checkpoint_month;
+  if (m === 0) return 'RT';
+  if (m <= 2) return `${m}M`;
+  return `${m}M`;
+}
+
+// kanban per-project
 interface KCol { id: string; label: string; color: string; }
 const KCOL_KEY = 'rnd_proj_kanban_cols';
 const kDefaultCols: KCol[] = [

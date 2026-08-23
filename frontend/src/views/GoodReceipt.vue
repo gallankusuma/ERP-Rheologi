@@ -876,6 +876,7 @@ function printGRN() {
       <body>
         <div class="header">
           <div class="header-left">
+            <img src="/logo-rheologi-v2.png" alt="Rheologi" style="height:80px;margin-bottom:4px"/>
             <h1>GOODS RECEIPT NOTE</h1>
             <h2>Rheologi Biotech Indonesia</h2>
           </div>
@@ -923,18 +924,18 @@ function printGRN() {
         <div class="signatures">
           <div class="sig-box">
             <div class="sig-label">Received By</div>
-            <div class="sig-line"></div>
-            <div>${receivedBy}</div>
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('GRN:'+grNumber+'|Received:'+receivedBy+'|Tgl:'+receivedDate)}" width="80" height="80" style="margin-top:8px"/>
+            <div style="margin-top:4px"><strong>${receivedBy}</strong></div>
           </div>
           <div class="sig-box">
             <div class="sig-label">Checked By (QC)</div>
-            <div class="sig-line"></div>
-            <div>________________</div>
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('GRN:'+grNumber+'|QC_Check|Tgl:'+receivedDate)}" width="80" height="80" style="margin-top:8px"/>
+            <div style="margin-top:4px">________________</div>
           </div>
           <div class="sig-box">
             <div class="sig-label">Approved By</div>
-            <div class="sig-line"></div>
-            <div>________________</div>
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('GRN:'+grNumber+'|Approved|Tgl:'+receivedDate)}" width="80" height="80" style="margin-top:8px"/>
+            <div style="margin-top:4px">________________</div>
           </div>
         </div>
       </body>
@@ -945,7 +946,7 @@ function printGRN() {
   if (printWindow) {
     printWindow.document.write(printContent);
     printWindow.document.close();
-    setTimeout(() => printWindow.print(), 300);
+    setTimeout(() => printWindow.print(), 500);
   }
 }
 

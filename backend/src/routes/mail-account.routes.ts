@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/permission';
 import crypto from 'crypto';
 
 const router = Router();
@@ -30,7 +31,7 @@ export function decryptPassword(encrypted: string): string {
 }
 
 // GET /api/mail/account — get current user's email config
-router.get('/account', authMiddleware, async (req: Request, res: Response) => {
+router.get('/account', authMiddleware, requirePermission('crm.messages', 'view'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const account = await dbGet(
@@ -45,7 +46,7 @@ router.get('/account', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/mail/account — save/update email credentials
-router.post('/account', authMiddleware, async (req: Request, res: Response) => {
+router.post('/account', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     const { email_address, display_name, imap_host, imap_port, smtp_host, smtp_port, password } = req.body;
@@ -77,7 +78,7 @@ router.post('/account', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /api/mail/account/test — test IMAP connection
-router.post('/account/test', authMiddleware, async (req: Request, res: Response) => {
+router.post('/account/test', authMiddleware, requirePermission('crm.messages', 'update'), async (req: Request, res: Response) => {
   try {
     const { email_address, password, imap_host, imap_port } = req.body;
 
@@ -105,7 +106,7 @@ router.post('/account/test', authMiddleware, async (req: Request, res: Response)
 });
 
 // DELETE /api/mail/account — remove email config
-router.delete('/account', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/account', authMiddleware, requirePermission('crm.messages', 'delete'), async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     await dbRun('DELETE FROM email_accounts WHERE user_id = ?', [userId]);

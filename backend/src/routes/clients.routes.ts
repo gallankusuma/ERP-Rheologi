@@ -216,7 +216,7 @@ router.get('/dashboard', authMiddleware, requirePermission('crm.clients', 'view'
 
 // GET /api/clients/:id - Get single client with full details
 // GET /api/clients/lookup - lightweight dropdown (no permission required beyond auth)
-router.get('/lookup', authMiddleware, async (_req: Request, res: Response) => {
+router.get('/lookup', authMiddleware, requirePermission('crm.clients', 'view'), async (_req: Request, res: Response) => {
   try {
     const clients = await dbAll(
       `SELECT id, code, name, organization FROM clients ORDER BY name`,
@@ -459,7 +459,7 @@ router.delete('/:id/labels/:labelId', authMiddleware, requirePermission('crm.cli
 // ============================================
 
 // GET /api/clients/contacts/all - List all contacts
-router.get('/contacts/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/contacts/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
 
@@ -597,7 +597,7 @@ router.delete('/contacts/:contactId', authMiddleware, requirePermission('crm.cli
 // ============================================
 
 // GET /api/clients/labels - List all labels
-router.get('/labels/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/labels/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const labels = await dbAll('SELECT * FROM client_labels ORDER BY name ASC', []);
     res.json({ data: labels });
@@ -608,7 +608,7 @@ router.get('/labels/all', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /api/clients/groups - List all groups
-router.get('/groups/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/groups/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const groups = await dbAll('SELECT * FROM client_groups ORDER BY name ASC', []);
     res.json({ data: groups });
@@ -619,7 +619,7 @@ router.get('/groups/all', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /api/clients/event-types - List all event types
-router.get('/event-types/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/event-types/all', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
   try {
     const eventTypes = await dbAll('SELECT * FROM event_types ORDER BY name ASC', []);
     res.json({ data: eventTypes });
@@ -634,7 +634,7 @@ router.get('/event-types/all', authMiddleware, async (req: Request, res: Respons
 // ============================================
 
 // GET /api/clients/events/all - List all client events with visibility filtering
-router.get('/events/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/events/all', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
   try {
     const { page = 1, limit = 100 } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -695,7 +695,7 @@ router.get('/events/all', authMiddleware, async (req: Request, res: Response) =>
 });
 
 // GET /api/clients/:client_id/events - List events for a specific client
-router.get('/:client_id/events', authMiddleware, async (req: Request, res: Response) => {
+router.get('/:client_id/events', authMiddleware, requirePermission('crm.events', 'view'), async (req: Request, res: Response) => {
   try {
     const { client_id } = req.params;
     const { page = 1, limit = 50 } = req.query;
@@ -967,7 +967,7 @@ router.post('/:id/estimates', authMiddleware, requirePermission('crm.clients', '
 // ============================================
 
 // GET /api/clients/categories/all - List all categories
-router.get('/categories/all', authMiddleware, async (req: Request, res: Response) => {
+router.get('/categories/all', authMiddleware, requirePermission('crm.clients', 'view'), async (req: Request, res: Response) => {
   try {
     const categories = await dbAll(
       'SELECT * FROM client_categories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC',

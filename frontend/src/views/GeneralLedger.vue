@@ -187,8 +187,10 @@
             <select v-model="jeFilter.status" @change="fetchJournalEntries" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
               <option value="">All Status</option>
               <option value="draft">Draft</option>
+              <option value="pending_approval">Pending Approval</option>
+              <option value="approved">Approved</option>
               <option value="posted">Posted</option>
-              <option value="voided">Voided</option>
+              <option value="reversed">Reversed</option>
             </select>
             <input v-model="jeFilter.from_date" type="date" class="px-3 py-2 border border-gray-300 rounded-lg text-sm" @change="fetchJournalEntries" />
             <input v-model="jeFilter.to_date" type="date" class="px-3 py-2 border border-gray-300 rounded-lg text-sm" @change="fetchJournalEntries" />
@@ -227,9 +229,11 @@
                 </td>
                 <td class="px-4 py-2.5">
                   <div class="flex gap-1">
-                    <button v-if="e.status === 'draft'" @click="postJournalEntry(e)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Post">✅</button>
-                    <button v-if="e.status === 'posted'" @click="voidJournalEntry(e)" class="text-red-500 hover:text-red-700 text-sm font-medium" title="Void">❌</button>
-                    <button @click="viewJournalEntry(e)" class="text-blue-600 hover:text-blue-800 text-sm" title="View">👁</button>
+                    <button v-if="e.status === 'draft'" @click="submitJournalEntry(e)" class="text-amber-600 hover:text-amber-800 text-sm font-medium" title="Submit for Approval">Submit</button>
+                    <button v-if="e.status === 'pending_approval'" @click="approveJournalEntry(e)" class="text-blue-600 hover:text-blue-800 text-sm font-medium" title="Approve">Approve</button>
+                    <button v-if="e.status === 'approved'" @click="postJournalEntry(e)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Post">Post</button>
+                    <button v-if="e.status === 'posted' && !e.reversal_journal_id" @click="reverseJournalEntry(e)" class="text-red-500 hover:text-red-700 text-sm font-medium" title="Reverse">Reverse</button>
+                    <button @click="viewJournalEntry(e)" class="text-blue-600 hover:text-blue-800 text-sm" title="View">View</button>
                   </div>
                 </td>
               </tr>
@@ -276,10 +280,10 @@
                 <td class="px-6 py-2 text-sm font-mono text-gray-600">{{ a.account_code }}</td>
                 <td class="px-6 py-2 text-sm" :class="a.is_header ? 'font-bold' : ''">{{ a.account_name }}</td>
                 <td class="px-6 py-2 text-sm font-medium text-right text-gray-900">
-                  {{ a.normal_balance === 'debit' && Number(a.current_balance || a.debit_balance || 0) > 0 ? formatCurrency(a.current_balance || a.debit_balance) : '' }}
+                  {{ a.normal_balance === 'debit' && Number(a.balance || 0) > 0 ? formatCurrency(a.balance) : '' }}
                 </td>
                 <td class="px-6 py-2 text-sm font-medium text-right text-gray-900">
-                  {{ a.normal_balance === 'credit' && Number(a.current_balance || a.credit_balance || 0) > 0 ? formatCurrency(a.current_balance || a.credit_balance) : '' }}
+                  {{ a.normal_balance === 'credit' && Number(a.balance || 0) > 0 ? formatCurrency(a.balance) : '' }}
                 </td>
               </tr>
             </tbody>
@@ -675,8 +679,10 @@ const tabClass = (tab: string) => activeTab.value === tab
 
 const statusColor = (s: string) => ({
   draft: 'bg-yellow-100 text-yellow-800',
+  pending_approval: 'bg-amber-100 text-amber-800',
+  approved: 'bg-blue-100 text-blue-800',
   posted: 'bg-green-100 text-green-800',
-  voided: 'bg-red-100 text-red-800',
+  reversed: 'bg-red-100 text-red-800',
 }[s] || 'bg-gray-100 text-gray-800');
 
 const typeLabel = (t: string) => ({
@@ -839,12 +845,12 @@ const viewJournalEntry = async (e: any) => {
 const saveJournalEntry = async () => {
   saving.value = true;
   try {
+    const idempotencyKey = `je-create-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await api.post('/gl/journal-entries', {
       entry_date: jeForm.entry_date,
       description: jeForm.description,
-      reference_type: jeForm.reference_type || null,
-      reference_number: jeForm.reference_number || null,
-      lines: jeForm.lines.filter(l => l.account_id && (l.debit > 0 || l.credit > 0))
+      lines: jeForm.lines.filter(l => l.account_id && (l.debit > 0 || l.credit > 0)),
+      idempotency_key: idempotencyKey,
     });
     showToast('success', 'Journal entry created as draft');
     showJournalModal.value = false;
@@ -855,28 +861,54 @@ const saveJournalEntry = async () => {
   } finally { saving.value = false; }
 };
 
-const postJournalEntry = async (e: any) => {
-  if (!confirm(`Post journal entry "${e.entry_number}"? This will update account balances.`)) return;
+const submitJournalEntry = async (e: any) => {
+  if (!confirm(`Submit journal "${e.entry_number}" for approval?`)) return;
   try {
-    await api.put(`/gl/journal-entries/${e.id}/post`);
-    showToast('success', 'Journal entry posted!');
+    await api.post(`/gl/journal-entries/${e.id}/submit`);
+    showToast('success', 'Journal submitted for approval');
     fetchJournalEntries();
-    fetchDashboard();
-    fetchCOA();
   } catch (err: any) {
     showToast('error', err.response?.data?.error || 'Failed');
   }
 };
 
-const voidJournalEntry = async (e: any) => {
-  const reason = prompt('Reason for voiding?');
-  if (!reason) return;
+const approveJournalEntry = async (e: any) => {
+  if (!confirm(`Approve journal "${e.entry_number}"?`)) return;
   try {
-    await api.put(`/gl/journal-entries/${e.id}/void`, { reason });
-    showToast('success', 'Journal entry voided');
+    await api.post(`/gl/journal-entries/${e.id}/approve`);
+    showToast('success', 'Journal approved');
+    fetchJournalEntries();
+  } catch (err: any) {
+    showToast('error', err.response?.data?.error || 'Failed');
+  }
+};
+
+const postJournalEntry = async (e: any) => {
+  if (!confirm(`Post journal "${e.entry_number}"? This will create immutable accounting entries.`)) return;
+  try {
+    const idempotencyKey = `je-post-${e.id}-${Date.now()}`;
+    await api.post(`/gl/journal-entries/${e.id}/post`, {}, {
+      headers: { 'Idempotency-Key': idempotencyKey }
+    });
+    showToast('success', 'Journal entry posted');
     fetchJournalEntries();
     fetchDashboard();
-    fetchCOA();
+  } catch (err: any) {
+    showToast('error', err.response?.data?.error || 'Failed');
+  }
+};
+
+const reverseJournalEntry = async (e: any) => {
+  const reason = prompt('Reason for reversing this journal?');
+  if (!reason) return;
+  try {
+    const idempotencyKey = `je-reverse-${e.id}-${Date.now()}`;
+    await api.post(`/gl/journal-entries/${e.id}/reverse`, { reason }, {
+      headers: { 'Idempotency-Key': idempotencyKey }
+    });
+    showToast('success', 'Journal entry reversed (new reversal journal created)');
+    fetchJournalEntries();
+    fetchDashboard();
   } catch (err: any) {
     showToast('error', err.response?.data?.error || 'Failed');
   }
@@ -892,11 +924,11 @@ const reportFilters = reactive({
 
 const trialBalanceDebit = computed(() => {
   if (!Array.isArray(reportData.value)) return 0;
-  return reportData.value.filter((a: any) => a.normal_balance === 'debit').reduce((s: number, a: any) => s + Number(a.current_balance || a.debit_balance || 0), 0);
+  return reportData.value.filter((a: any) => a.normal_balance === 'debit').reduce((s: number, a: any) => s + Number(a.balance || 0), 0);
 });
 const trialBalanceCredit = computed(() => {
   if (!Array.isArray(reportData.value)) return 0;
-  return reportData.value.filter((a: any) => a.normal_balance === 'credit').reduce((s: number, a: any) => s + Number(a.current_balance || a.credit_balance || 0), 0);
+  return reportData.value.filter((a: any) => a.normal_balance === 'credit').reduce((s: number, a: any) => s + Number(a.balance || 0), 0);
 });
 
 const fetchReport = async () => {

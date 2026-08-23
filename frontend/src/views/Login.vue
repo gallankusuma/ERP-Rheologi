@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen flex items-center justify-end overflow-hidden relative pr-12">
+  <div class="min-h-screen flex items-center justify-center overflow-hidden relative px-5 py-8 sm:justify-end sm:px-8 lg:pr-12">
     <!-- Background Video -->
     <video
       autoplay
@@ -84,6 +84,37 @@
         >
           Create Account
         </button>
+
+        <!-- Public Android App Download -->
+        <div class="flex items-center gap-3 pt-1" aria-hidden="true">
+          <span class="h-px flex-1 bg-white/20"></span>
+          <span class="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/55">XLRATE Mobile</span>
+          <span class="h-px flex-1 bg-white/20"></span>
+        </div>
+
+        <a
+          href="/downloads/xlrate-erp.apk"
+          download="XLRATE-ERP-1.0.10.apk"
+          class="group flex w-full items-center gap-3 rounded-xl border border-cyan-100/35 bg-slate-950/35 px-4 py-3 text-left text-white shadow-lg shadow-black/10 backdrop-blur-md transition-all duration-200 hover:-translate-y-0.5 hover:border-cyan-100/60 hover:bg-slate-950/50 focus:outline-none focus:ring-2 focus:ring-cyan-100/70"
+          aria-label="Download XLRATE ERP for Android"
+        >
+          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-100 ring-1 ring-inset ring-cyan-100/20 transition-colors group-hover:bg-cyan-300/25">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" class="h-5 w-5" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 12 15.75m0 0 3-3m-3 3V6.75M7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V5.25A2.25 2.25 0 0 0 16.5 3h-9a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21Z" />
+            </svg>
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-semibold">Download XLRATE Mobile</span>
+            <span class="mt-0.5 block text-xs text-white/60">Android 7+ &bull; Version 1.0.10</span>
+          </span>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" class="h-5 w-5 shrink-0 text-white/55 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
+          </svg>
+        </a>
+
+        <p class="text-center text-[11px] leading-4 text-white/55">
+          For Rheologi employees &bull; Secure internal release
+        </p>
       </div>
 
       <!-- Register Card - Transparent -->

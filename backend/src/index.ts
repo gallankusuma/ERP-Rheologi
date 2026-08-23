@@ -1,4 +1,5 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -42,6 +43,8 @@ import approvalRoutes from './routes/approval.routes';
 import reportsRoutes from './routes/reports.routes';
 import aiRoutes from './routes/ai.routes';
 import rndRoutes from './routes/rnd.routes';
+import workhubRoutes from './routes/workhub.routes';
+import { attachWorkHubRealtime } from './services/workhub-realtime';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
@@ -95,6 +98,7 @@ app.use('/api/approval', approvalRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/rnd', rndRoutes);
+app.use('/api/work-hub', workhubRoutes);
 import { projectRoutes } from './routes/project.routes';
 
 // ... (other imports)
@@ -147,8 +151,11 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 async function startServer() {
   try {
     await initializeDatabase();
-    app.listen(PORT as number, '0.0.0.0', () => {
+    const server = createServer(app);
+    attachWorkHubRealtime(server);
+    server.listen(PORT as number, '0.0.0.0', () => {
       console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+      console.log('💬 XLERATE Work Hub realtime ready');
     });
   } catch (error) {
     console.error('Failed to start server:', error);
