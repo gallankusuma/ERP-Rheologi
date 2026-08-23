@@ -19,7 +19,8 @@
     "test:negative": "tsx tests/procurement-negative.ts && tsx tests/production-negative.ts && tsx tests/qc-negative.ts",
     "migrate": "tsx src/scripts/migrate.ts",
     "migrate:verify": "tsx src/scripts/migrate-verify.ts",
-    "test:valuation": "tsx src/scripts/valuation-check.ts"
+    "test:valuation": "tsx src/scripts/valuation-check.ts",
+    "test:grn-lines": "tsx src/scripts/grn-lines-check.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

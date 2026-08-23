@@ -230,6 +230,118 @@ export async function approvePurchaseOrder(
   });
 }
 
+interface FrozenGrnLine {
+  id: number;
+  po_item_id: number;
+  product_id: number;
+  quantity_received: string;
+  unit_cost: string;
+  batch_number: string | null;
+  remarks: string | null;
+}
+
+/**
+ * Return the normalized lines for a goods receipt, materialising them from the draft payload
+ * the first time. Once written the lines are the authority: the product comes from the PO
+ * item rather than the request, and one row per PO item is enforced by the database.
+ */
+export async function freezeGrnLines(
+  conn: any,
+  grnId: number,
+  draftNotes: string | null,
+  poItemById: Map<number, any>
+): Promise<FrozenGrnLine[]> {
+  const [existing] = await conn.execute(
+    'SELECT id, po_item_id, product_id, quantity_received, unit_cost, batch_number, remarks FROM grn_lines WHERE grn_id = ? ORDER BY po_item_id ASC FOR UPDATE',
+    [grnId]
+  );
+  if ((existing as any[]).length > 0) return existing as FrozenGrnLine[];
+
+  // first post for this receipt: derive the lines from the draft payload, validating each
+  // one against the locked PO before anything is written
+  let draftItems: any[] = [];
+  try {
+    draftItems = JSON.parse(draftNotes || '{}').items || [];
+  } catch {
+    draftItems = [];
+  }
+
+  const seenPoItems = new Set<number>();
+  const toInsert: Array<[number, number, number, string, string, string | null, string | null]> = [];
+
+  for (const item of draftItems) {
+    const qty = money(String(item.received_quantity ?? '0'));
+    if (qty.lessThanOrEqualTo(0)) continue; // partial receipts leave untouched lines at zero
+
+    const poItemId = Number(item.po_item_id);
+    if (!poItemId) {
+      throw new ProcurementDomainError(
+        'MISSING_LINEAGE',
+        'A receipt line has no po_item_id; the PO line being received cannot be identified.'
+      );
+    }
+
+    const poItem = poItemById.get(poItemId);
+    if (!poItem) {
+      throw new ProcurementDomainError(
+        'MISSING_LINEAGE',
+        `po_item_id ${poItemId} does not belong to this purchase order.`
+      );
+    }
+
+    if (seenPoItems.has(poItemId)) {
+      throw new ProcurementDomainError(
+        'INVALID_GRN_LINE',
+        `PO item ${poItemId} appears more than once on this receipt; combine them into a single line.`
+      );
+    }
+    seenPoItems.add(poItemId);
+
+    // the product is whatever the PO says it is. Accepting it from the request would let a
+    // caller receive stock of one product against another product's PO line and price.
+    const derivedProductId = Number(poItem.product_id);
+    if (item.product_id && Number(item.product_id) !== derivedProductId) {
+      throw new ProcurementDomainError(
+        'INVALID_GRN_LINE',
+        `Receipt line claims product ${item.product_id} but PO item ${poItemId} is for product ${derivedProductId}.`,
+        { poItemId, claimedProductId: Number(item.product_id), poProductId: derivedProductId }
+      );
+    }
+
+    toInsert.push([
+      poItemId,
+      derivedProductId,
+      Number(poItem.unit_price) || 0,
+      toDbString(qty),
+      toDbString(moneyRound(money(String(poItem.unit_price || 0)))),
+      item.batch_number || null,
+      item.remarks || null,
+    ] as any);
+  }
+
+  if (toInsert.length === 0) {
+    throw new ProcurementDomainError(
+      'EMPTY_RECEIPT',
+      'This goods receipt has no line with a positive quantity.'
+    );
+  }
+
+  for (const row of toInsert) {
+    const [poItemId, productId, , qtyStr, unitCostStr, batchNumber, remarks] = row as any;
+    await conn.execute(
+      `INSERT INTO grn_lines (grn_id, po_item_id, product_id, quantity_received, unit_cost, batch_number, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [grnId, poItemId, productId, qtyStr, unitCostStr, batchNumber, remarks]
+    );
+  }
+
+  const [frozen] = await conn.execute(
+    'SELECT id, po_item_id, product_id, quantity_received, unit_cost, batch_number, remarks FROM grn_lines WHERE grn_id = ? ORDER BY po_item_id ASC FOR UPDATE',
+    [grnId]
+  );
+  return frozen as FrozenGrnLine[];
+}
+
 /**
  * Post Goods Receipt (final GRN approval).
  * Single atomic transaction: GRN status -> received_qty -> QC HOLD inventory
@@ -384,27 +496,10 @@ export async function postGoodsReceipt(opts: {
 
     // use locked GRN data for items
     const grnNumber = lockedGrn.grn_number || `GRN-${grnId}`;
-    let lockedItems: any[] = [];
-    try {
-      const parsedNotes = JSON.parse(lockedGrn.notes || '{}');
-      lockedItems = parsedNotes.items || [];
-    } catch {
-      lockedItems = [];
-    }
 
-    // filter out zero-qty lines (partial receipt support)
-    lockedItems = lockedItems.filter((item: any) => {
-      const qty = Number(item.received_quantity || 0);
-      return Number.isFinite(qty) && qty > 0;
-    });
-
-    if (lockedItems.length === 0) {
-      throw new ProcurementDomainError('EMPTY_RECEIPT', 'GRN has no valid receipt items with positive quantity. Cannot approve an empty GRN.');
-    }
-
-    // 2. lock PO items using locked GRN's po_id
+    // 2. lock PO items first, in a fixed order: the receipt lines are derived from them
     const [poItems] = await conn.execute(
-      'SELECT id, product_id, quantity, COALESCE(received_qty, 0) as received_qty, COALESCE(unit_price, 0) as unit_price FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
+      'SELECT id, product_id, quantity, COALESCE(received_qty, 0) as received_qty, COALESCE(unit_price, 0) as unit_price FROM purchase_order_items WHERE purchase_order_id = ? ORDER BY id ASC FOR UPDATE',
       [lockedGrn.po_id]
     );
     const poItemById = new Map<number, any>();
@@ -416,40 +511,33 @@ export async function postGoodsReceipt(opts: {
     const [poRows] = await conn.execute('SELECT vendor_id FROM purchase_orders WHERE id = ?', [lockedGrn.po_id]);
     const resolvedSupplierId = poRows[0]?.vendor_id || null;
 
+    // the normalized lines are the authority for what was received; they are validated and
+    // frozen against the locked PO, so the loop below no longer trusts the request payload
+    const lockedItems = await freezeGrnLines(conn, grnId, lockedGrn.notes, poItemById);
+
     // 3. persist items
     const fpaQueue: { productId: number; batchNo: string | null; qty: number; lotId: number }[] = [];
 
     for (const item of lockedItems) {
-      const qty = Number(item.received_quantity || 0);
-      if (!item.product_id) {
-        throw new ProcurementDomainError('INVALID_GRN_LINE', `GRN item is missing product_id. All items must have a valid product reference.`);
-      }
-      if (!Number.isFinite(qty) || qty <= 0) {
-        throw new ProcurementDomainError('INVALID_GRN_LINE', `GRN item for product ${item.product_id} has invalid quantity (${item.received_quantity}).`);
-      }
+      const poItemId = Number(item.po_item_id);
+      const poItem = poItemById.get(poItemId);
+      const qty = Number(item.quantity_received);
 
-      // enforce explicit po_item_id
-      if (!item.po_item_id) {
-        throw new ProcurementDomainError('MISSING_LINEAGE', `GRN item for product ${item.product_id} is missing po_item_id. Frontend must send the explicit PO item reference.`);
-      }
-      const poItem = poItemById.get(Number(item.po_item_id)) || null;
-      if (!poItem) {
-        throw new ProcurementDomainError('MISSING_LINEAGE', `po_item_id ${item.po_item_id} not found in PO ${lockedGrn.po_id}. Cannot proceed without valid lineage.`);
-      }
-      const poItemId = poItem.id;
-
-      // validate cumulative received does not exceed ordered
-      const ordered = Number(poItem.quantity);
-      const alreadyReceived = Number(poItem.received_qty);
-      if (alreadyReceived + qty > ordered) {
+      // ceiling compared with decimal arithmetic against the locked PO row
+      const ordered = money(String(poItem.quantity));
+      const alreadyReceived = money(String(poItem.received_qty));
+      const receiving = money(String(item.quantity_received));
+      if (alreadyReceived.plus(receiving).greaterThan(ordered)) {
         throw new ProcurementDomainError(
           'OVER_RECEIPT',
-          `Over-receipt rejected: item ${item.product_id} ordered ${ordered}, already received ${alreadyReceived}, attempting ${qty}. Max allowed: ${ordered - alreadyReceived}`
+          `Over-receipt rejected: PO item ${poItemId} ordered ${toDbString(ordered)}, already received ${toDbString(alreadyReceived)}, attempting ${toDbString(receiving)}.`,
+          { poItemId, ordered: toDbString(ordered), alreadyReceived: toDbString(alreadyReceived) }
         );
       }
 
-      // snapshot PO unit price onto GRN item (blueprint: snapshotted PO cost)
-      const poUnitPrice = Number(poItem.unit_price) || 0;
+      // the price was snapshotted when the line was frozen, so a later PO edit cannot
+      // change what this receipt was valued at
+      const poUnitPrice = Number(item.unit_cost);
 
       // insert grn_items with cost snapshot
       const [grnItemResult] = await conn.execute(
@@ -522,7 +610,7 @@ export async function postGoodsReceipt(opts: {
         sourceEventType: 'GRN_POSTED',
         businessDate: grnBusinessDate,
         quantity: String(qty),
-        unitCost: poItem.unit_price,
+        unitCost: item.unit_cost,
         context: { grnId, grnItemId, productId: item.product_id, poItemId },
       });
 
