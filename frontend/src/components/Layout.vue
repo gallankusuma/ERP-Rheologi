@@ -537,17 +537,6 @@ const mainMenus: MenuItem[] = [
       { id: 'dashboard-alerts', label: 'Alerts', route: '/dashboard/alerts' },
     ]
   },
-  // estimator module hidden
-  // {
-  //   id: 'estimator',
-  //   label: 'Estimator',
-  //   icon: '🧮',
-  //   submenus: [
-  //     { id: 'estimator-proposals', label: 'Proposal', route: '/estimator' },
-  //     { id: 'estimator-ahsp', label: 'AHSP', route: '/estimator/ahsp' },
-  //     { id: 'estimator-masters', label: 'Satuan Dasar Harga', route: '/estimator/masters' },
-  //   ]
-  // },
   {
     id: 'rnd',
     label: 'R&D',
