@@ -20,21 +20,41 @@ const router = express.Router();
 router.get('/coa', authMiddleware, requirePermission('finance.coa', 'view'), async (req: Request, res: Response) => {
   try {
     const { type, active_only } = req.query;
-    let sql = 'SELECT * FROM chart_of_accounts';
+
+    // The balance is derived from posted journal lines, which are the only authority for it.
+    // chart_of_accounts.current_balance is never written by the posting service, so returning
+    // that column showed a number that nothing maintained.
+    let sql = `
+      SELECT coa.*,
+             COALESCE(bal.balance, 0) AS current_balance,
+             COALESCE(bal.line_count, 0) AS posted_line_count
+        FROM chart_of_accounts coa
+        LEFT JOIN (
+          SELECT jl.account_id,
+                 SUM(CASE WHEN coa2.normal_balance = 'credit'
+                          THEN COALESCE(jl.credit, 0) - COALESCE(jl.debit, 0)
+                          ELSE COALESCE(jl.debit, 0) - COALESCE(jl.credit, 0) END) AS balance,
+                 COUNT(*) AS line_count
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
+            JOIN chart_of_accounts coa2 ON coa2.id = jl.account_id
+           GROUP BY jl.account_id
+        ) bal ON bal.account_id = coa.id`;
+
     const params: any[] = [];
     const conditions: string[] = [];
 
     if (type) {
-      conditions.push('account_type = ?');
+      conditions.push('coa.account_type = ?');
       params.push(type);
     }
     if (active_only === 'true') {
-      conditions.push('is_active = 1');
+      conditions.push('coa.is_active = 1');
     }
     if (conditions.length > 0) {
       sql += ' WHERE ' + conditions.join(' AND ');
     }
-    sql += ' ORDER BY account_code ASC';
+    sql += ' ORDER BY coa.account_code ASC';
 
     const accounts = await dbAll(sql, params);
     res.json({ success: true, data: accounts });
