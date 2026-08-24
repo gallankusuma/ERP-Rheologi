@@ -130,7 +130,7 @@
             </select>
             <input v-model="coaSearch" type="text" placeholder="Search accounts..." class="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[250px]" />
           </div>
-          <button @click="openCoaModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2 text-sm">
+          <button v-if="authStore.hasPermission('finance.coa.create')" @click="openCoaModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2 text-sm">
             <span>+</span> Add Account
           </button>
         </div>
@@ -170,8 +170,8 @@
                 </td>
                 <td class="px-4 py-2.5">
                   <div class="flex gap-1">
-                    <button @click="openCoaModal(a)" class="text-blue-600 hover:text-blue-800 text-sm" title="Edit">✏️</button>
-                    <button v-if="!a.is_header" @click="deleteCOA(a)" class="text-red-400 hover:text-red-600 text-sm" title="Delete">🗑</button>
+                    <button v-if="authStore.hasPermission('finance.coa.update')" @click="openCoaModal(a)" class="text-blue-600 hover:text-blue-800 text-sm" title="Edit">✏️</button>
+                    <button v-if="!a.is_header && a.is_active && authStore.hasPermission('finance.coa.deactivate')" @click="deactivateCOA(a)" class="text-red-400 hover:text-red-600 text-sm" title="Deactivate">🚫</button>
                   </div>
                 </td>
               </tr>
@@ -195,7 +195,7 @@
             <input v-model="jeFilter.from_date" type="date" class="px-3 py-2 border border-gray-300 rounded-lg text-sm" @change="fetchJournalEntries" />
             <input v-model="jeFilter.to_date" type="date" class="px-3 py-2 border border-gray-300 rounded-lg text-sm" @change="fetchJournalEntries" />
           </div>
-          <button @click="openJournalModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2 text-sm">
+          <button v-if="authStore.hasPermission('finance.general-ledger.create')" @click="openJournalModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2 text-sm">
             <span>+</span> New Journal Entry
           </button>
         </div>
@@ -229,10 +229,10 @@
                 </td>
                 <td class="px-4 py-2.5">
                   <div class="flex gap-1">
-                    <button v-if="e.status === 'draft'" @click="submitJournalEntry(e)" class="text-amber-600 hover:text-amber-800 text-sm font-medium" title="Submit for Approval">Submit</button>
-                    <button v-if="e.status === 'pending_approval'" @click="approveJournalEntry(e)" class="text-blue-600 hover:text-blue-800 text-sm font-medium" title="Approve">Approve</button>
-                    <button v-if="e.status === 'approved'" @click="postJournalEntry(e)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Post">Post</button>
-                    <button v-if="e.status === 'posted' && !e.reversal_journal_id" @click="reverseJournalEntry(e)" class="text-red-500 hover:text-red-700 text-sm font-medium" title="Reverse">Reverse</button>
+                    <button v-if="e.status === 'draft' && authStore.hasPermission('finance.general-ledger.submit')" @click="submitJournalEntry(e)" class="text-amber-600 hover:text-amber-800 text-sm font-medium" title="Submit for Approval">Submit</button>
+                    <button v-if="e.status === 'pending_approval' && authStore.hasPermission('finance.general-ledger.approve')" @click="approveJournalEntry(e)" class="text-blue-600 hover:text-blue-800 text-sm font-medium" title="Approve">Approve</button>
+                    <button v-if="e.status === 'approved' && authStore.hasPermission('finance.general-ledger.post')" @click="postJournalEntry(e)" class="text-green-600 hover:text-green-800 text-sm font-medium" title="Post">Post</button>
+                    <button v-if="e.status === 'posted' && !e.reversal_journal_id && authStore.hasPermission('finance.general-ledger.reverse')" @click="reverseJournalEntry(e)" class="text-red-500 hover:text-red-700 text-sm font-medium" title="Reverse">Reverse</button>
                     <button @click="viewJournalEntry(e)" class="text-blue-600 hover:text-blue-800 text-sm" title="View">View</button>
                   </div>
                 </td>
@@ -661,6 +661,11 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { api } from '../lib/api';
+import { useAuthStore } from '../stores/auth';
+
+// the API is the authority; this only keeps the screen from offering actions the server
+// will refuse
+const authStore = useAuthStore();
 
 const activeTab = ref('dashboard');
 const saving = ref(false);
@@ -777,11 +782,11 @@ const saveCOA = async () => {
   } finally { saving.value = false; }
 };
 
-const deleteCOA = async (a: any) => {
-  if (!confirm(`Delete account "${a.account_code} — ${a.account_name}"?`)) return;
+const deactivateCOA = async (a: any) => {
+  if (!confirm(`Deactivate account "${a.account_code} — ${a.account_name}"? History that refers to it is kept.`)) return;
   try {
     await api.delete(`/gl/coa/${a.id}`);
-    showToast('success', 'Account deleted');
+    showToast('success', 'Account deactivated');
     fetchCOA();
   } catch (e: any) {
     showToast('error', e.response?.data?.error || 'Failed');

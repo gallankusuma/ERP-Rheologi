@@ -104,16 +104,23 @@ router.put('/coa/:id', authMiddleware, requirePermission('finance.coa', 'update'
 
 // DELETE /gl/coa/:id
 router.delete('/coa/:id', authMiddleware, requirePermission('finance.coa', 'deactivate'), async (req: Request, res: Response) => {
+  // An account is deactivated, never removed. Deleting one would detach the history that
+  // refers to it, and the account code is what past reports were built on. The verb stays
+  // DELETE so already-deployed clients keep working.
   try {
-    // Check if account has journal lines
-    const hasEntries = await dbGet('SELECT COUNT(*) as cnt FROM journal_lines WHERE account_id = ?', [req.params.id]) as any;
-    if (hasEntries?.cnt > 0) {
-      return res.status(400).json({ error: 'Cannot delete account with journal entries. Deactivate instead.' });
+    const account = await dbGet('SELECT id, account_code, is_active FROM chart_of_accounts WHERE id = ?', [
+      req.params.id,
+    ]) as any;
+    if (!account) return res.status(404).json({ error: 'Account not found', code: 'ACCOUNT_NOT_FOUND' });
+
+    if (Number(account.is_active) === 0) {
+      return res.json({ success: true, deactivated: true, alreadyInactive: true });
     }
-    await dbRun('DELETE FROM chart_of_accounts WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
+
+    await dbRun('UPDATE chart_of_accounts SET is_active = 0 WHERE id = ?', [req.params.id]);
+    res.json({ success: true, deactivated: true, account_code: account.account_code });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete account' });
+    res.status(500).json({ error: 'Failed to deactivate account' });
   }
 });
 
