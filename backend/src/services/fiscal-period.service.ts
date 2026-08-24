@@ -38,6 +38,74 @@ export async function getOpenPeriod(conn: any, date: string): Promise<FiscalPeri
     );
   }
 
+  // soft close is a close for anything that has not proven it is an authorised correction
+  if (period.status === 'soft_closed') {
+    throw Object.assign(
+      new Error(`Fiscal period ${period.period_name} is soft-closed.`),
+      { statusCode: 409, code: 'PERIOD_SOFT_CLOSED' }
+    );
+  }
+
+  return period;
+}
+
+export type PostingJournalType = 'MANUAL' | 'SYSTEM';
+
+export interface PostingPeriodOptions {
+  /** a deliberate correction into a soft-closed period; system postings only */
+  correction?: { reason: string; authorizedBy: number };
+}
+
+/**
+ * Lock the period for a business date and validate it from the locked row.
+ *
+ * Reading the status and locking the row in two statements leaves a window where a close can
+ * commit in between, and the posting lands in a period that is already closed. One statement
+ * takes the lock, and every check reads the state that lock guarantees.
+ */
+export async function lockPostingPeriod(
+  conn: any,
+  businessDate: string,
+  journalType: PostingJournalType,
+  options: PostingPeriodOptions = {}
+): Promise<FiscalPeriod> {
+  const [rows] = await conn.execute(
+    `SELECT id, period_name, start_date, end_date, fiscal_year, period_number, status, version
+     FROM fiscal_periods
+     WHERE ? BETWEEN start_date AND end_date
+     ORDER BY id ASC
+     LIMIT 1
+     FOR UPDATE`,
+    [businessDate]
+  );
+
+  const period = (rows as any[])[0] as FiscalPeriod | undefined;
+  if (!period) {
+    throw Object.assign(
+      new Error(`No fiscal period covers ${businessDate}. Create the period before posting to it.`),
+      { statusCode: 404, code: 'PERIOD_NOT_FOUND' }
+    );
+  }
+
+  if (period.status === 'closed') {
+    throw Object.assign(
+      new Error(`Fiscal period ${period.period_name} is closed.`),
+      { statusCode: 409, code: 'PERIOD_CLOSED' }
+    );
+  }
+
+  if (period.status === 'soft_closed') {
+    const correction = options.correction;
+    if (journalType === 'MANUAL' || !correction || !correction.reason || !correction.authorizedBy) {
+      throw Object.assign(
+        new Error(
+          `Fiscal period ${period.period_name} is soft-closed. Only an authorised system correction with a recorded reason may post here.`
+        ),
+        { statusCode: 409, code: 'PERIOD_SOFT_CLOSED' }
+      );
+    }
+  }
+
   return period;
 }
 

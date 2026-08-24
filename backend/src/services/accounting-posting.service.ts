@@ -5,7 +5,7 @@
 import crypto from 'crypto';
 import { money, moneyRound, assertBalanced, fromDb, toDbString, Decimal } from '../lib/decimal';
 import { nextEntryNumber } from './journal-sequence.service';
-import { getOpenPeriod, lockPeriod } from './fiscal-period.service';
+import { lockPostingPeriod } from './fiscal-period.service';
 
 // journal line input
 export interface JournalLineInput {
@@ -274,7 +274,7 @@ export async function createManualJournal(conn: any, input: CreateManualJournalI
   // find fiscal period (non-blocking for draft)
   let periodId: number | null = null;
   try {
-    const period = await getOpenPeriod(conn, input.entryDate);
+    const period = await lockPostingPeriod(conn, input.entryDate, 'MANUAL');
     periodId = period.id;
   } catch {
     // draft can be created without an open period; posting will enforce it
@@ -423,8 +423,7 @@ export async function postJournal(conn: any, input: JournalCommandInput): Promis
 
   // validate period
   const postingDate = journal.entry_date;
-  const period = await getOpenPeriod(conn, postingDate);
-  await lockPeriod(conn, period.id);
+  const period = await lockPostingPeriod(conn, postingDate, 'MANUAL');
 
   // re-validate balance from persisted lines
   const [lineRows] = await conn.execute(
@@ -499,8 +498,7 @@ export async function reverseJournal(conn: any, input: JournalCommandInput): Pro
 
   // determine reversal posting date (today, must be in open period)
   const reversalDate = new Date().toISOString().slice(0, 10);
-  const period = await getOpenPeriod(conn, reversalDate);
-  await lockPeriod(conn, period.id);
+  const period = await lockPostingPeriod(conn, reversalDate, 'MANUAL');
 
   // create reversal journal
   const reversalNumber = await nextEntryNumber(conn, 'REVERSAL');
@@ -587,8 +585,7 @@ export async function postSystemJournal(conn: any, input: SystemPostingInput): P
   await validateAccounts(conn, input.lines, true); // system postings allowed on control accounts
 
   // period
-  const period = await getOpenPeriod(conn, input.businessDate);
-  await lockPeriod(conn, period.id);
+  const period = await lockPostingPeriod(conn, input.businessDate, 'SYSTEM');
 
   // compute totals
   let totalDebit = money('0');
@@ -720,8 +717,7 @@ export async function postStatisticalEvent(conn: any, input: StatisticalEventInp
 
   // a statistical event still belongs to an open period: a closed period must not receive
   // new events of any kind
-  const period = await getOpenPeriod(conn, input.businessDate);
-  await lockPeriod(conn, period.id);
+  const period = await lockPostingPeriod(conn, input.businessDate, 'SYSTEM');
 
   const eventUuid = crypto.randomUUID();
   const sourceHash = computePayloadHash({ sourceId: input.sourceId, sourceLineId: input.sourceLineId });

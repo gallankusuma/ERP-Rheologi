@@ -54,39 +54,59 @@ export async function resolveAccountByRole(
     );
   }
 
-  // find best scope match
-  let best = matches[0]; // fallback to highest priority with no scope
+  // Every dimension the mapping constrains must equal the command context. A mapping scoped
+  // to a warehouse is not a valid answer for a different warehouse, nor for a request that
+  // names no warehouse at all: treating an absent dimension as "no opinion" is how a scoped
+  // account gets chosen for a context it was never meant for.
+  const candidates = matches
+    .map((m: any) => {
+      const pairs: Array<[unknown, unknown]> = [
+        [m.product_category_id, scope.productCategoryId],
+        [m.warehouse_id, scope.warehouseId],
+        [m.vendor_class, scope.vendorClass],
+        [m.customer_class, scope.customerClass],
+        [m.tax_code, scope.taxCode],
+        [m.project_id, scope.projectId],
+        [m.cost_center_id, scope.costCenterId],
+      ];
 
-  for (const m of matches) {
-    let scopeScore = 0;
-    let scopeMismatch = false;
+      let specificity = 0;
+      for (const [mapped, requested] of pairs) {
+        if (mapped === null || mapped === undefined || mapped === '') continue;
+        if (requested === null || requested === undefined || requested === '') return null;
+        if (String(mapped) !== String(requested)) return null;
+        specificity++;
+      }
+      return { row: m, specificity };
+    })
+    .filter((c: any) => c !== null) as Array<{ row: any; specificity: number }>;
 
-    if (m.product_category_id && scope.productCategoryId) {
-      if (m.product_category_id === scope.productCategoryId) scopeScore++;
-      else scopeMismatch = true;
-    }
-    if (m.warehouse_id && scope.warehouseId) {
-      if (m.warehouse_id === scope.warehouseId) scopeScore++;
-      else scopeMismatch = true;
-    }
-    if (m.vendor_class && scope.vendorClass) {
-      if (m.vendor_class === scope.vendorClass) scopeScore++;
-      else scopeMismatch = true;
-    }
-    if (m.customer_class && scope.customerClass) {
-      if (m.customer_class === scope.customerClass) scopeScore++;
-      else scopeMismatch = true;
-    }
-    if (m.tax_code && scope.taxCode) {
-      if (m.tax_code === scope.taxCode) scopeScore++;
-      else scopeMismatch = true;
-    }
-
-    if (!scopeMismatch && scopeScore > 0) {
-      best = m;
-      break; // most specific match wins
-    }
+  if (candidates.length === 0) {
+    throw Object.assign(
+      new Error(`No account mapping for role ${roleCode} matches this scope as of ${effectiveDate}`),
+      { statusCode: 422, code: 'ACCOUNT_ROLE_NOT_FOUND' }
+    );
   }
+
+  // most specific wins, then explicit priority. A genuine tie is a configuration error and
+  // must not be settled by row order.
+  const topSpecificity = Math.max(...candidates.map(c => c.specificity));
+  const bySpecificity = candidates.filter(c => c.specificity === topSpecificity);
+  const topPriority = Math.max(...bySpecificity.map(c => Number(c.row.priority ?? 0)));
+  const finalists = bySpecificity.filter(c => Number(c.row.priority ?? 0) === topPriority);
+
+  if (finalists.length > 1) {
+    throw Object.assign(
+      new Error(
+        `Role ${roleCode} resolves to ${finalists.length} equally specific accounts (${finalists
+          .map(f => f.row.account_code)
+          .join(', ')}). Give one of them a higher priority.`
+      ),
+      { statusCode: 409, code: 'ACCOUNT_ROLE_AMBIGUOUS' }
+    );
+  }
+
+  const best = finalists[0].row;
 
   return {
     accountId: best.account_id,
