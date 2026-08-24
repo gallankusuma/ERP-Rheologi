@@ -1,6 +1,8 @@
 import express, { Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { postApPayment, postVendorInvoice } from '../services/payables.service';
+import { respondWithDomainError } from '../errors/domain.error';
 import { requirePermission } from '../middleware/permission';
 
 const router = express.Router();
@@ -519,6 +521,37 @@ router.get('/margin-analysis/summary', authMiddleware, async (req: Request, res:
 });
 // ===== AP PAYMENT =====
 
+// Recognise a vendor invoice: Dr GRNI, Cr Accounts Payable.
+// This is what clears the liability raised at goods receipt. Creating a payable without it
+// leaves GRNI growing forever and the vendor balance invisible to the ledger.
+router.post('/accounts-payable/invoice', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { po_id, po_schedule_id, grn_id, vendor_id, invoice_number, invoice_date, due_date, amount, notes } = req.body;
+    if (!vendor_id || !invoice_number || !amount) {
+      return res.status(422).json({ error: 'vendor_id, invoice_number and amount are required', code: 'VALIDATION_ERROR' });
+    }
+
+    const result = await postVendorInvoice({
+      poId: po_id || null,
+      poScheduleId: po_schedule_id || null,
+      grnId: grn_id || null,
+      vendorId: Number(vendor_id),
+      invoiceNumber: String(invoice_number),
+      invoiceDate: (invoice_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+      dueDate: due_date || null,
+      amount,
+      notes: notes || null,
+      userId: (req as any).user?.userId,
+    });
+
+    res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (respondWithDomainError(error, res)) return;
+    console.error('Error posting vendor invoice:', error);
+    res.status(500).json({ error: 'Failed to post vendor invoice' });
+  }
+});
+
 router.put('/accounts-payable/:id/pay', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { amount } = req.body;
@@ -526,22 +559,28 @@ router.put('/accounts-payable/:id/pay', authMiddleware, async (req: Request, res
     if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
       return res.status(400).json({ error: 'Positive payment amount required' });
     }
-    
-    const ap: any = await dbGet('SELECT * FROM accounts_payable WHERE id = ?', [req.params.id]);
-    if (!ap) return res.status(404).json({ error: 'AP record not found' });
-    
-    const newPaid = Number(ap.paid_amount || 0) + paymentAmount;
-    const newStatus = newPaid >= ap.amount ? 'paid' : 'partial';
-    
-    await dbRun('UPDATE accounts_payable SET paid_amount = ?, status = ? WHERE id = ?', [newPaid, newStatus, req.params.id]);
-    if (ap.po_schedule_id) {
-      await dbRun(
-        'UPDATE purchase_order_payment_schedules SET paid_amount = ?, status = ?, ap_id = ? WHERE id = ?',
-        [newPaid, newStatus, req.params.id, ap.po_schedule_id]
-      );
-    }
-    res.json({ success: true, message: 'Payment recorded', data: { paid_amount: newPaid, status: newStatus } });
+    const paymentDate = (req.body.payment_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+
+    // A client that sends no key still gets replay protection: the same payable, the same
+    // amount, on the same day, with the same reference is the same payment. Callers should
+    // send an explicit key so two genuinely separate identical payments stay distinct.
+    const idempotencyKey =
+      req.body.idempotency_key ||
+      `ap-${req.params.id}-${paymentDate}-${paymentAmount}-${req.body.reference || 'noref'}`;
+
+    const result = await postApPayment({
+      apId: Number(req.params.id),
+      amount: paymentAmount,
+      paymentDate,
+      paymentAccountRole: req.body.payment_account_role === 'CASH_ON_HAND' ? 'CASH_ON_HAND' : 'BANK_OPERATING',
+      reference: req.body.reference || null,
+      idempotencyKey,
+      userId: (req as any).user?.userId,
+    });
+
+    res.json({ success: true, message: 'Payment recorded', data: result });
   } catch (error) {
+    if (respondWithDomainError(error, res)) return;
     console.error('Error recording AP payment:', error);
     res.status(500).json({ error: 'Failed to record payment' });
   }

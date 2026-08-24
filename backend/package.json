@@ -21,7 +21,8 @@
     "migrate:verify": "tsx src/scripts/migrate-verify.ts",
     "test:valuation": "tsx src/scripts/valuation-check.ts",
     "test:grn-lines": "tsx src/scripts/grn-lines-check.ts",
-    "test:finance-config": "tsx src/scripts/finance-config-check.ts"
+    "test:finance-config": "tsx src/scripts/finance-config-check.ts",
+    "test:payables": "tsx src/scripts/payables-check.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",
