@@ -315,6 +315,73 @@ async function main() {
       `${strayPayments[0].n} payment row(s)`
     );
 
+    // A payment schedule is a plan to pay. The payable a schedule generates carries no vendor
+    // invoice and no journal, so the ledger has never recognised it and it cannot be paid. The
+    // screen and the fund request path both have to say so rather than treating it as a debt.
+    await conn.query(
+      `INSERT INTO purchase_order_payment_schedules (id, po_id, schedule_no, label, due_date, amount, status)
+       VALUES (1, 1, 1, 'Termin 1', CURDATE(), 60000, 'open')`
+    );
+    await conn.query(
+      `INSERT INTO accounts_payable (id, po_id, po_schedule_id, vendor_id, invoice_number, invoice_date, due_date, amount, paid_amount, status, notes)
+       VALUES (1, 1, 1, 1, NULL, CURDATE(), CURDATE(), 60000, 0, 'open', 'Auto-generated from PO schedule Termin 1')`
+    );
+    await conn.query(`UPDATE purchase_order_payment_schedules SET ap_id = 1 WHERE id = 1`);
+
+    const schedule = await call('GET', `/finance/payment-schedule?year=${new Date().getFullYear()}`, { token: boss });
+    const scheduleRow = (schedule.body?.data || []).find((r: any) => r.source === 'po');
+    record(
+      'the payment schedule lists what is falling due',
+      schedule.status === 200 && !!scheduleRow,
+      `HTTP ${schedule.status}, ${schedule.body?.data?.length ?? 0} row(s)`
+    );
+    record(
+      'a schedule with no vendor invoice is shown as not recognised by the ledger',
+      scheduleRow?.ledger_recognised === false && Number(schedule.body?.summary?.not_recognised) === 60000,
+      `recognised=${scheduleRow?.ledger_recognised}, not_recognised=${schedule.body?.summary?.not_recognised}`
+    );
+
+    const genUnrecognised = await call('POST', '/finance/payment-schedule/generate-fund-request', {
+      token: boss,
+      body: { ids: [{ id: 1, source: 'po' }] },
+    });
+    record(
+      'a fund request cannot be raised for something the ledger has not recognised',
+      genUnrecognised.status === 409 &&
+        genUnrecognised.body?.code === 'NOTHING_TO_REQUEST' &&
+        (genUnrecognised.body?.skipped || []).some((s: string) => s.includes('belum diakui')),
+      `HTTP ${genUnrecognised.status}, skipped: ${(genUnrecognised.body?.skipped || [])[0] || 'none'}`
+    );
+
+    const [noFr]: any = await conn.query(`SELECT COUNT(*) AS n FROM fund_requests`);
+    record('and no fund request is left behind', Number(noFr[0].n) === 0, `${noFr[0].n} fund request(s)`);
+
+    // give the payable a journal, as a posted vendor invoice would, and it becomes requestable
+    await conn.query(`INSERT INTO journal_entries (entry_number, entry_date, posting_date, description, journal_type, status, total_debit, total_credit, created_by)
+                      VALUES ('AP-ACC-1', CURDATE(), CURDATE(), 'vendor invoice', 'SYSTEM', 'posted', 60000, 60000, 10)`);
+    const [apJe]: any = await conn.query(`SELECT id FROM journal_entries WHERE entry_number = 'AP-ACC-1'`);
+    await conn.query(`UPDATE accounts_payable SET journal_entry_id = ?, invoice_number = 'INV-ACC-1' WHERE id = 1`, [apJe[0].id]);
+
+    const genRecognised = await call('POST', '/finance/payment-schedule/generate-fund-request', {
+      token: boss,
+      body: { ids: [{ id: 1, source: 'po' }] },
+    });
+    record(
+      'once the invoice is posted, the same row can be requested',
+      genRecognised.status === 201 && genRecognised.body?.data?.item_count === 1,
+      `HTTP ${genRecognised.status}, ${genRecognised.body?.data?.request_number || ''}`
+    );
+
+    const genAgain = await call('POST', '/finance/payment-schedule/generate-fund-request', {
+      token: boss,
+      body: { ids: [{ id: 1, source: 'po' }] },
+    });
+    record(
+      'the same schedule is not requested twice',
+      genAgain.status === 409 && (genAgain.body?.skipped || []).some((s: string) => s.includes('sudah ada')),
+      `HTTP ${genAgain.status}, skipped: ${(genAgain.body?.skipped || [])[0] || 'none'}`
+    );
+
     const dReturnable = await call('GET', '/sales/deliveries/1/returnable', { token: boss });
     const dline = dReturnable.body?.data?.lines?.[0];
     record(

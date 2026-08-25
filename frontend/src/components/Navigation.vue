@@ -219,6 +219,7 @@ const menus = [
       { to: '/finance/cost-analysis', label: 'Cost Analysis', status: 'pending' },
       { to: '/finance/margin', label: 'Margin Analysis', status: 'pending' },
       { to: '/finance/summary', label: 'Financial Summary', status: 'pending' },
+      { to: '/finance/payment-schedule', label: 'Payment Schedule', status: 'active' },
       { to: '/finance/fund-requests', label: 'Fund Requests', status: 'pending' },
       { to: '/finance/reversals', label: 'Document Reversal', status: 'active' },
     ]

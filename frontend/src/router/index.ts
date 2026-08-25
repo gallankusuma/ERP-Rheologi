@@ -796,6 +796,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Sales Returns' },
   },
   {
+    path: '/finance/payment-schedule',
+    name: 'FinancePaymentSchedulePage',
+    component: () => import('../views/FinancePaymentSchedule.vue'),
+    meta: { requiresAuth: true, title: 'Payment Schedule' },
+  },
+  {
     path: '/finance/reversals',
     name: 'DocumentReversalPage',
     component: () => import('../views/DocumentReversal.vue'),

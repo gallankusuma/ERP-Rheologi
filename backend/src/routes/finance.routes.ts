@@ -5,6 +5,7 @@ import { postApPayment, postVendorInvoice } from '../services/payables.service';
 import { reverseVendorInvoice, reverseCustomerInvoice, reverseShipment } from '../services/reversal.service';
 import { respondWithDomainError } from '../errors/domain.error';
 import { requirePermission } from '../middleware/permission';
+import { money, moneyRound, toDbString } from '../lib/decimal';
 
 const router = express.Router();
 
@@ -968,6 +969,340 @@ router.delete('/fund-requests/:id', authMiddleware, requirePermission('finance.f
     res.status(500).json({ error: 'Failed to delete fund request' });
   }
 });
+
+// ===== PAYMENT SCHEDULE =====
+//
+// One view of everything falling due, drawn from the places an obligation can arise: the
+// termin on a purchase order, an approved project expense, and a vendor invoice that is not
+// tied to a termin. From here the selected rows become a fund request.
+//
+// Each row also says whether the ledger has recognised it. That distinction matters here more
+// than anywhere else in the system: a payment schedule is a plan to pay, and a plan is not a
+// liability. A row the ledger has never seen cannot be paid — postApPayment refuses a payable
+// with no journal behind it — so the screen shows that plainly rather than letting someone
+// build a fund request that could never settle.
+
+interface DueRow {
+  id: number;
+  source: 'po' | 'expense' | 'invoice';
+  label: string;
+  ref_number: string | null;
+  vendor_name: string | null;
+  project_id: number | null;
+  amount: string;
+  paid_amount: string;
+  outstanding: string;
+  due_date: string | null;
+  status: string;
+  ledger_recognised: boolean | null;
+  ap_id: number | null;
+}
+
+router.get(
+  '/payment-schedule',
+  authMiddleware,
+  requirePermission('finance.fund-requests', 'view'),
+  async (req: Request, res: Response) => {
+    try {
+      const { year, month, period, project_id, status, source } = req.query;
+      const now = new Date();
+      const yr = parseInt(String(year || now.getFullYear()), 10);
+      const mo = parseInt(String(month || now.getMonth() + 1), 10);
+      // 'monthly' spans the whole year; anything else narrows to the one month
+      const wholeYear = String(period || 'monthly') === 'monthly';
+      const today = now.toISOString().slice(0, 10);
+
+      const rows: DueRow[] = [];
+
+      // 1. purchase order termin
+      if (!source || source === 'po') {
+        const params: any[] = [];
+        let sql = `
+          SELECT ps.id, ps.po_id, ps.label, ps.amount, ps.due_date, ps.status,
+                 COALESCE(ps.paid_amount, 0) AS paid_amount, ps.ap_id,
+                 po.po_number AS ref_number, po.project_id,
+                 v.name AS vendor_name,
+                 ap.journal_entry_id
+            FROM purchase_order_payment_schedules ps
+            JOIN purchase_orders po ON po.id = ps.po_id
+            LEFT JOIN vendors v ON v.id = po.vendor_id
+            LEFT JOIN accounts_payable ap ON ap.id = ps.ap_id AND ap.superseded_seq = 0
+           WHERE ps.amount > 0
+             AND (po.approval_status >= 1 OR UPPER(po.status) = 'APPROVED')`;
+        if (project_id) { sql += ' AND po.project_id = ?'; params.push(project_id); }
+        if (status === 'overdue') { sql += ' AND ps.due_date < ? AND ps.status <> ?'; params.push(today, 'paid'); }
+        else if (status) { sql += ' AND ps.status = ?'; params.push(status); }
+        sql += wholeYear ? ' AND YEAR(ps.due_date) = ?' : ' AND YEAR(ps.due_date) = ? AND MONTH(ps.due_date) = ?';
+        params.push(yr);
+        if (!wholeYear) params.push(mo);
+
+        for (const r of (await dbAll(sql, params)) as any[]) {
+          const amount = moneyRound(money(String(r.amount || 0)));
+          const paid = moneyRound(money(String(r.paid_amount || 0)));
+          rows.push({
+            id: r.id, source: 'po', label: r.label, ref_number: r.ref_number,
+            vendor_name: r.vendor_name, project_id: r.project_id,
+            amount: toDbString(amount), paid_amount: toDbString(paid),
+            outstanding: toDbString(moneyRound(amount.minus(paid))),
+            due_date: r.due_date, status: r.status,
+            // a termin whose payable carries no journal is still only a plan
+            ledger_recognised: r.ap_id ? !!r.journal_entry_id : false,
+            ap_id: r.ap_id ?? null,
+          });
+        }
+      }
+
+      // 2. approved project expenses
+      if (!source || source === 'expense') {
+        const params: any[] = [];
+        let sql = `
+          SELECT e.id, e.project_id, e.description AS label, e.amount, e.expense_date AS due_date,
+                 e.status, e.expense_number AS ref_number, v.name AS vendor_name
+            FROM project_expenses e
+            LEFT JOIN vendors v ON v.id = e.vendor_id
+           WHERE e.status = 'approved' AND e.amount > 0`;
+        if (project_id) { sql += ' AND e.project_id = ?'; params.push(project_id); }
+        sql += wholeYear ? ' AND YEAR(e.expense_date) = ?' : ' AND YEAR(e.expense_date) = ? AND MONTH(e.expense_date) = ?';
+        params.push(yr);
+        if (!wholeYear) params.push(mo);
+
+        for (const r of (await dbAll(sql, params)) as any[]) {
+          const amount = moneyRound(money(String(r.amount || 0)));
+          rows.push({
+            id: r.id, source: 'expense', label: r.label, ref_number: r.ref_number,
+            vendor_name: r.vendor_name, project_id: r.project_id,
+            amount: toDbString(amount), paid_amount: '0.0000', outstanding: toDbString(amount),
+            due_date: r.due_date, status: r.status,
+            ledger_recognised: null, ap_id: null,
+          });
+        }
+      }
+
+      // 3. vendor invoices with no termin behind them, so nothing is listed twice
+      if (!source || source === 'invoice') {
+        const params: any[] = [];
+        let sql = `
+          SELECT ap.id, ap.po_id, ap.invoice_number AS ref_number,
+                 COALESCE(ap.invoice_number, po.po_number, CONCAT('AP-', ap.id)) AS label,
+                 ap.amount, ap.due_date, ap.status, ap.journal_entry_id,
+                 COALESCE(ap.paid_amount, 0) AS paid_amount,
+                 COALESCE(ap.debit_note_amount, 0) AS debit_note_amount,
+                 v.name AS vendor_name, po.project_id
+            FROM accounts_payable ap
+            LEFT JOIN purchase_orders po ON po.id = ap.po_id
+            LEFT JOIN vendors v ON v.id = ap.vendor_id
+           WHERE ap.amount > 0 AND ap.status <> 'paid'
+             AND ap.superseded_seq = 0
+             AND ap.po_schedule_id IS NULL`;
+        if (project_id) { sql += ' AND po.project_id = ?'; params.push(project_id); }
+        sql += wholeYear ? ' AND YEAR(ap.due_date) = ?' : ' AND YEAR(ap.due_date) = ? AND MONTH(ap.due_date) = ?';
+        params.push(yr);
+        if (!wholeYear) params.push(mo);
+
+        for (const r of (await dbAll(sql, params)) as any[]) {
+          const amount = moneyRound(money(String(r.amount || 0)));
+          const settled = moneyRound(
+            money(String(r.paid_amount || 0)).plus(money(String(r.debit_note_amount || 0)))
+          );
+          rows.push({
+            id: r.id, source: 'invoice', label: r.label, ref_number: r.ref_number,
+            vendor_name: r.vendor_name, project_id: r.project_id,
+            amount: toDbString(amount), paid_amount: toDbString(settled),
+            outstanding: toDbString(moneyRound(amount.minus(settled))),
+            due_date: r.due_date, status: r.status,
+            ledger_recognised: !!r.journal_entry_id,
+            ap_id: r.id,
+          });
+        }
+      }
+
+      rows.sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')));
+
+      let due = money('0');
+      let recognised = money('0');
+      let unrecognised = money('0');
+      let overdue = money('0');
+      for (const r of rows) {
+        const out = money(r.outstanding);
+        due = due.plus(out);
+        if (r.ledger_recognised === true) recognised = recognised.plus(out);
+        else if (r.ledger_recognised === false) unrecognised = unrecognised.plus(out);
+        if (r.due_date && String(r.due_date).slice(0, 10) < today && r.status !== 'paid') {
+          overdue = overdue.plus(out);
+        }
+      }
+
+      res.json({
+        success: true,
+        data: rows,
+        summary: {
+          count: rows.length,
+          total_outstanding: toDbString(moneyRound(due)),
+          // what the ledger actually carries as a liability
+          recognised: toDbString(moneyRound(recognised)),
+          // planned, but nothing in the ledger says we owe it yet
+          not_recognised: toDbString(moneyRound(unrecognised)),
+          overdue: toDbString(moneyRound(overdue)),
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching payment schedule:', error);
+      res.status(500).json({ error: 'Failed to fetch payment schedule' });
+    }
+  }
+);
+
+// Turn selected rows into one fund request.
+//
+// A row already covered by a live fund request is skipped rather than requested twice, and so
+// is a row the ledger has never recognised: approving that one could never pay, because
+// postApPayment refuses a payable with no journal. Both are reported back by name, so what was
+// left out and why is visible rather than silently dropped.
+router.post(
+  '/payment-schedule/generate-fund-request',
+  authMiddleware,
+  requirePermission('finance.fund-requests', 'create'),
+  async (req: Request, res: Response) => {
+    try {
+      const { ids, needed_date, purpose } = req.body as {
+        ids: Array<{ id: number; source: string }>;
+        needed_date?: string;
+        purpose?: string;
+      };
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(422).json({ error: 'ids required', code: 'VALIDATION_ERROR' });
+      }
+
+      const userId = (req as any).user?.userId || null;
+      const items: any[] = [];
+      const skipped: string[] = [];
+      let total = money('0');
+
+      for (const entry of ids) {
+        const id = Number(entry?.id);
+        const source = String(entry?.source || 'po');
+        if (!Number.isFinite(id)) continue;
+
+        if (source === 'po') {
+          const sched = await dbGet(
+            `SELECT ps.*, po.vendor_id, po.po_number, ap.journal_entry_id
+               FROM purchase_order_payment_schedules ps
+               JOIN purchase_orders po ON po.id = ps.po_id
+               LEFT JOIN accounts_payable ap ON ap.id = ps.ap_id AND ap.superseded_seq = 0
+              WHERE ps.id = ?`,
+            [id]
+          ) as any;
+          if (!sched) continue;
+
+          const existing = await dbGet(
+            `SELECT fr.request_number FROM fund_request_items fri
+               JOIN fund_requests fr ON fr.id = fri.fund_request_id
+              WHERE fri.po_schedule_id = ? AND fr.status <> 'rejected' LIMIT 1`,
+            [id]
+          ) as any;
+          if (existing) {
+            skipped.push(sched.po_number + ' — ' + sched.label + ': sudah ada di ' + existing.request_number);
+            continue;
+          }
+          if (!sched.ap_id || !sched.journal_entry_id) {
+            skipped.push(
+              sched.po_number + ' — ' + sched.label +
+                ': belum diakui di buku besar, tagihan vendornya belum diposting'
+            );
+            continue;
+          }
+
+          const amount = moneyRound(money(String(sched.amount || 0)));
+          total = total.plus(amount);
+          items.push({
+            po_id: sched.po_id, po_schedule_id: sched.id, vendor_id: sched.vendor_id,
+            description: sched.po_number + ' — ' + sched.label, amount: toDbString(amount),
+          });
+        } else if (source === 'invoice') {
+          const ap = await dbGet(
+            'SELECT * FROM accounts_payable WHERE id = ? AND superseded_seq = 0',
+            [id]
+          ) as any;
+          if (!ap) continue;
+          const name = ap.invoice_number || 'AP-' + ap.id;
+          if (!ap.journal_entry_id) {
+            skipped.push(name + ': belum diakui di buku besar');
+            continue;
+          }
+          const outstanding = moneyRound(
+            money(String(ap.amount || 0))
+              .minus(money(String(ap.paid_amount || 0)))
+              .minus(money(String(ap.debit_note_amount || 0)))
+          );
+          if (outstanding.lessThanOrEqualTo(0)) {
+            skipped.push(name + ': sudah lunas');
+            continue;
+          }
+          total = total.plus(outstanding);
+          items.push({
+            po_id: ap.po_id, po_schedule_id: ap.po_schedule_id, vendor_id: ap.vendor_id,
+            description: 'Invoice ' + name, amount: toDbString(outstanding),
+          });
+        } else if (source === 'expense') {
+          const e = await dbGet('SELECT * FROM project_expenses WHERE id = ?', [id]) as any;
+          if (!e) continue;
+          const amount = moneyRound(money(String(e.amount || 0)));
+          total = total.plus(amount);
+          items.push({
+            po_id: null, po_schedule_id: null, vendor_id: e.vendor_id,
+            description: 'Expense: ' + e.description, amount: toDbString(amount),
+          });
+        }
+      }
+
+      if (items.length === 0) {
+        return res.status(409).json({
+          error: 'Tidak ada baris yang bisa dijadikan fund request.',
+          code: 'NOTHING_TO_REQUEST',
+          skipped,
+        });
+      }
+
+      const requestNumber = generateFinanceCode('FR');
+      const today = new Date().toISOString().slice(0, 10);
+      const frResult = await dbRun(
+        `INSERT INTO fund_requests
+         (request_number, request_date, amount, needed_date, purpose, status, requester_id)
+         VALUES (?, ?, ?, ?, ?, 'submitted', ?)`,
+        [
+          requestNumber, today, toDbString(moneyRound(total)),
+          (needed_date || today).slice(0, 10),
+          purpose || 'Dibuat dari jadwal pembayaran', userId,
+        ]
+      );
+      const frId = frResult.insertId;
+
+      for (const item of items) {
+        await dbRun(
+          `INSERT INTO fund_request_items
+           (fund_request_id, po_id, po_schedule_id, vendor_id, description, amount, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+          [frId, item.po_id, item.po_schedule_id, item.vendor_id, item.description, item.amount]
+        );
+      }
+
+      res.status(201).json({
+        success: true,
+        data: {
+          fund_request_id: frId,
+          request_number: requestNumber,
+          item_count: items.length,
+          total_amount: toDbString(moneyRound(total)),
+          skipped,
+        },
+      });
+    } catch (error) {
+      if (respondWithDomainError(error, res)) return;
+      console.error('Error generating fund request:', error);
+      res.status(500).json({ error: 'Failed to generate fund request' });
+    }
+  }
+);
 
 // ===== DOCUMENT REVERSAL =====
 
