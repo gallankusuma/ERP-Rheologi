@@ -426,7 +426,8 @@ async function allocateDebitNote(
             COALESCE((SELECT SUM(a.quantity) FROM purchase_return_ap_allocations a
                        WHERE a.vendor_invoice_line_id = vil.id), 0) AS already_returned
        FROM vendor_invoice_lines vil
-      WHERE vil.grn_line_id = ?
+       JOIN accounts_payable ap ON ap.id = vil.ap_id
+      WHERE vil.grn_line_id = ? AND vil.reversed_at IS NULL AND ap.superseded_seq = 0
       ORDER BY vil.id ASC`,
     [grnLineId]
   );
@@ -724,7 +725,7 @@ export async function postSalesReturn(input: SalesReturnInput): Promise<any> {
       const [arRows] = await conn.execute(
         `SELECT id, amount, COALESCE(paid_amount, 0) AS paid_amount,
                 COALESCE(credit_note_amount, 0) AS credit_note_amount
-           FROM accounts_receivable WHERE invoice_id = ? FOR UPDATE`,
+           FROM accounts_receivable WHERE invoice_id = ? AND superseded_seq = 0 FOR UPDATE`,
         [input.invoiceId]
       );
       const ar = (arRows as any[])[0];

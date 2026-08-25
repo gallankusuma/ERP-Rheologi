@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { postApPayment, postVendorInvoice } from '../services/payables.service';
+import { reverseVendorInvoice, reverseCustomerInvoice, reverseShipment } from '../services/reversal.service';
 import { respondWithDomainError } from '../errors/domain.error';
 import { requirePermission } from '../middleware/permission';
 
@@ -937,6 +938,78 @@ router.delete('/fund-requests/:id', authMiddleware, requirePermission('finance.f
   } catch (error) {
     console.error('Error deleting fund request:', error);
     res.status(500).json({ error: 'Failed to delete fund request' });
+  }
+});
+
+// ===== DOCUMENT REVERSAL =====
+
+// Undo a posted document that should never have existed -- wrong amount, wrong lot, posted
+// twice. This is not a return: nothing physically moved. The original journal is kept and a
+// mirror entry is posted against it, and the operational effect is undone as well, so the
+// corrected document can be posted afterwards.
+//
+// Nothing here reverses a document something downstream has already relied on. A payment, a
+// receipt, a debit note or a customer return all mean somebody has since acted on the figure.
+
+const reversalGate = [authMiddleware, requirePermission('finance.document-reversal', 'reverse')];
+
+router.post('/reversals/vendor-invoice/:apId', ...reversalGate, async (req: Request, res: Response) => {
+  try {
+    const { reason, idempotency_key } = req.body;
+    if (!idempotency_key) {
+      return res.status(422).json({ error: 'idempotency_key is required', code: 'VALIDATION_ERROR' });
+    }
+    const result = await reverseVendorInvoice({
+      apId: Number(req.params.apId),
+      reason: String(reason || ''),
+      idempotencyKey: String(idempotency_key),
+      userId: (req as any).user?.userId,
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (respondWithDomainError(error, res)) return;
+    console.error('Error reversing vendor invoice:', error);
+    res.status(500).json({ error: 'Failed to reverse vendor invoice' });
+  }
+});
+
+router.post('/reversals/customer-invoice/:invoiceId', ...reversalGate, async (req: Request, res: Response) => {
+  try {
+    const { reason, idempotency_key } = req.body;
+    if (!idempotency_key) {
+      return res.status(422).json({ error: 'idempotency_key is required', code: 'VALIDATION_ERROR' });
+    }
+    const result = await reverseCustomerInvoice({
+      invoiceId: Number(req.params.invoiceId),
+      reason: String(reason || ''),
+      idempotencyKey: String(idempotency_key),
+      userId: (req as any).user?.userId,
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (respondWithDomainError(error, res)) return;
+    console.error('Error reversing customer invoice:', error);
+    res.status(500).json({ error: 'Failed to reverse customer invoice' });
+  }
+});
+
+router.post('/reversals/shipment/:deliveryId', ...reversalGate, async (req: Request, res: Response) => {
+  try {
+    const { reason, idempotency_key } = req.body;
+    if (!idempotency_key) {
+      return res.status(422).json({ error: 'idempotency_key is required', code: 'VALIDATION_ERROR' });
+    }
+    const result = await reverseShipment({
+      deliveryId: Number(req.params.deliveryId),
+      reason: String(reason || ''),
+      idempotencyKey: String(idempotency_key),
+      userId: (req as any).user?.userId,
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (respondWithDomainError(error, res)) return;
+    console.error('Error reversing shipment:', error);
+    res.status(500).json({ error: 'Failed to reverse shipment' });
   }
 });
 

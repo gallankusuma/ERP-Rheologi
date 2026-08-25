@@ -261,8 +261,10 @@ export async function postVendorInvoice(input: VendorInvoiceInput): Promise<any>
 
   return dbTransaction(async (conn: any) => {
     // the vendor's invoice number identifies one liability; a retry must not create a second
+    // a reversed invoice has vacated its number, so only a live row counts as a duplicate
     const [dup] = await conn.execute(
-      'SELECT id, amount, journal_entry_id FROM accounts_payable WHERE vendor_id = ? AND invoice_number = ? FOR UPDATE',
+      `SELECT id, amount, journal_entry_id FROM accounts_payable
+        WHERE vendor_id = ? AND invoice_number = ? AND superseded_seq = 0 FOR UPDATE`,
       [input.vendorId, input.invoiceNumber]
     );
     if ((dup as any[]).length > 0) {
@@ -416,7 +418,9 @@ export async function postVendorInvoice(input: VendorInvoiceInput): Promise<any>
       businessDate: input.invoiceDate,
       description: `Vendor invoice ${input.invoiceNumber}`,
       lines,
-      idempotencyKey: `vendor-invoice-${input.vendorId}-${input.invoiceNumber}`,
+      // keyed on the payable, not the invoice number: after a reversal the same number comes
+      // back on a new row, and keying on the number would replay the journal we just undid
+      idempotencyKey: `vendor-invoice-${apId}`,
       userId: input.userId,
     });
 

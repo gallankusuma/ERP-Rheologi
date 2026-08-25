@@ -76,8 +76,9 @@ export async function postCustomerInvoice(input: CustomerInvoiceInput): Promise<
     if (!invoice) throw new ReceivablesError('INVOICE_NOT_FOUND', `Invoice ${input.invoiceId} not found.`);
 
     // one receivable per invoice; a retry returns the original result
+    // a reversed receivable has released the invoice, so only a live row counts
     const [existing] = await conn.execute(
-      'SELECT id, journal_entry_id FROM accounts_receivable WHERE invoice_id = ? FOR UPDATE',
+      'SELECT id, journal_entry_id FROM accounts_receivable WHERE invoice_id = ? AND superseded_seq = 0 FOR UPDATE',
       [input.invoiceId]
     );
     if ((existing as any[]).length > 0) {
@@ -132,7 +133,9 @@ export async function postCustomerInvoice(input: CustomerInvoiceInput): Promise<
       businessDate: input.invoiceDate,
       description: `Invoice ${invoice.invoice_number}`,
       lines,
-      idempotencyKey: `customer-invoice-${input.invoiceId}`,
+      // keyed on the receivable, not the invoice: after a reversal the same invoice is raised
+      // again on a new row, and keying on the invoice would replay the journal we just undid
+      idempotencyKey: `customer-invoice-${arId}`,
       userId: input.userId,
     });
 
@@ -172,7 +175,10 @@ export async function postCustomerReceipt(input: CustomerReceiptInput): Promise<
 
   return dbTransaction(async (conn: any) => {
     const [arRows] = await conn.execute(
-      'SELECT id, customer_id, amount, COALESCE(paid_amount, 0) AS paid_amount FROM accounts_receivable WHERE invoice_id = ? FOR UPDATE',
+      // the live receivable, not a reversed one: an invoice raised again after a reversal
+      // leaves the old row behind, and money must settle against the one still owed
+      `SELECT id, customer_id, amount, COALESCE(paid_amount, 0) AS paid_amount
+         FROM accounts_receivable WHERE invoice_id = ? AND superseded_seq = 0 FOR UPDATE`,
       [input.invoiceId]
     );
     const ar = (arRows as any[])[0];

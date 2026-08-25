@@ -877,3 +877,41 @@ Menulis barang rusak kembali ke persediaan akan melebih-lebihkan apa yang kita m
 **Acceptance:** `npm run test:returns` — 21/21 pada database disposable. Pembuktian terkuatnya: setelah kedua jenis retur dijalankan, `reconcileInventory` masih **balanced** — rak, valuasi, dan ledger tetap sepakat.
 
 **Status FIN-E2E-P0-37:** match, variance, GRNI clearing, AP/AR subledger, dan retur dua sisi tertutup. Sisa: **reversal** dokumen yang sudah diposting.
+
+## Delta 25 Agustus 2026 — Reversal dokumen
+
+Menutup sisa terakhir **FIN-E2E-P0-37**.
+
+Reversal di tingkat ledger sudah ada dan sudah benar (`accounting-posting.service.ts:461`): dia memposting jurnal cermin, menautkan keduanya, dan membiarkan yang asli utuh. Yang tidak ada adalah **semua hal yang tidak diketahui jurnal itu**.
+
+Membalik jurnal invoice vendor meninggalkan baris penerimaan tetap tertandai sudah ditagih, payable tetap terbuka, dan nomor invoice tetap terpakai. Membalik jurnal pengiriman meninggalkan stok tetap turun dan cost layer tetap terpakai. Buku bilang satu hal, operasional bilang hal lain.
+
+**Reversal bukan retur.** Retur mencatat barang benar-benar kembali — kedua peristiwa nyata. Reversal mencatat bahwa suatu posting seharusnya tidak pernah ada: salah jumlah, salah lot, salah dokumen, terposting dua kali. Keduanya tidak menghapus apa pun.
+
+### Yang dibalik
+
+| Dokumen | Efek operasional yang ikut dibatalkan |
+|---|---|
+| Invoice vendor | kuantitas tertagih dikembalikan ke baris penerimaan; nomor invoice dibebaskan |
+| Invoice pelanggan | piutang dibersihkan; invoice bebas diterbitkan ulang |
+| Pengiriman | stok kembali ke lot asalnya, cost layer dipulihkan, klaim idempotency dilepas |
+
+### Memakai ulang identitas dokumen
+
+Nomor invoice **milik vendor**. Kalau kita salah posting lalu membaliknya, invoice koreksinya tetap membawa nomor yang sama — jadi nomor itu harus bebas lagi, sementara baris yang dibalik tetap di tempatnya sebagai riwayat.
+
+Unique key sekarang mencakup penanda supersesi: baris hidup membawa `0`, baris yang dibalik distempel dengan **id-nya sendiri** — unik secara konstruksi — sehingga ia mengosongkan slot hidup tanpa berpindah dan tanpa risiko bertabrakan dengan baris terbalik lain.
+
+Idempotency key jurnal juga diganti dari nomor dokumen ke id baris (`vendor-invoice-${apId}`, `customer-invoice-${arId}`). Tanpa itu, memposting ulang invoice yang sama akan **me-replay jurnal yang baru saja dibalik** alih-alih membuat yang baru.
+
+### Yang ditolak
+
+`REVERSAL_BLOCKED` 409 bila ada yang sudah bertindak atas angka itu — pembayaran, penerimaan, nota debit, atau retur pelanggan. `ALREADY_REVERSED` 409, `NOT_POSTED` 409, `MISSING_REVERSAL_REASON` 422.
+
+### Bug yang ditemukan test
+
+`postCustomerReceipt` mencari piutang dengan `WHERE invoice_id = ?` tanpa filter dan tanpa urutan. Setelah invoice dibalik lalu diterbitkan ulang ada dua baris, dan uang masuk menempel ke **piutang yang sudah mati**. Sama pada `postSalesReturn`. Keduanya sekarang menyaring `superseded_seq = 0`.
+
+**Acceptance:** `npm run test:reversal` — 21/21. Bukti terpentingnya bukan saldonya kembali nol, tapi bahwa **dokumen koreksinya bisa diposting setelahnya** — itu yang diam-diam gagal kalau ada klaim yang tertinggal. Ditutup dengan `reconcileInventory` yang masih balanced.
+
+**Status FIN-E2E-P0-37: tertutup.** Match, variance, GRNI clearing, AP/AR subledger, retur dua sisi, dan reversal semuanya ada dengan reconciliation yang membuktikannya.
