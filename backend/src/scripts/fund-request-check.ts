@@ -238,6 +238,36 @@ async function main() {
       `AP still ${apFinal}`
     );
 
+    // A payable generated from a payment schedule has no vendor invoice and no journal behind
+    // it: it is a plan to pay, not a liability the ledger has recognised. Paying one would put
+    // cash out against nothing and drive the control account negative.
+    await conn.query(
+      `INSERT INTO purchase_order_payment_schedules (id, po_id, schedule_no, label, due_date, amount, status)
+       VALUES (2, 1, 2, 'Termin 2', ?, 1000000, 'open')`, [TODAY]
+    );
+    await conn.query(
+      `INSERT INTO accounts_payable (id, po_id, po_schedule_id, vendor_id, invoice_number, invoice_date, amount, paid_amount, status, notes)
+       VALUES (2, 1, 2, 1, NULL, ?, 1000000, 0, 'open', 'Auto-generated from PO schedule Termin 2')`, [TODAY]
+    );
+    await conn.query(
+      `INSERT INTO fund_request_items (id, fund_request_id, po_id, po_schedule_id, vendor_id, description, amount, status)
+       VALUES (3, 1, 1, 2, 1, 'Termin 2 tanpa invoice', 1000000, 'pending')`
+    );
+
+    const bankBeforePhantom = await balanceOf(conn, 'BANK_OPERATING');
+    const phantom = await call('PUT', '/finance/fund-requests/1/items/3/approve', { token: boss });
+    const phantomD = phantom.body?.disbursement;
+    record(
+      'a payable the ledger never recognised cannot be paid',
+      phantomD?.recorded === false && phantomD?.reason === 'AP_NOT_RECOGNISED',
+      `recorded=${phantomD?.recorded}, reason=${phantomD?.reason}`
+    );
+    record(
+      'and no cash leaves the books for it',
+      (await balanceOf(conn, 'BANK_OPERATING')) === bankBeforePhantom,
+      `bank still ${bankBeforePhantom}`
+    );
+
     const [unbalanced]: any = await conn.query(
       `SELECT COUNT(*) AS n FROM (
          SELECT jl.journal_entry_id FROM journal_lines jl

@@ -36,7 +36,8 @@ export type PayablesErrorCode =
   | 'VENDOR_MISMATCH'
   | 'OVER_BILLED_QUANTITY'
   | 'PRICE_VARIANCE_EXCEEDED'
-  | 'INVOICE_TOTAL_MISMATCH';
+  | 'INVOICE_TOTAL_MISMATCH'
+  | 'AP_NOT_RECOGNISED';
 
 const STATUS: Record<PayablesErrorCode, number> = {
   AP_NOT_FOUND: 404,
@@ -49,6 +50,7 @@ const STATUS: Record<PayablesErrorCode, number> = {
   OVER_BILLED_QUANTITY: 409,
   PRICE_VARIANCE_EXCEEDED: 422,
   INVOICE_TOTAL_MISMATCH: 422,
+  AP_NOT_RECOGNISED: 409,
 };
 
 export class PayablesError extends Error {
@@ -466,11 +468,30 @@ export async function postApPayment(input: ApPaymentInput): Promise<any> {
   return dbTransaction(async (conn: any) => {
     // lock order: payable, then its payments
     const [apRows] = await conn.execute(
-      'SELECT id, vendor_id, amount, COALESCE(paid_amount, 0) AS paid_amount, po_schedule_id FROM accounts_payable WHERE id = ? FOR UPDATE',
+      `SELECT id, vendor_id, amount, COALESCE(paid_amount, 0) AS paid_amount, po_schedule_id,
+              journal_entry_id, invoice_number
+         FROM accounts_payable WHERE id = ? FOR UPDATE`,
       [input.apId]
     );
     const ap = (apRows as any[])[0];
     if (!ap) throw new PayablesError('AP_NOT_FOUND', `Payable ${input.apId} not found.`);
+
+    // A payment is Dr accounts payable, Cr bank. If the ledger never recognised the liability
+    // in the first place, that debit has nothing to reduce and drives the control account
+    // negative: cash leaves the books against a payable the ledger says does not exist.
+    //
+    // This is not hypothetical. Payables generated from purchase order payment schedules carry
+    // no vendor invoice and no journal - they are a plan to pay, not an incurred liability.
+    // Paying one has to be refused until it is recognised, either by the vendor invoice that
+    // makes it real or by an explicit opening entry.
+    if (!ap.journal_entry_id) {
+      throw new PayablesError(
+        'AP_NOT_RECOGNISED',
+        `Payable ${input.apId} carries no journal, so the ledger has never recognised this liability. ` +
+          'Post the vendor invoice that makes it real before paying against it.',
+        { apId: input.apId, invoiceNumber: ap.invoice_number ?? null }
+      );
+    }
 
     const [existing] = await conn.execute(
       'SELECT id, amount, journal_entry_id FROM ap_payments WHERE ap_id = ? AND idempotency_key = ?',
