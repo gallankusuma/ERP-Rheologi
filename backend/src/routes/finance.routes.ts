@@ -61,9 +61,18 @@ const recomputeFundRequestStatus = async (fundRequestId: number, approverId: num
   }
 };
 
-// When an FR item linked to a po_schedule_id gets approved, auto-record AP payment.
-// Idempotent via fund_request_items.payment_recorded_at.
-const autoPayApFromFundRequestItem = async (itemId: number) => {
+// When an approved fund request item is linked to a payment schedule, settle the payable.
+//
+// This used to move money on its own: three loose UPDATEs, no transaction, float arithmetic,
+// no overpayment check, and - the part that matters - no journal at all. The subledger said
+// the vendor had been paid while the ledger still showed the full liability and cash untouched,
+// so the two drifted apart with every disbursement.
+//
+// A fund request is an authorisation, not an economic event. Approving it does not move money;
+// it permits the payment, and the payment is what posts. So this now delegates to the payables
+// service, which writes the payment and its journal (Dr accounts payable, Cr bank) in one
+// transaction, refuses to pay more than is owed, and settles once on a retry.
+const autoPayApFromFundRequestItem = async (itemId: number, approvedBy: number | null) => {
   const item = await dbGet(
     'SELECT * FROM fund_request_items WHERE id = ?',
     [itemId]
@@ -75,11 +84,10 @@ const autoPayApFromFundRequestItem = async (itemId: number) => {
 
   // Find AP linked to schedule (preferred) or to po_id+schedule
   let ap = await dbGet(
-    'SELECT * FROM accounts_payable WHERE po_schedule_id = ? ORDER BY id DESC LIMIT 1',
+    'SELECT * FROM accounts_payable WHERE po_schedule_id = ? AND superseded_seq = 0 ORDER BY id DESC LIMIT 1',
     [item.po_schedule_id]
   ) as any;
   if (!ap) {
-    // Fallback: schedule may have ap_id
     const sched = await dbGet(
       'SELECT * FROM purchase_order_payment_schedules WHERE id = ?',
       [item.po_schedule_id]
@@ -94,23 +102,41 @@ const autoPayApFromFundRequestItem = async (itemId: number) => {
   if (!Number.isFinite(payAmount) || payAmount <= 0) {
     return { recorded: false, reason: 'invalid amount' };
   }
-  const newPaid = Number(ap.paid_amount || 0) + payAmount;
-  const newStatus = newPaid >= Number(ap.amount || 0) ? 'paid' : 'partial';
 
-  await dbRun(
-    'UPDATE accounts_payable SET paid_amount = ?, status = ? WHERE id = ?',
-    [newPaid, newStatus, ap.id]
-  );
-  await dbRun(
-    'UPDATE purchase_order_payment_schedules SET paid_amount = ?, status = ?, ap_id = ? WHERE id = ?',
-    [newPaid, newStatus, ap.id, item.po_schedule_id]
-  );
-  await dbRun(
-    'UPDATE fund_request_items SET ap_id = ?, payment_recorded_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [ap.id, itemId]
-  );
+  // the day the money was authorised to move, so the journal carries the business date rather
+  // than whenever this code happened to run
+  const paymentDate = (item.approved_at ? new Date(item.approved_at) : new Date())
+    .toISOString().slice(0, 10);
 
-  return { recorded: true, ap_id: ap.id, paid_amount: newPaid, status: newStatus };
+  try {
+    const payment = await postApPayment({
+      apId: ap.id,
+      amount: item.amount,
+      paymentDate,
+      reference: `Fund request item ${itemId}`,
+      // stable and derived from the item, never a timestamp: approving twice settles once
+      idempotencyKey: `fund-request-item-${itemId}`,
+      userId: approvedBy ?? 0,
+    });
+
+    await dbRun(
+      'UPDATE fund_request_items SET ap_id = ?, payment_recorded_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [ap.id, itemId]
+    );
+
+    return {
+      recorded: true,
+      ap_id: ap.id,
+      payment_id: payment.payment_id,
+      journal_id: payment.journal_id,
+      paid_amount: payment.paid_amount,
+      status: payment.status,
+    };
+  } catch (error: any) {
+    // The approval already happened and stands. The payment did not, and the reason travels
+    // back to the caller rather than turning an approval into a 500 or, worse, being swallowed.
+    return { recorded: false, reason: error?.code || 'payment failed', detail: error?.message };
+  }
 };
 
 // ===== COGS TRACKING =====
@@ -717,7 +743,7 @@ router.post('/fund-requests', authMiddleware, requirePermission('finance.fund-re
 
     const requestNumber = generateFinanceCode('FR');
     const totalAmount = items.reduce((s: number, it: any) => s + Number(it.amount || 0), 0);
-    const userId = (req as any).user?.id || null;
+    const userId = (req as any).user?.userId || null;
 
     // Use first item's po_id/vendor_id as header defaults
     const headerPoId = items[0]?.po_id || null;
@@ -803,7 +829,7 @@ router.put('/fund-requests/:id/submit', authMiddleware, async (req: Request, res
       await dbRun(
         `INSERT INTO approval_requests (entity_type, entity_id, requester_id, status, created_at)
          VALUES ('fund_request', ?, ?, 'pending', CURRENT_TIMESTAMP)`,
-        [req.params.id, (req as any).user?.id || null]
+        [req.params.id, (req as any).user?.userId || null]
       );
     } catch (e) {
       console.warn('Could not create approval_request for FR:', e);
@@ -825,7 +851,7 @@ router.put('/fund-requests/:id/approve', authMiddleware, async (req: Request, re
       return res.status(400).json({ error: 'Only submitted requests can be approved' });
     }
 
-    const approverId = (req as any).user?.id || null;
+    const approverId = (req as any).user?.userId || null;
 
     // Approve all pending items
     const pendingItems = await dbAll(
@@ -838,7 +864,7 @@ router.put('/fund-requests/:id/approve', authMiddleware, async (req: Request, re
         `UPDATE fund_request_items SET status = 'approved', approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [approverId, item.id]
       );
-      await autoPayApFromFundRequestItem(item.id);
+      await autoPayApFromFundRequestItem(item.id, approverId);
     }
 
     await recomputeFundRequestStatus(Number(req.params.id), approverId);
@@ -859,7 +885,7 @@ router.put('/fund-requests/:id/reject', authMiddleware, async (req: Request, res
     }
 
     const { reason } = req.body;
-    const approverId = (req as any).user?.id || null;
+    const approverId = (req as any).user?.userId || null;
 
     await dbRun(
       `UPDATE fund_request_items SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP
@@ -885,15 +911,17 @@ router.put('/fund-requests/:id/items/:itemId/approve', authMiddleware, async (re
     if (!item) return res.status(404).json({ error: 'Item not found' });
     if (item.status !== 'pending') return res.status(400).json({ error: 'Item is not pending' });
 
-    const approverId = (req as any).user?.id || null;
+    const approverId = (req as any).user?.userId || null;
     await dbRun(
       `UPDATE fund_request_items SET status = 'approved', approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [approverId, req.params.itemId]
     );
 
-    await autoPayApFromFundRequestItem(Number(req.params.itemId));
+    const disbursement = await autoPayApFromFundRequestItem(Number(req.params.itemId), approverId);
     await recomputeFundRequestStatus(Number(req.params.id), approverId);
-    res.json({ success: true });
+    // The approval stands either way, but whether the payment posted is not something the
+    // caller should have to guess at.
+    res.json({ success: true, disbursement });
   } catch (error) {
     console.error('Error approving fund request item:', error);
     res.status(500).json({ error: 'Failed to approve item' });
@@ -911,7 +939,7 @@ router.put('/fund-requests/:id/items/:itemId/reject', authMiddleware, async (req
     if (item.status !== 'pending') return res.status(400).json({ error: 'Item is not pending' });
 
     const { reason } = req.body;
-    const approverId = (req as any).user?.id || null;
+    const approverId = (req as any).user?.userId || null;
     await dbRun(
       `UPDATE fund_request_items SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [reason || 'Rejected', approverId, req.params.itemId]
