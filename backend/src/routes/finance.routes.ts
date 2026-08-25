@@ -526,9 +526,29 @@ router.get('/margin-analysis/summary', authMiddleware, async (req: Request, res:
 // leaves GRNI growing forever and the vendor balance invisible to the ledger.
 router.post('/accounts-payable/invoice', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { po_id, po_schedule_id, grn_id, vendor_id, invoice_number, invoice_date, due_date, amount, notes } = req.body;
+    const {
+      po_id, po_schedule_id, grn_id, vendor_id, invoice_number, invoice_date, due_date, amount, notes,
+      lines, variance_approval,
+    } = req.body;
     if (!vendor_id || !invoice_number || !amount) {
       return res.status(422).json({ error: 'vendor_id, invoice_number and amount are required', code: 'VALIDATION_ERROR' });
+    }
+
+    // Only the receipt line, the quantity and the price are taken from the caller. The product
+    // and the PO line are read from the receipt, so an invoice cannot rename what it is billing.
+    let billedLines;
+    if (lines !== undefined) {
+      if (!Array.isArray(lines)) {
+        return res.status(422).json({ error: 'lines must be an array of billed receipt lines', code: 'VALIDATION_ERROR' });
+      }
+      billedLines = lines.map((line: any) => ({
+        grnLineId: Number(line.grn_line_id ?? line.grnLineId),
+        quantity: line.quantity,
+        unitPrice: line.unit_price ?? line.unitPrice,
+      }));
+      if (billedLines.some((line: any) => !Number.isFinite(line.grnLineId) || line.grnLineId <= 0)) {
+        return res.status(422).json({ error: 'every billed line needs a grn_line_id', code: 'VALIDATION_ERROR' });
+      }
     }
 
     const result = await postVendorInvoice({
@@ -541,6 +561,11 @@ router.post('/accounts-payable/invoice', authMiddleware, async (req: Request, re
       dueDate: due_date || null,
       amount,
       notes: notes || null,
+      lines: billedLines,
+      // an approval is only ever the signed-in user's; the body cannot nominate someone else
+      varianceApproval: variance_approval?.reason
+        ? { reason: String(variance_approval.reason), authorizedBy: (req as any).user?.userId }
+        : null,
       userId: (req as any).user?.userId,
     });
 

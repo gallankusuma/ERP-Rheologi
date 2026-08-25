@@ -816,3 +816,23 @@ Jangan menggabungkan seluruh dirty working tree menjadi satu commit. Setiap chec
 5. Perbaiki fiscal-period locking, deterministic account-role resolution, GL RBAC, dan historical COA rules.
 6. Sambungkan AP/GRNI dan shipment/COGS/AR/revenue dengan reversal/reconciliation sebelum menyebut Finance terintegrasi.
 7. Perbaiki frontend build; hidupkan aplikasi+disposable DB; jalankan negative/retry/concurrency/reconciliation suite dan capture UI hanya setelah near-FIRM.
+
+## Delta 25 Agustus 2026 — Three-way match pada vendor invoice
+
+Menutup bagian match/variance dari **FIN-E2E-P0-37**. Sebelumnya invoice vendor dipercaya apa adanya: tidak ada pembanding terhadap pesanan maupun penerimaan, sehingga vendor bisa menagih barang yang tidak pernah datang, menagih satu penerimaan dua kali, atau memakai harga yang tidak pernah disepakati, dan semuanya tetap terposting.
+
+**Kontrol yang sekarang berlaku** (`backend/src/services/payables.service.ts`):
+
+- Baris invoice merujuk `grn_lines`; `product_id` dan `po_item_id` dibaca dari baris penerimaan, bukan dari request, jadi invoice tidak bisa mengganti nama barang yang ditagihkan.
+- `quantity_invoiced` per baris penerimaan dikunci `FOR UPDATE` dan diperbarui di bawah lock yang sama dengan pemeriksaannya, sehingga dua invoice yang berlomba pada satu penerimaan terserialisasi, bukan sama-sama lolos terhadap snapshot yang sama.
+- Menagih melebihi yang diterima `409 OVER_BILLED_QUANTITY`; penerimaan vendor lain `409 VENDOR_MISMATCH`; baris tidak dikenal `404 GRN_LINE_NOT_FOUND`; total baris tidak sama dengan header `422 INVOICE_TOTAL_MISMATCH`.
+- Selisih harga di luar toleransi `422 PRICE_VARIANCE_EXCEEDED`, dan hanya lewat bila ada alasan yang diotorisasi; otorisasi diambil dari user yang login, tidak boleh ditunjuk lewat body request.
+- Toleransi dikonfigurasi di `accounting_settings` (persen atau nominal, mana yang lebih besar). Tanpa konfigurasi, toleransi nol — fail closed.
+
+**Cacat akuntansi yang ikut diperbaiki:** posting lama mendebit GRNI sebesar nilai invoice, padahal GRNI dikredit saat penerimaan sebesar harga PO. Setiap kali keduanya berbeda, selisihnya mengendap di GRNI selamanya dan akun itu tidak akan pernah bisa direkonsiliasi. Sekarang GRNI dibersihkan tepat sebesar yang diakrualkan, selisihnya masuk `PURCHASE_PRICE_VARIANCE` (5600) sebagai baris jurnal tersendiri.
+
+Invoice tanpa baris penerimaan — jasa, aset, pembelian non-inventory — tetap bisa diposting tetapi ditandai `match_status = 'unmatched'`, jadi liability yang tidak diperiksa terlihat, bukan menyamar sebagai yang sudah diperiksa.
+
+**Acceptance:** `npm run test:three-way-match` — 20/20 pada database disposable, termasuk pembuktian bahwa invoice yang ditolak tidak meninggalkan payable, bahwa GRNI bersih tepat sebesar akrual, dan bahwa setiap jurnal yang ditulis balance.
+
+**Belum tertutup dari FIN-E2E-P0-37:** retur/nota debit dan reversal invoice.
