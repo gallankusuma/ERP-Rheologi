@@ -836,3 +836,44 @@ Invoice tanpa baris penerimaan — jasa, aset, pembelian non-inventory — tetap
 **Acceptance:** `npm run test:three-way-match` — 20/20 pada database disposable, termasuk pembuktian bahwa invoice yang ditolak tidak meninggalkan payable, bahwa GRNI bersih tepat sebesar akrual, dan bahwa setiap jurnal yang ditulis balance.
 
 **Belum tertutup dari FIN-E2E-P0-37:** retur/nota debit dan reversal invoice.
+
+## Delta 25 Agustus 2026 — Retur pembelian dan retur penjualan
+
+Menutup sisa **FIN-E2E-P0-37**. Sebelumnya retur tidak bisa dicatat sama sekali di kedua sisi: barang bergerak balik secara fisik dan tidak ada apa pun di sistem yang mengatakannya, sehingga stok salah, cost layer salah, dan saldo vendor/pelanggan bertahan pada angka yang kedua pihak sudah tidak menyetujuinya.
+
+Retur **bukan penghapusan transaksi asal**. Penerimaan tetap terjadi, pengiriman tetap terjadi, dan keduanya menyimpan jurnalnya. Retur adalah event tersendiri dengan posting sendiri, jadi tidak ada yang perlu diedit setelah terjadi.
+
+### Retur pembelian (`postPurchaseReturn`)
+
+Ke mana nilainya pergi ditentukan oleh **apakah barang sudah ditagih**, dan itu bukan soal pendapat — baris penerimaan sudah mencatat persis berapa yang sudah ditagihkan:
+
+| Kondisi | Posting |
+|---|---|
+| Belum ditagih | `Dr GRNI` `Cr Persediaan` — akrual dibalik |
+| Sudah ditagih | `Dr Hutang Usaha` `Cr Persediaan` — nota debit |
+
+Retur mengonsumsi kuantitas yang belum ditagih lebih dulu, karena itu yang benar-benar terjadi: barang ditolak sebelum ada yang menagihnya. Selisih antara nilai persediaan dan yang diakrualkan masuk `PURCHASE_PRICE_VARIANCE`.
+
+Satu baris penerimaan bisa ditagih oleh beberapa invoice, jadi nota debit menyebut **payable mana** yang dikurangi lewat `purchase_return_ap_allocations`, dikonsumsi dari invoice terlama, masing-masing pada harga yang invoice itu benar-benar kenakan.
+
+**Interaksi dengan 3-way match:** `grn_lines` sekarang membawa dua total, bukan satu — `quantity_returned` dan `quantity_returned_billed`. Barang yang dikembalikan sebelum ditagih **berhenti bisa ditagih**; tanpa pemisahan ini vendor tetap bebas menagih barang yang sudah kita kirim balik. Barang yang dikembalikan setelah ditagih tetap bisa ditagih, karena uangnya memang sudah terhutang dan kembali sebagai nota debit.
+
+### Retur penjualan (`postSalesReturn`)
+
+Barang dan uang ditangani terpisah, sengaja:
+
+| Sisi | Posting |
+|---|---|
+| Barang, bila layak jual lagi | `Dr Persediaan FG` `Cr HPP` — ke lot asalnya, pada biaya layer itu |
+| Barang rusak | tidak ada — barangnya memang hilang, biayanya tetap di HPP |
+| Uang | `Dr Pendapatan` + `Dr PPN Keluaran` `Cr Piutang` — nota kredit |
+
+Menulis barang rusak kembali ke persediaan akan melebih-lebihkan apa yang kita miliki, jadi `restocked = false` hanya menerbitkan nota kredit.
+
+### Penolakan
+
+`OVER_RETURN_QUANTITY` 409 (lebih dari yang diterima/dikirim), `VENDOR_MISMATCH` 409, `RETURN_ALREADY_PAID` 409 dan `CREDIT_NOTE_EXCEEDS_RECEIVABLE` 409 — uang yang sudah dibayar/diterima harus kembali sebagai refund, bukan nota debit/kredit.
+
+**Acceptance:** `npm run test:returns` — 21/21 pada database disposable. Pembuktian terkuatnya: setelah kedua jenis retur dijalankan, `reconcileInventory` masih **balanced** — rak, valuasi, dan ledger tetap sepakat.
+
+**Status FIN-E2E-P0-37:** match, variance, GRNI clearing, AP/AR subledger, dan retur dua sisi tertutup. Sisa: **reversal** dokumen yang sudah diposting.

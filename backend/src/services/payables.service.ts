@@ -164,6 +164,8 @@ async function matchInvoiceLines(
     const [rows] = await conn.execute(
       `SELECT gl.id, gl.po_item_id, gl.product_id, gl.quantity_received, gl.unit_cost,
               COALESCE(gl.quantity_invoiced, 0) AS quantity_invoiced,
+              COALESCE(gl.quantity_returned, 0) AS quantity_returned,
+              COALESCE(gl.quantity_returned_billed, 0) AS quantity_returned_billed,
               po.vendor_id
          FROM grn_lines gl
          JOIN goods_receipts gr ON gr.id = gl.grn_id
@@ -192,15 +194,26 @@ async function matchInvoiceLines(
     const alreadyBilled = qtyRound(money(String(grnLine.quantity_invoiced)));
     const billedAfter = qtyRound(alreadyBilled.plus(quantity));
 
-    // the heart of the match: you may not be billed for more than turned up
-    if (billedAfter.greaterThan(received)) {
+    // Goods sent back before anyone billed for them are no longer billable at all. Goods sent
+    // back after being billed still are, because that money is already owed and comes back as
+    // a debit note instead; subtracting those too would refuse an invoice that is owed.
+    const returnedUnbilled = qtyRound(
+      money(String(grnLine.quantity_returned)).minus(money(String(grnLine.quantity_returned_billed)))
+    );
+    const billable = qtyRound(received.minus(returnedUnbilled));
+
+    // the heart of the match: you may not be billed for more than turned up and stayed
+    if (billedAfter.greaterThan(billable)) {
       throw new PayablesError(
         'OVER_BILLED_QUANTITY',
         `Billing ${toDbString(quantity, 4)} against receipt line ${line.grnLineId} would take the billed total to ` +
-          `${toDbString(billedAfter, 4)} against ${toDbString(received, 4)} received.`,
+          `${toDbString(billedAfter, 4)} against ${toDbString(billable, 4)} billable ` +
+          `(${toDbString(received, 4)} received less ${toDbString(returnedUnbilled, 4)} returned before invoicing).`,
         {
           grnLineId: line.grnLineId,
           received: toDbString(received, 4),
+          returnedBeforeInvoicing: toDbString(returnedUnbilled, 4),
+          billable: toDbString(billable, 4),
           alreadyBilled: toDbString(alreadyBilled, 4),
           requested: toDbString(quantity, 4),
         }

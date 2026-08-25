@@ -4,7 +4,9 @@ import { authMiddleware } from '../middleware/auth';
 import { requirePermission, checkUserPermission } from '../middleware/permission';
 import { autoCreateFpa } from '../services/qc.service';
 import { approvePurchaseRequest, approvePurchaseOrder, postGoodsReceipt } from '../services/procurement.service';
+import { postPurchaseReturn } from '../services/returns.service';
 import { mapProcurementError } from '../errors/procurement.error';
+import { respondWithDomainError } from '../errors/domain.error';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -1118,7 +1120,11 @@ router.get('/purchase-orders', authMiddleware, requirePermission('procurement.pu
                FROM purchase_order_items poi
                LEFT JOIN products p2 ON poi.product_id = p2.id
                WHERE poi.purchase_order_id = po.id
-              ) as items_description
+              ) as items_description,
+              (SELECT COUNT(*) FROM purchase_order_items poi2
+               WHERE poi2.purchase_order_id = po.id
+               AND poi2.quantity > COALESCE(poi2.received_qty, 0)
+              ) as outstanding_item_count
        FROM purchase_orders po
        LEFT JOIN vendors v ON po.vendor_id = v.id
        LEFT JOIN purchase_requests pr ON po.pr_id = pr.id
@@ -2578,5 +2584,76 @@ router.delete('/purchase-requests/:id/item-attachment', authMiddleware, requireP
     res.status(500).json({ error: 'Failed to delete attachment' });
   }
 });
+
+// ===== PURCHASE RETURNS =====
+
+// Send goods back to a vendor. Whether this reverses the goods-received accrual or raises a
+// debit note is decided from the receipt line, not from the request: the line already records
+// how much of it has been invoiced.
+router.post(
+  '/purchase-returns',
+  authMiddleware,
+  requirePermission('procurement.purchase-returns', 'create'),
+  async (req: Request, res: Response) => {
+    try {
+      const { grn_id, vendor_id, warehouse_id, return_number, return_date, reason, lines, idempotency_key } = req.body;
+      if (!grn_id || !vendor_id || !warehouse_id || !return_number || !idempotency_key) {
+        return res.status(422).json({
+          error: 'grn_id, vendor_id, warehouse_id, return_number and idempotency_key are required',
+          code: 'VALIDATION_ERROR',
+        });
+      }
+      if (!Array.isArray(lines) || lines.length === 0) {
+        return res.status(422).json({ error: 'lines must name the receipt lines going back', code: 'VALIDATION_ERROR' });
+      }
+
+      const result = await postPurchaseReturn({
+        grnId: Number(grn_id),
+        vendorId: Number(vendor_id),
+        warehouseId: Number(warehouse_id),
+        returnNumber: String(return_number),
+        returnDate: (return_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+        reason: reason || null,
+        // only the line, the lot and the quantity come from the caller; product and price are
+        // read from the receipt
+        lines: lines.map((line: any) => ({
+          grnLineId: Number(line.grn_line_id ?? line.grnLineId),
+          lotId: Number(line.lot_id ?? line.lotId),
+          quantity: line.quantity,
+        })),
+        idempotencyKey: String(idempotency_key),
+        userId: (req as any).user?.userId,
+      });
+
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      if (respondWithDomainError(error, res)) return;
+      console.error('Error posting purchase return:', error);
+      res.status(500).json({ error: 'Failed to post purchase return' });
+    }
+  }
+);
+
+router.get(
+  '/purchase-returns',
+  authMiddleware,
+  requirePermission('procurement.purchase-returns', 'view'),
+  async (req: Request, res: Response) => {
+    try {
+      const rows = await dbAll(
+        `SELECT pr.*, v.name AS vendor_name, gr.grn_number
+           FROM purchase_returns pr
+           LEFT JOIN vendors v ON v.id = pr.vendor_id
+           LEFT JOIN goods_receipts gr ON gr.id = pr.grn_id
+          ORDER BY pr.id DESC
+          LIMIT 200`
+      );
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching purchase returns:', error);
+      res.status(500).json({ error: 'Failed to fetch purchase returns' });
+    }
+  }
+);
 
 export default router;

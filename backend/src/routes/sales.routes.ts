@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { postSalesReturn } from '../services/returns.service';
+import { respondWithDomainError } from '../errors/domain.error';
 
 const router = Router();
 
@@ -672,5 +674,81 @@ router.get('/payments/summary', authMiddleware, requirePermission('crm.sales', '
     res.status(500).json({ error: 'Failed to fetch payment summary' });
   }
 });
+
+// ===== SALES RETURNS =====
+
+// Take goods back from a customer. Goods fit to sell go back into the lot they left from and
+// the cost comes back out of cost of sales; damaged goods do not, because writing them back
+// into stock would overstate what we own. Either way the credit note undoes the sale.
+router.post(
+  '/sales-returns',
+  authMiddleware,
+  requirePermission('crm.sales-returns', 'create'),
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        delivery_id, customer_id, warehouse_id, invoice_id, return_number, return_date,
+        tax_amount, reason, lines, idempotency_key,
+      } = req.body;
+      if (!delivery_id || !customer_id || !warehouse_id || !return_number || !idempotency_key) {
+        return res.status(422).json({
+          error: 'delivery_id, customer_id, warehouse_id, return_number and idempotency_key are required',
+          code: 'VALIDATION_ERROR',
+        });
+      }
+      if (!Array.isArray(lines) || lines.length === 0) {
+        return res.status(422).json({ error: 'lines must name the delivery lines coming back', code: 'VALIDATION_ERROR' });
+      }
+
+      const result = await postSalesReturn({
+        deliveryId: Number(delivery_id),
+        customerId: Number(customer_id),
+        warehouseId: Number(warehouse_id),
+        invoiceId: invoice_id ? Number(invoice_id) : null,
+        returnNumber: String(return_number),
+        returnDate: (return_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+        taxAmount: tax_amount ?? null,
+        reason: reason || null,
+        // the product, lot and cost are read from the delivery line
+        lines: lines.map((line: any) => ({
+          deliveryItemId: Number(line.delivery_item_id ?? line.deliveryItemId),
+          quantity: line.quantity,
+          restocked: line.restocked !== false,
+          unitPrice: line.unit_price ?? line.unitPrice ?? 0,
+        })),
+        idempotencyKey: String(idempotency_key),
+        userId: (req as any).user?.userId,
+      });
+
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      if (respondWithDomainError(error, res)) return;
+      console.error('Error posting sales return:', error);
+      res.status(500).json({ error: 'Failed to post sales return' });
+    }
+  }
+);
+
+router.get(
+  '/sales-returns',
+  authMiddleware,
+  requirePermission('crm.sales-returns', 'view'),
+  async (req: Request, res: Response) => {
+    try {
+      const rows = await dbAll(
+        `SELECT sr.*, c.name AS customer_name, d.do_number
+           FROM sales_returns sr
+           LEFT JOIN customers c ON c.id = sr.customer_id
+           LEFT JOIN deliveries d ON d.id = sr.delivery_id
+          ORDER BY sr.id DESC
+          LIMIT 200`
+      );
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error('Error fetching sales returns:', error);
+      res.status(500).json({ error: 'Failed to fetch sales returns' });
+    }
+  }
+);
 
 export default router;

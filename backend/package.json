@@ -26,7 +26,8 @@
     "test:sales-posting": "tsx src/scripts/sales-posting-check.ts",
     "test:acceptance": "tsx src/scripts/acceptance-check.ts",
     "test:reconciliation": "tsx src/scripts/reconciliation-check.ts",
-    "test:three-way-match": "tsx src/scripts/three-way-match-check.ts"
+    "test:three-way-match": "tsx src/scripts/three-way-match-check.ts",
+    "test:returns": "tsx src/scripts/returns-check.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",
