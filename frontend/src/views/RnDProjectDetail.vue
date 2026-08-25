@@ -299,6 +299,7 @@
           <select v-if="stabilities.length > 0" v-model.number="selectedStudyId" @change="loadStudyDetail" class="px-3 py-1.5 border rounded-lg text-sm bg-white">
             <option v-for="s in stabilities" :key="s.id" :value="s.id">{{ s.study_code }} — {{ s.name }}</option>
           </select>
+          <button v-if="selectedStudy" @click="editStudy" class="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 hover:border-indigo-400 hover:text-indigo-600 transition-colors">✏️ Edit</button>
           <button @click="showCreateStudyModal = true" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm">+ New Study</button>
         </div>
       </div>
@@ -309,7 +310,7 @@
 
       <div v-else-if="selectedStudy" class="space-y-4">
         <!-- Study info bar -->
-        <div class="bg-white rounded-xl border p-4 flex flex-wrap gap-6 text-sm">
+        <div class="bg-white rounded-xl border p-4 flex flex-wrap gap-6 text-sm items-center">
           <div><span class="text-gray-500">Code:</span> <span class="font-medium">{{ selectedStudy.study_code }}</span></div>
           <div><span class="text-gray-500">Storage:</span> <span class="font-medium">{{ selectedStudy.storage_condition }}</span></div>
           <div><span class="text-gray-500">Duration:</span> <span class="font-medium">{{ selectedStudy.duration_months }} months</span></div>
@@ -372,7 +373,7 @@
     <div v-if="showCreateStudyModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
         <div class="px-6 py-4 border-b bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-t-2xl">
-          <h3 class="text-lg font-semibold">New Stability Study</h3>
+          <h3 class="text-lg font-semibold">{{ editingStudyId ? 'Edit Stability Study' : 'New Stability Study' }}</h3>
         </div>
         <form @submit.prevent="createStudy" class="p-6 space-y-4">
           <div class="grid grid-cols-2 gap-4">
@@ -398,8 +399,8 @@
               <input v-model="studyForm.batch_number" class="w-full px-3 py-2 border rounded-lg text-sm" /></div>
           </div>
           <div class="flex justify-end gap-3 pt-4 border-t">
-            <button type="button" @click="showCreateStudyModal=false" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
-            <button type="submit" class="px-6 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium">Create</button>
+            <button type="button" @click="closeStudyModal" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+            <button type="submit" class="px-6 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium">{{ editingStudyId ? 'Save Changes' : 'Create' }}</button>
           </div>
         </form>
       </div>
@@ -712,6 +713,7 @@ const studyCheckpoints = ref<any[]>([]);
 const studyParams = ref<any[]>([]);
 const studyReadings = ref<any[]>([]);
 const showCreateStudyModal = ref(false);
+const editingStudyId = ref<number | null>(null);
 const showAddParamModal = ref(false);
 const showAddCheckpointModal = ref(false);
 
@@ -750,11 +752,37 @@ async function loadStudyDetail() {
 
 async function createStudy() {
   try {
-    await api.post('/rnd/stability', { ...studyForm.value, project_id: projectId });
-    showCreateStudyModal.value = false;
-    studyForm.value = { study_code: '', name: '', storage_condition: '25°C / 60% RH', duration_months: 12, status: 'active', start_date: '', batch_number: '' };
+    if (editingStudyId.value) {
+      await api.put(`/rnd/stability/${editingStudyId.value}`, studyForm.value);
+    } else {
+      await api.post('/rnd/stability', { ...studyForm.value, project_id: projectId });
+    }
+    closeStudyModal();
     await fetchStabilities();
+    if (editingStudyId.value || selectedStudyId.value) await loadStudyDetail();
   } catch (e: any) { alert(e.response?.data?.error || e.message); }
+}
+
+function editStudy() {
+  if (!selectedStudy.value) return;
+  const s = selectedStudy.value;
+  studyForm.value = {
+    study_code: s.study_code || '',
+    name: s.name || '',
+    storage_condition: s.storage_condition || '25°C / 60% RH',
+    duration_months: s.duration_months || 12,
+    status: s.status || 'active',
+    start_date: s.start_date ? s.start_date.slice(0, 10) : '',
+    batch_number: s.batch_number || '',
+  };
+  editingStudyId.value = s.id;
+  showCreateStudyModal.value = true;
+}
+
+function closeStudyModal() {
+  showCreateStudyModal.value = false;
+  editingStudyId.value = null;
+  studyForm.value = { study_code: '', name: '', storage_condition: '25°C / 60% RH', duration_months: 12, status: 'active', start_date: '', batch_number: '' };
 }
 
 async function addParam() {

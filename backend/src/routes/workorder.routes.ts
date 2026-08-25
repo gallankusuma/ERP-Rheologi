@@ -6,6 +6,21 @@ import { validateTransition } from '../utils/wo-transitions';
 
 const router = Router();
 
+// GET /api/workorders/products-with-bom — products that have active BOM only
+router.get('/products-with-bom', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const products = await dbAll(`
+      SELECT DISTINCT p.id, p.sku, p.name
+      FROM products p
+      INNER JOIN bom_headers bh ON bh.product_id = p.id AND bh.status = 'ACTIVE'
+      ORDER BY p.name ASC
+    `);
+    res.json({ data: products });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch products with BOM' });
+  }
+});
+
 // GET /api/workorders — enriched with MPS provenance, supports month/year/status filters
 router.get('/', authMiddleware, requirePermission('production.workorders', 'view'), async (req: Request, res: Response) => {
   try {

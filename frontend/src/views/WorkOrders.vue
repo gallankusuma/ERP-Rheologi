@@ -175,11 +175,29 @@
           <!-- Product -->
           <div>
             <label class="block text-xs font-semibold text-gray-600 mb-1">Produk <span class="text-red-500">*</span></label>
-            <select v-model="form.product_id" @change="onProductChange" :disabled="!!editingWo"
-              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
-              <option value="">Pilih Produk</option>
-              <option v-for="p in productOptions" :key="p.value" :value="p.value">{{ p.label }}</option>
-            </select>
+            <div class="relative" ref="productDropdownRef">
+              <div @click="!editingWo && (showProductDropdown = !showProductDropdown)"
+                class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm cursor-pointer flex items-center justify-between"
+                :class="editingWo ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-gray-300'">
+                <span :class="form.product_id ? 'text-gray-900' : 'text-gray-400'">{{ selectedProductLabel || 'Pilih Produk' }}</span>
+                <span class="text-gray-400 text-xs">▼</span>
+              </div>
+              <div v-if="showProductDropdown" class="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-[280px] flex flex-col">
+                <div class="p-2 border-b">
+                  <input v-model="productSearch" ref="productSearchInput" placeholder="Cari produk..."
+                    class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                </div>
+                <div class="overflow-y-auto flex-1">
+                  <div v-if="!filteredProductOptions.length" class="px-3 py-4 text-center text-sm text-gray-400">Tidak ditemukan</div>
+                  <div v-for="p in filteredProductOptions" :key="p.value"
+                    @click="selectProduct(p.value)"
+                    class="px-3 py-2 text-sm cursor-pointer hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+                    :class="form.product_id === p.value ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-700'">
+                    {{ p.label }}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <!-- Qty + UOM -->
           <div class="flex gap-3">
@@ -387,7 +405,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { api } from '../lib/api';
 
 const wos = ref<any[]>([]);
@@ -482,9 +500,50 @@ const filteredWOs = computed(() => {
   return list;
 });
 
+const productSearch = ref('');
+const showProductDropdown = ref(false);
+const productDropdownRef = ref<HTMLElement | null>(null);
+const productSearchInput = ref<HTMLInputElement | null>(null);
+
 const productOptions = computed(() =>
   allProducts.value.map(p => ({ value: p.id, label: `${p.name} (${p.sku || '-'})` }))
 );
+
+const filteredProductOptions = computed(() => {
+  const q = productSearch.value.toLowerCase().trim();
+  if (!q) return productOptions.value;
+  return productOptions.value.filter(p => p.label.toLowerCase().includes(q));
+});
+
+const selectedProductLabel = computed(() => {
+  if (!form.value.product_id) return '';
+  const found = productOptions.value.find(p => p.value === form.value.product_id);
+  return found?.label || '';
+});
+
+function selectProduct(id: any) {
+  form.value.product_id = id;
+  showProductDropdown.value = false;
+  productSearch.value = '';
+  onProductChange();
+}
+
+// close dropdown on click outside
+function handleClickOutside(e: MouseEvent) {
+  if (productDropdownRef.value && !productDropdownRef.value.contains(e.target as Node)) {
+    showProductDropdown.value = false;
+    productSearch.value = '';
+  }
+}
+
+watch(showProductDropdown, (val) => {
+  if (val) {
+    nextTick(() => productSearchInput.value?.focus());
+    document.addEventListener('click', handleClickOutside);
+  } else {
+    document.removeEventListener('click', handleClickOutside);
+  }
+});
 
 const lineOptions = computed(() => {
   if (!form.value.product_id) return allLineProcesses.value.map(lp => ({ value: lp.id, label: lp.name }));
@@ -515,7 +574,7 @@ onMounted(async () => {
   try {
     const [lpRes, prodRes] = await Promise.all([
       api.get('/line-processes'),
-      api.get('/products'),
+      api.get('/workorders/products-with-bom'),
     ]);
     allLineProcesses.value = lpRes.data.data || [];
     allProducts.value = prodRes.data.data || [];
