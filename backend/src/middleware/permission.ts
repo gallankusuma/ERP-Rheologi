@@ -3,8 +3,7 @@ import { dbGet } from '../config/database';
 
 /**
  * Check if user has the required permission for a resource action.
- * All access is determined by Role -> Role Permissions -> Permission.
- * No user_level or role_id bypass.
+ * Admin bypass: role_id=1 or user_level=1 (founder) skip permission checks.
  */
 export function requirePermission(resource: string, action: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -14,8 +13,21 @@ export function requirePermission(resource: string, action: string) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      const userRecord = await dbGet('SELECT role_id FROM users WHERE id = ?', [user.userId]) as any;
-      if (!userRecord || !userRecord.role_id) {
+      const userRecord = await dbGet(
+        'SELECT role_id, user_level FROM users WHERE id = ?',
+        [user.userId]
+      ) as any;
+
+      if (!userRecord) {
+        return res.status(403).json({ error: 'User not found' });
+      }
+
+      // admin bypass: founder (user_level=1) or admin role (role_id=1)
+      if (userRecord.user_level === 1 || userRecord.role_id === 1) {
+        return next();
+      }
+
+      if (!userRecord.role_id) {
         return res.status(403).json({ error: 'No role assigned to user' });
       }
 
