@@ -2585,6 +2585,58 @@ router.delete('/purchase-requests/:id/item-attachment', authMiddleware, requireP
   }
 });
 
+// What is still returnable on a receipt, which is the only quantity a return screen should
+// offer. The lot comes from the receipt line itself: lots are created against grn_items, so
+// grn_lines reaches them through the PO line the two share.
+router.get(
+  '/goods-receipts/:id/returnable',
+  authMiddleware,
+  requirePermission('procurement.purchase-returns', 'view'),
+  async (req: Request, res: Response) => {
+    try {
+      const header = await dbGet(
+        `SELECT gr.id, gr.grn_number, gr.po_id, gr.warehouse_id, gr.received_date, gr.status,
+                po.vendor_id, po.po_number, v.name AS vendor_name, w.name AS warehouse_name
+           FROM goods_receipts gr
+           LEFT JOIN purchase_orders po ON po.id = gr.po_id
+           LEFT JOIN vendors v ON v.id = po.vendor_id
+           LEFT JOIN warehouses w ON w.id = gr.warehouse_id
+          WHERE gr.id = ?`,
+        [req.params.id]
+      );
+      if (!header) return res.status(404).json({ error: 'Goods receipt not found' });
+
+      const lines = await dbAll(
+        `SELECT gl.id AS grn_line_id, gl.product_id, p.sku, p.name AS product_name,
+                gl.quantity_received, gl.unit_cost,
+                COALESCE(gl.quantity_invoiced, 0) AS quantity_invoiced,
+                COALESCE(gl.quantity_returned, 0) AS quantity_returned,
+                (gl.quantity_received - COALESCE(gl.quantity_returned, 0)) AS returnable,
+                il.id AS lot_id, il.lot_number,
+                COALESCE(st.qty, 0) AS on_hand
+           FROM grn_lines gl
+           JOIN products p ON p.id = gl.product_id
+           LEFT JOIN grn_items gi ON gi.grn_id = gl.grn_id AND gi.po_item_id = gl.po_item_id
+           LEFT JOIN inventory_lots il
+                  ON il.source_type = 'grn_item' AND il.source_document_id = gl.grn_id
+                 AND il.source_line_id = gi.id
+           LEFT JOIN (
+             SELECT lot_id, SUM(quantity) AS qty FROM inventory_stocks
+              WHERE status IN ('available', 'qc_hold') AND lot_id IS NOT NULL GROUP BY lot_id
+           ) st ON st.lot_id = il.id
+          WHERE gl.grn_id = ?
+          ORDER BY gl.id`,
+        [req.params.id]
+      );
+
+      res.json({ success: true, data: { receipt: header, lines } });
+    } catch (error) {
+      console.error('Error fetching returnable receipt lines:', error);
+      res.status(500).json({ error: 'Failed to fetch returnable receipt lines' });
+    }
+  }
+);
+
 // ===== PURCHASE RETURNS =====
 
 // Send goods back to a vendor. Whether this reverses the goods-received accrual or raises a

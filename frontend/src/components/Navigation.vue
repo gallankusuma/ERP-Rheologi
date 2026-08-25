@@ -156,6 +156,7 @@ const menus = [
       { to: '/procurement/price-list', label: 'Vendor Price List', status: 'active' },
       { to: '/procurement/material-prices', label: 'Material Price Comparison', status: 'active' },
       { to: '/procurement/history', label: 'Procurement History', status: 'active' },
+      { to: '/procurement/purchase-returns', label: 'Purchase Returns', status: 'active' },
     ]
   },
   {
@@ -206,6 +207,7 @@ const menus = [
       { to: '/sales/payments', label: 'Payments', status: 'active' },
       { to: '/sales/items', label: 'Items', status: 'pending' },
       { to: '/sales/contracts', label: 'Contracts', status: 'pending' },
+      { to: '/sales/sales-returns', label: 'Sales Returns', status: 'active' },
     ]
   },
   {
@@ -218,6 +220,7 @@ const menus = [
       { to: '/finance/margin', label: 'Margin Analysis', status: 'pending' },
       { to: '/finance/summary', label: 'Financial Summary', status: 'pending' },
       { to: '/finance/fund-requests', label: 'Fund Requests', status: 'pending' },
+      { to: '/finance/reversals', label: 'Document Reversal', status: 'active' },
     ]
   },
   {

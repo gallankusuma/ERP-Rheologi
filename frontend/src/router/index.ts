@@ -225,6 +225,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, breadcrumb: [{ label: 'Inventory', route: '/inventory' }, { label: 'Expiry Monitoring' }] },
   },
   {
+    path: '/inventory/delivery-orders',
+    name: 'InventoryDeliveryOrders',
+    component: () => import('../views/SalesDeliveryOrders.vue'),
+    meta: { requiresAuth: true, breadcrumb: [{ label: 'Inventory', route: '/inventory' }, { label: 'Delivery Orders' }] },
+  },
+  {
     path: '/procurement',
     name: 'Procurement',
     component: () => import('../views/Procurement.vue'),
@@ -778,6 +784,24 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Accounts Receivable' },
   },
   {
+    path: '/procurement/purchase-returns',
+    name: 'PurchaseReturnsPage',
+    component: () => import('../views/PurchaseReturns.vue'),
+    meta: { requiresAuth: true, title: 'Purchase Returns' },
+  },
+  {
+    path: '/sales/sales-returns',
+    name: 'SalesReturnsPage',
+    component: () => import('../views/SalesReturns.vue'),
+    meta: { requiresAuth: true, title: 'Sales Returns' },
+  },
+  {
+    path: '/finance/reversals',
+    name: 'DocumentReversalPage',
+    component: () => import('../views/DocumentReversal.vue'),
+    meta: { requiresAuth: true, title: 'Document Reversal' },
+  },
+  {
     path: '/finance/cost-analysis',
     name: 'FinanceCostAnalysisPage',
     component: () => import('../views/FinanceCostAnalysis.vue'),
@@ -800,6 +824,18 @@ const routes: RouteRecordRaw[] = [
     name: 'FinanceFundRequestsPage',
     component: () => import('../views/FinanceFundRequests.vue'),
     meta: { requiresAuth: true, title: 'Fund Requests' },
+  },
+  {
+    path: '/finance/invoices',
+    name: 'FinanceInvoices',
+    component: () => import('../views/SalesInvoices.vue'),
+    meta: { requiresAuth: true, title: 'Sales Invoices' },
+  },
+  {
+    path: '/finance/payments',
+    name: 'FinancePayments',
+    component: () => import('../views/CustomerPayments.vue'),
+    meta: { requiresAuth: true, title: 'Customer Payments' },
   },
   // Sales Module
   {

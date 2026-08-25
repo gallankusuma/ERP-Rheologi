@@ -222,6 +222,70 @@ async function main() {
 
     const deactAgain = await call('DELETE', `/gl/coa/${accountId}`, { token: boss });
     record('deactivating twice is idempotent', deactAgain.status === 200, `HTTP ${deactAgain.status}`);
+
+    // The screens that build a return ask the server what is still returnable. Those queries
+    // join receipt lines to their lot through the PO line, and a delivery line to the lot it
+    // shipped — joins that only fail at runtime, so they are exercised here rather than trusted.
+    await conn.query(`INSERT IGNORE INTO vendors (id, code, name) VALUES (1, 'V-ACC', 'PT Vendor')`);
+    await conn.query(`INSERT IGNORE INTO warehouses (id, code, name) VALUES (1, 'WH-ACC', 'Gudang')`);
+    await conn.query(`INSERT IGNORE INTO products (id, sku, name, unit_of_measure_id) VALUES (1, 'P-ACC', 'Bahan', 1)`);
+    await conn.query(
+      `INSERT INTO purchase_orders (id, po_number, vendor_id, po_date, status, total_amount)
+       VALUES (1, 'PO-ACC-1', 1, CURDATE(), 'APPROVED', 100000)`
+    );
+    await conn.query(
+      `INSERT INTO purchase_order_items (id, purchase_order_id, product_id, quantity, unit_price, line_total)
+       VALUES (1, 1, 1, 10, 10000, 100000)`
+    );
+    await conn.query(
+      `INSERT INTO goods_receipts (id, grn_number, po_id, warehouse_id, received_date, status)
+       VALUES (1, 'GRN-ACC-1', 1, 1, CURDATE(), 'APPROVED')`
+    );
+    await conn.query(
+      `INSERT INTO grn_lines (id, grn_id, po_item_id, product_id, quantity_received, unit_cost)
+       VALUES (1, 1, 1, 1, 10, 10000)`
+    );
+    await conn.query(
+      `INSERT INTO grn_items (id, grn_id, po_item_id, product_id, quantity_received, unit_cost)
+       VALUES (1, 1, 1, 1, 10, 10000)`
+    );
+    await conn.query(
+      `INSERT INTO inventory_lots (id, lot_number, product_id, source_type, source_document_id, source_line_id)
+       VALUES (1, 'LOT-ACC-1', 1, 'grn_item', 1, 1)`
+    );
+
+    const returnable = await call('GET', '/procurement/goods-receipts/1/returnable', { token: boss });
+    const rline = returnable.body?.data?.lines?.[0];
+    record(
+      'a receipt reports what is still returnable, with its lot',
+      returnable.status === 200 && Number(rline?.returnable) === 10 && Number(rline?.lot_id) === 1,
+      `HTTP ${returnable.status}, returnable ${rline?.returnable}, lot ${rline?.lot_number || 'none'}`
+    );
+
+    const returnableDenied = await call('GET', '/procurement/goods-receipts/1/returnable', { token: clerk });
+    record(
+      'returnable receipt lines are refused without the returns permission',
+      returnableDenied.status === 403,
+      `HTTP ${returnableDenied.status}`
+    );
+
+    await conn.query(`INSERT IGNORE INTO customers (id, code, name) VALUES (1, 'C-ACC', 'PT Pembeli')`);
+    await conn.query(`INSERT INTO sales_orders (id, so_number, customer_id, so_date, status) VALUES (1, 'SO-ACC-1', 1, CURDATE(), 'confirmed')`);
+    await conn.query(
+      `INSERT INTO deliveries (id, do_number, so_id, delivery_date, warehouse_id, status) VALUES (1, 'DO-ACC-1', 1, CURDATE(), 1, 'shipped')`
+    );
+    await conn.query(
+      `INSERT INTO delivery_items (id, delivery_id, product_id, quantity_delivered, lot_id, unit_cost, warehouse_id)
+       VALUES (1, 1, 1, 4, 1, 10000, 1)`
+    );
+
+    const dReturnable = await call('GET', '/sales/deliveries/1/returnable', { token: boss });
+    const dline = dReturnable.body?.data?.lines?.[0];
+    record(
+      'a delivery reports what is still returnable, with its lot and cost',
+      dReturnable.status === 200 && Number(dline?.returnable) === 4 && Number(dline?.unit_cost) === 10000,
+      `HTTP ${dReturnable.status}, returnable ${dline?.returnable}, cost ${dline?.unit_cost}`
+    );
   } catch (err: any) {
     record('acceptance run completed without unexpected error', false, err.message);
   } finally {

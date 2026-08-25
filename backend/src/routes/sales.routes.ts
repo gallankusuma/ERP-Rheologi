@@ -675,6 +675,50 @@ router.get('/payments/summary', authMiddleware, requirePermission('crm.sales', '
   }
 });
 
+// What is still returnable on a delivery. The lot and the cost come from the delivery line
+// itself, so a return is valued at what those exact goods cost when they left.
+router.get(
+  '/deliveries/:id/returnable',
+  authMiddleware,
+  requirePermission('crm.sales-returns', 'view'),
+  async (req: Request, res: Response) => {
+    try {
+      const header = await dbGet(
+        `SELECT d.id, d.do_number, d.so_id, d.warehouse_id, d.delivery_date, d.status,
+                d.posted_at, d.reversed_at,
+                so.so_number, so.customer_id, c.name AS customer_name, w.name AS warehouse_name,
+                (SELECT i.id FROM invoices i WHERE i.so_id = d.so_id ORDER BY i.id DESC LIMIT 1) AS invoice_id,
+                (SELECT i.invoice_number FROM invoices i WHERE i.so_id = d.so_id ORDER BY i.id DESC LIMIT 1) AS invoice_number
+           FROM deliveries d
+           LEFT JOIN sales_orders so ON so.id = d.so_id
+           LEFT JOIN customers c ON c.id = so.customer_id
+           LEFT JOIN warehouses w ON w.id = d.warehouse_id
+          WHERE d.id = ?`,
+        [req.params.id]
+      );
+      if (!header) return res.status(404).json({ error: 'Delivery not found' });
+
+      const lines = await dbAll(
+        `SELECT di.id AS delivery_item_id, di.product_id, p.sku, p.name AS product_name,
+                di.quantity_delivered, di.unit_cost, di.lot_id, il.lot_number,
+                COALESCE(di.quantity_returned, 0) AS quantity_returned,
+                (di.quantity_delivered - COALESCE(di.quantity_returned, 0)) AS returnable
+           FROM delivery_items di
+           JOIN products p ON p.id = di.product_id
+           LEFT JOIN inventory_lots il ON il.id = di.lot_id
+          WHERE di.delivery_id = ?
+          ORDER BY di.id`,
+        [req.params.id]
+      );
+
+      res.json({ success: true, data: { delivery: header, lines } });
+    } catch (error) {
+      console.error('Error fetching returnable delivery lines:', error);
+      res.status(500).json({ error: 'Failed to fetch returnable delivery lines' });
+    }
+  }
+);
+
 // ===== SALES RETURNS =====
 
 // Take goods back from a customer. Goods fit to sell go back into the lot they left from and
