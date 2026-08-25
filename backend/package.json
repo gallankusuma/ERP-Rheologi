@@ -24,7 +24,8 @@
     "test:finance-config": "tsx src/scripts/finance-config-check.ts",
     "test:payables": "tsx src/scripts/payables-check.ts",
     "test:sales-posting": "tsx src/scripts/sales-posting-check.ts",
-    "test:acceptance": "tsx src/scripts/acceptance-check.ts"
+    "test:acceptance": "tsx src/scripts/acceptance-check.ts",
+    "test:reconciliation": "tsx src/scripts/reconciliation-check.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

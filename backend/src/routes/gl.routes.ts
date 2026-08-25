@@ -3,6 +3,7 @@ import pool, { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { assertClassificationEditable } from '../services/coa.service';
+import { reconcileInventory } from '../services/reconciliation.service';
 import { respondWithDomainError } from '../errors/domain.error';
 import {
   createManualJournal, submitJournal, approveJournal,
@@ -173,6 +174,21 @@ router.delete('/coa/:id', authMiddleware, requirePermission('finance.coa', 'deac
     res.json({ success: true, deactivated: true, account_code: account.account_code });
   } catch (error) {
     res.status(500).json({ error: 'Failed to deactivate account' });
+  }
+});
+
+// GET /gl/reconciliation/inventory
+// Compares what the shelf holds, what the cost layers say it is worth, and what the ledger
+// carries on the inventory control accounts. A difference here means one of the three code
+// paths wrote something the others did not.
+router.get('/reconciliation/inventory', authMiddleware, requirePermission('finance.general-ledger', 'report'), async (req: Request, res: Response) => {
+  try {
+    const asOf = typeof req.query.as_of === 'string' ? req.query.as_of : undefined;
+    const result = await reconcileInventory(pool, asOf);
+    res.status(result.balanced ? 200 : 409).json({ success: result.balanced, data: result });
+  } catch (error) {
+    console.error('Inventory reconciliation failed:', error);
+    res.status(500).json({ error: 'Failed to reconcile inventory' });
   }
 });
 
