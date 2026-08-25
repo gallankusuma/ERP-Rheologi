@@ -53,7 +53,15 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('Migration runner failed:', err);
-  process.exit(1);
-});
+// Only when this file is the program being run.
+//
+// Without the guard, `require`-ing this module applies migrations as a side effect. That is
+// how a deploy pre-flight check -- which only meant to ask "can node load this file?" -- ran a
+// real migration against the production database. Applying DDL has to be something you ask
+// for, never something that happens because a file was loaded.
+if (require.main === module) {
+  main().catch(err => {
+    console.error('Migration runner failed:', err);
+    process.exit(1);
+  });
+}
