@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
 import { lockPostingPeriod } from '../services/fiscal-period.service';
 import { resolveAccountByRole } from '../services/account-role.service';
+import { assertClassificationEditable } from '../services/coa.service';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -189,6 +190,38 @@ async function main() {
       { warehouseId: 3 },
       'ACCOUNT_ROLE_NOT_FOUND'
     );
+    // an account's classification decides where history lands in a report, so it freezes
+    // once the account carries posted entries
+    await conn.query(
+      `CREATE TABLE journal_entries (id INT PRIMARY KEY AUTO_INCREMENT, status VARCHAR(20)) ENGINE=InnoDB`
+    );
+    await conn.query(
+      `CREATE TABLE journal_lines (id INT PRIMARY KEY AUTO_INCREMENT, journal_entry_id INT, account_id INT) ENGINE=InnoDB`
+    );
+
+    const unused = { id: 1, account_code: '1140', account_type: 'asset', normal_balance: 'debit', is_header: 0, parent_id: null };
+    await assertClassificationEditable(conn, unused, { account_type: 'expense' });
+    record('an unused account may be reclassified', true, 'no posted lines, change allowed');
+
+    await conn.query(`INSERT INTO journal_entries (id, status) VALUES (1, 'posted')`);
+    await conn.query(`INSERT INTO journal_lines (journal_entry_id, account_id) VALUES (1, 1)`);
+
+    await assertClassificationEditable(conn, unused, { account_type: 'asset', normal_balance: 'debit' });
+    record('an unchanged classification is not blocked', true, 'same values pass through');
+
+    for (const [label, change] of [
+      ['account type', { account_type: 'expense' }],
+      ['normal balance', { normal_balance: 'credit' }],
+      ['header flag', { is_header: 1 }],
+      ['parent', { parent_id: 9 }],
+    ] as Array<[string, any]>) {
+      try {
+        await assertClassificationEditable(conn, unused, change);
+        record(`changing the ${label} of a used account is refused`, false, 'it was allowed');
+      } catch (err: any) {
+        record(`changing the ${label} of a used account is refused`, err.code === 'COA_IN_USE', `${err.code} (${err.httpStatus})`);
+      }
+    }
   } catch (err: any) {
     record('finance config check completed without unexpected error', false, err.message);
   } finally {

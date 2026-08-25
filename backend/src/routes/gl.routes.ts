@@ -1,7 +1,9 @@
 import express, { Request, Response } from 'express';
-import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
+import pool, { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
+import { assertClassificationEditable } from '../services/coa.service';
+import { respondWithDomainError } from '../errors/domain.error';
 import {
   createManualJournal, submitJournal, approveJournal,
   postJournal, reverseJournal
@@ -79,9 +81,20 @@ router.get('/coa/:id', authMiddleware, requirePermission('finance.coa', 'view'),
 router.post('/coa', authMiddleware, requirePermission('finance.coa', 'create'), async (req: Request, res: Response) => {
   try {
     const { account_code, account_name, account_type, parent_id, level, is_header, normal_balance,
-            description, currency, is_control_account, control_subledger, financial_statement_section } = req.body;
+            description, currency, is_control_account, control_subledger, financial_statement_section,
+            opening_balance } = req.body;
     if (!account_code || !account_name || !account_type || !normal_balance) {
       return res.status(422).json({ error: 'account_code, account_name, account_type, and normal_balance are required', code: 'VALIDATION_ERROR' });
+    }
+
+    // Creating an account never moved money, but the form offered an opening balance and the
+    // route silently dropped it, so the caller was told the value had been applied when it
+    // had not. An opening balance belongs in an approved journal.
+    if (opening_balance !== undefined && Number(opening_balance) !== 0) {
+      return res.status(422).json({
+        error: 'An opening balance is an accounting entry, not an account attribute. Create the account, then post an opening journal.',
+        code: 'OPENING_BALANCE_NOT_ACCEPTED',
+      });
     }
 
     const existing = await dbGet('SELECT id FROM chart_of_accounts WHERE account_code = ?', [account_code]);
@@ -108,16 +121,35 @@ router.post('/coa', authMiddleware, requirePermission('finance.coa', 'create'), 
 // PUT /gl/coa/:id
 router.put('/coa/:id', authMiddleware, requirePermission('finance.coa', 'update'), async (req: Request, res: Response) => {
   try {
-    const { account_name, account_type, parent_id, level, is_header, normal_balance, description, is_active, currency } = req.body;
+    const { account_name, account_type, parent_id, level, is_header, normal_balance, description, is_active, currency, opening_balance } = req.body;
+
+    if (opening_balance !== undefined && Number(opening_balance) !== 0) {
+      return res.status(422).json({
+        error: 'An opening balance is an accounting entry, not an account attribute. Post an opening journal instead.',
+        code: 'OPENING_BALANCE_NOT_ACCEPTED',
+      });
+    }
+
+    const current = await dbGet('SELECT * FROM chart_of_accounts WHERE id = ?', [req.params.id]) as any;
+    if (!current) return res.status(404).json({ error: 'Account not found', code: 'ACCOUNT_NOT_FOUND' });
+
+    // classification is frozen once the account carries posted entries
+    await assertClassificationEditable(pool, current, { account_type, normal_balance, is_header, parent_id });
+
+    // every field is optional: omitting one must leave it alone rather than clear it
     await dbRun(
       `UPDATE chart_of_accounts SET account_name = COALESCE(?, account_name), account_type = COALESCE(?, account_type),
-       parent_id = ?, level = COALESCE(?, level), is_header = COALESCE(?, is_header),
-       normal_balance = COALESCE(?, normal_balance), description = ?, is_active = COALESCE(?, is_active),
+       parent_id = COALESCE(?, parent_id), level = COALESCE(?, level), is_header = COALESCE(?, is_header),
+       normal_balance = COALESCE(?, normal_balance), description = COALESCE(?, description), is_active = COALESCE(?, is_active),
        currency = COALESCE(?, currency) WHERE id = ?`,
-      [account_name, account_type, parent_id !== undefined ? parent_id : null, level, is_header, normal_balance, description, is_active, currency, req.params.id]
+      [
+        account_name ?? null, account_type ?? null, parent_id ?? null, level ?? null, is_header ?? null,
+        normal_balance ?? null, description ?? null, is_active ?? null, currency ?? null, req.params.id,
+      ]
     );
     res.json({ success: true });
   } catch (error) {
+    if (respondWithDomainError(error, res)) return;
     res.status(500).json({ error: 'Failed to update account' });
   }
 });

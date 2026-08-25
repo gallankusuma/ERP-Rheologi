@@ -516,10 +516,6 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <input v-model="coaForm.description" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
           </div>
-          <div v-if="!editingCoaId">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Opening Balance</label>
-            <input v-model.number="coaForm.opening_balance" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-          </div>
         </div>
         <div class="px-6 py-4 border-t flex justify-end gap-3">
           <button @click="showCoaModal = false" class="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
@@ -726,7 +722,7 @@ const editingCoaId = ref<number | null>(null);
 const coaForm = reactive({
   account_code: '', account_name: '', account_type: 'asset',
   normal_balance: 'debit', level: 1, is_header: false,
-  description: '', opening_balance: 0
+  description: ''
 });
 
 const filteredCOA = computed(() => {
@@ -756,11 +752,11 @@ const openCoaModal = (account?: any) => {
       account_code: account.account_code, account_name: account.account_name,
       account_type: account.account_type, normal_balance: account.normal_balance,
       level: account.level, is_header: !!account.is_header,
-      description: account.description || '', opening_balance: account.opening_balance || 0
+      description: account.description || ''
     });
   } else {
     editingCoaId.value = null;
-    Object.assign(coaForm, { account_code: '', account_name: '', account_type: 'asset', normal_balance: 'debit', level: 1, is_header: false, description: '', opening_balance: 0 });
+    Object.assign(coaForm, { account_code: '', account_name: '', account_type: 'asset', normal_balance: 'debit', level: 1, is_header: false, description: '' });
   }
   showCoaModal.value = true;
 };
