@@ -31,11 +31,8 @@
         <button @click="filterStatus = 'all'" :class="filterStatus === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'" class="px-4 py-2 rounded-lg font-medium">
           All Payments
         </button>
-        <button @click="filterStatus = 'pending'" :class="filterStatus === 'pending' ? 'bg-yellow-600 text-white' : 'bg-gray-200 text-gray-700'" class="px-4 py-2 rounded-lg font-medium">
-          Pending
-        </button>
-        <button @click="filterStatus = 'paid'" :class="filterStatus === 'paid' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'" class="px-4 py-2 rounded-lg font-medium">
-          Paid
+        <button @click="filterStatus = 'received'" :class="filterStatus === 'received' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'" class="px-4 py-2 rounded-lg font-medium">
+          Received
         </button>
       </div>
       <button @click="showRecordPaymentModal = true" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
@@ -82,9 +79,6 @@
             <td class="px-6 py-4 whitespace-nowrap text-sm">
               <button @click="viewPayment(payment)" class="text-blue-600 hover:text-blue-800 mr-3">
                 👁️ View
-              </button>
-              <button v-if="payment.status === 'pending'" @click="confirmPayment(payment)" class="text-green-600 hover:text-green-800">
-                ✅ Confirm
               </button>
             </td>
           </tr>
@@ -253,19 +247,6 @@ const savePayment = async () => {
   }
 };
 
-const confirmPayment = async (payment: Payment) => {
-  if (confirm(`Confirm payment of $${payment.amount}?`)) {
-    try {
-      await api.put(`/sales/payments/${payment.id}/confirm`);
-      await loadPayments();
-      await loadSummary();
-      alert('Payment confirmed!');
-    } catch (error) {
-      console.error('Failed to confirm payment:', error);
-      alert('Failed to confirm payment');
-    }
-  }
-};
 
 const viewPayment = (payment: Payment) => {
   alert(`Payment Details:\n\nInvoice: ${payment.invoice_number}\nAmount: $${payment.amount}\nMethod: ${payment.payment_method}\nReference: ${payment.reference_number || 'N/A'}`);

@@ -3,6 +3,7 @@ import { dbAll, dbGet, dbRun } from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requirePermission } from '../middleware/permission';
 import { postSalesReturn } from '../services/returns.service';
+import { postCustomerReceipt } from '../services/receivables.service';
 import { respondWithDomainError } from '../errors/domain.error';
 
 const router = Router();
@@ -619,12 +620,17 @@ router.post('/orders', authMiddleware, requirePermission('crm.sales', 'create'),
 // GET /payments - List all payments
 router.get('/payments', authMiddleware, requirePermission('crm.sales', 'view'), async (_req: Request, res: Response) => {
   try {
+    // The table is `invoices`; `sales_invoices` never existed, which is why every call to
+    // this endpoint returned 500. What has been settled lives on the receivable, not on the
+    // invoice, so it is read from there rather than from a column that does not exist.
     const payments = await dbAll(`
       SELECT sp.*, c.name as customer_name,
-             si.invoice_number
+             i.invoice_number, i.total_amount AS invoice_amount,
+             ar.paid_amount AS invoice_paid_amount
       FROM sales_payments sp
       LEFT JOIN customers c ON sp.customer_id = c.id
-      LEFT JOIN sales_invoices si ON sp.invoice_id = si.id
+      LEFT JOIN invoices i ON sp.invoice_id = i.id
+      LEFT JOIN accounts_receivable ar ON ar.invoice_id = sp.invoice_id AND ar.superseded_seq = 0
       ORDER BY sp.payment_date DESC
     `, []);
     res.json(payments);
@@ -637,21 +643,36 @@ router.get('/payments', authMiddleware, requirePermission('crm.sales', 'view'), 
 // POST /payments - Record a payment
 router.post('/payments', authMiddleware, requirePermission('crm.sales', 'create'), async (req: Request, res: Response) => {
   try {
-    const { invoice_id, customer_id, amount, payment_date, payment_method, reference_number, notes } = req.body;
-    const result = await dbRun(
-      'INSERT INTO sales_payments (invoice_id, customer_id, payment_date, amount, payment_method, reference_number, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [invoice_id, customer_id, payment_date, amount, payment_method || 'bank_transfer', reference_number || null, notes || null, 'confirmed']
-    );
-    // update invoice paid amount
-    if (invoice_id) {
-      await dbRun(`
-        UPDATE sales_invoices SET paid_amount = COALESCE(paid_amount, 0) + ?,
-        status = CASE WHEN COALESCE(paid_amount, 0) + ? >= total_amount THEN 'paid' ELSE 'partial' END
-        WHERE id = ?
-      `, [amount, amount, invoice_id]);
+    const { invoice_id, amount, payment_date, reference_number, idempotency_key } = req.body;
+    if (!invoice_id) {
+      return res.status(422).json({ error: 'invoice_id is required', code: 'VALIDATION_ERROR' });
     }
-    res.json({ id: result.insertId, message: 'Payment recorded' });
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(422).json({ error: 'A positive amount is required', code: 'VALIDATION_ERROR' });
+    }
+
+    const receiptDate = (payment_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+
+    // This used to insert the payment and then update a table that does not exist, with no
+    // transaction around the two: the row landed, the update threw, and the caller saw a 500
+    // over a payment that had already been recorded and never reached the ledger. Receipts now
+    // go through the posting service, which writes the payment and its journal together.
+    const result = await postCustomerReceipt({
+      invoiceId: Number(invoice_id),
+      amount,
+      receiptDate,
+      reference: reference_number || null,
+      // Derived from the payment itself when the caller sends none, so a double-click settles
+      // once. Never a timestamp: that would make every retry look like a new payment.
+      idempotencyKey: String(
+        idempotency_key || `sales-receipt-${invoice_id}-${receiptDate}-${amount}-${reference_number || 'noref'}`
+      ),
+      userId: (req as any).user?.userId,
+    });
+
+    res.json({ id: result.payment_id, journal_id: result.journal_id, message: 'Payment recorded' });
   } catch (error) {
+    if (respondWithDomainError(error, res)) return;
     console.error('Error recording payment:', error);
     res.status(500).json({ error: 'Failed to record payment' });
   }
@@ -661,8 +682,19 @@ router.post('/payments', authMiddleware, requirePermission('crm.sales', 'create'
 router.get('/payments/summary', authMiddleware, requirePermission('crm.sales', 'view'), async (_req: Request, res: Response) => {
   try {
     const totalReceived = await dbGet('SELECT COALESCE(SUM(amount), 0) as total FROM sales_payments WHERE status = ?', ['confirmed']) as any;
-    const pendingInvoices = await dbGet("SELECT COUNT(*) as count, COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as total FROM sales_invoices WHERE status IN ('sent', 'partial')") as any;
-    const overdueInvoices = await dbGet("SELECT COUNT(*) as count FROM sales_invoices WHERE status IN ('sent', 'partial') AND due_date < CURDATE()") as any;
+    // Outstanding is what the receivable still says is owed - invoiced, less what has been
+    // received, less any credit note - not a paid_amount column on a table that never existed.
+    const pendingInvoices = await dbGet(`
+      SELECT COUNT(*) as count,
+             COALESCE(SUM(amount - COALESCE(paid_amount, 0) - COALESCE(credit_note_amount, 0)), 0) as total
+        FROM accounts_receivable
+       WHERE superseded_seq = 0
+         AND (amount - COALESCE(paid_amount, 0) - COALESCE(credit_note_amount, 0)) > 0`) as any;
+    const overdueInvoices = await dbGet(`
+      SELECT COUNT(*) as count FROM accounts_receivable
+       WHERE superseded_seq = 0
+         AND (amount - COALESCE(paid_amount, 0) - COALESCE(credit_note_amount, 0)) > 0
+         AND due_date IS NOT NULL AND due_date < CURDATE()`) as any;
     res.json({
       total_received: Number(totalReceived?.total || 0),
       pending_count: pendingInvoices?.count || 0,

@@ -279,6 +279,42 @@ async function main() {
        VALUES (1, 1, 1, 4, 1, 10000, 1)`
     );
 
+    // These two returned 500 on every call for months, because they queried a table named
+    // sales_invoices that has never existed. Nothing failed loudly enough to be noticed, so
+    // they are asserted here: a screen nobody tests is a screen that quietly stops working.
+    const paymentsList = await call('GET', '/sales/payments', { token: boss });
+    record(
+      'the payments list loads instead of failing',
+      paymentsList.status === 200 && Array.isArray(paymentsList.body),
+      `HTTP ${paymentsList.status}`
+    );
+
+    const paymentsSummary = await call('GET', '/sales/payments/summary', { token: boss });
+    record(
+      'the payments summary loads and reports what is still owed',
+      paymentsSummary.status === 200 && typeof paymentsSummary.body?.pending_amount === 'number',
+      `HTTP ${paymentsSummary.status}, outstanding ${paymentsSummary.body?.pending_amount}`
+    );
+
+    // recording a receipt used to insert the payment and then fail, leaving money recorded
+    // with no journal behind it; now it is refused outright when there is nothing to receive against
+    const orphanPayment = await call('POST', '/sales/payments', {
+      token: boss,
+      body: { invoice_id: 999999, amount: 1000, payment_date: '2026-03-01' },
+    });
+    record(
+      'a receipt against an invoice with no receivable is refused, not half-recorded',
+      orphanPayment.status === 404 && orphanPayment.body?.code === 'AR_NOT_FOUND',
+      `HTTP ${orphanPayment.status} ${orphanPayment.body?.code || ''}`
+    );
+
+    const [strayPayments]: any = await conn.query(`SELECT COUNT(*) AS n FROM sales_payments`);
+    record(
+      'and it leaves no payment row behind',
+      Number(strayPayments[0].n) === 0,
+      `${strayPayments[0].n} payment row(s)`
+    );
+
     const dReturnable = await call('GET', '/sales/deliveries/1/returnable', { token: boss });
     const dline = dReturnable.body?.data?.lines?.[0];
     record(
