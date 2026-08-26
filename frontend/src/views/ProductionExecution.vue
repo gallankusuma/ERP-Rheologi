@@ -182,6 +182,10 @@
         </select>
         <input v-model="spkpSearch" type="text" placeholder="Cari nomor, operator, catatan..."
           class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+        <button @click="showSpkpStages = true"
+          class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50 transition-colors">
+          Kolom
+        </button>
         <select v-model="spkpSort" class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
           <option value="date">Tanggal</option>
           <option value="planned">Qty terbesar</option>
@@ -469,6 +473,68 @@
       </div>
     </div>
 
+    <!-- Board columns — the Stage Manager the Leads pipeline has, for SPKP -->
+    <div v-if="showSpkpStages" class="fixed inset-0 z-[70] flex items-center justify-center bg-black/50"
+      @click.self="showSpkpStages = false">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+        <div class="px-5 py-4 border-b flex justify-between items-center">
+          <div>
+            <h3 class="font-bold text-gray-900">Kolom Papan SPKP</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Ganti nama, warna, urutan, atau tambah kolom sendiri</p>
+          </div>
+          <button @click="showSpkpStages = false" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-5 space-y-2">
+          <div v-for="(st, idx) in spkpStages" :key="st.id"
+            class="flex items-center gap-2 p-2.5 border border-gray-200 rounded-lg">
+            <div class="flex flex-col">
+              <button @click="moveSpkpStage(idx, -1)" :disabled="idx === 0"
+                class="text-xs leading-none disabled:opacity-20 hover:text-teal-600">&#9650;</button>
+              <button @click="moveSpkpStage(idx, 1)" :disabled="idx === spkpStages.length - 1"
+                class="text-xs leading-none disabled:opacity-20 hover:text-teal-600">&#9660;</button>
+            </div>
+            <input type="color" v-model="st.color" @change="saveSpkpStage(st)"
+              class="w-8 h-8 rounded cursor-pointer border border-gray-200" />
+            <input type="text" v-model="st.name" @blur="saveSpkpStage(st)"
+              class="flex-1 px-3 py-1.5 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-teal-300 focus:outline-none" />
+            <span class="text-[10px] text-gray-400 font-mono">{{ st.stage_key }}</span>
+            <span v-if="st.is_system" class="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-500">bawaan</span>
+            <button v-else @click="deleteSpkpStage(st)"
+              class="text-gray-300 hover:text-red-500 text-lg leading-none px-1">&times;</button>
+          </div>
+
+          <div v-if="!spkpStages.length" class="text-center py-6 text-gray-400 text-sm">Belum ada kolom</div>
+
+          <!-- add -->
+          <div class="flex items-center gap-2 pt-3 mt-3 border-t">
+            <input type="color" v-model="stageForm.color"
+              class="w-8 h-8 rounded cursor-pointer border border-gray-200" />
+            <input type="text" v-model="stageForm.name" placeholder="Nama kolom baru" @keyup.enter="addSpkpStage"
+              class="flex-1 px-3 py-1.5 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-teal-300 focus:outline-none" />
+            <button @click="addSpkpStage" :disabled="!stageForm.name.trim()"
+              class="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-40">
+              Tambah
+            </button>
+          </div>
+
+          <div v-if="stageError" class="text-sm bg-red-50 border border-red-200 text-red-800 rounded-md px-3 py-2">
+            {{ stageError }}
+          </div>
+
+          <p class="text-[11px] text-gray-400 pt-1">
+            Mengganti nama kolom aman — kartu menempel pada kunci kolom, bukan namanya. Kolom yang
+            masih berisi SPKP tidak bisa dihapus sampai isinya dipindahkan.
+          </p>
+        </div>
+
+        <div class="px-5 py-4 border-t flex justify-end">
+          <button @click="showSpkpStages = false"
+            class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Tutup</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Regenerate confirm -->
     <div v-if="showRegenConfirm" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" @click.self="showRegenConfirm = false">
       <div class="bg-white rounded-xl shadow-2xl w-[380px] p-6 text-center">
@@ -582,7 +648,7 @@ const qcCheckpoints = ref<any[]>([]);
 const qcForm = ref({ checkpoint_name: '', is_mandatory: true });
 const processLogs = ref<any[]>([]);
 
-onMounted(() => { store.fetchExecution(); });
+onMounted(() => { store.fetchExecution(); fetchSpkpStages(); });
 
 const isStartable = (s: string) => ['released', 'RELEASED', 'Released'].includes(s);
 
@@ -701,11 +767,78 @@ const spkpAddForm = ref({ schedule_date: '', planned_qty: 0 });
 const spkpTotalPlanned = computed(() => spkpList.value.reduce((sum, s) => sum + Number(s.planned_qty || 0), 0));
 const spkpTotalActual = computed(() => spkpList.value.reduce((sum, s) => sum + Number(s.actual_qty || 0), 0));
 
-const spkpKanbanCols = [
-  { key: 'draft', label: 'Draft', color: '#6b7280' },
-  { key: 'released', label: 'Released', color: '#3b82f6' },
-  { key: 'completed', label: 'Completed', color: '#10b981' },
-];
+// The board's columns come from the server so the plant can shape them. Falls back to the
+// three built-in ones if the call fails, because a board with no columns shows nothing at all.
+interface SpkpStage { id: number; stage_key: string; name: string; color: string; sort_order: number; is_system: number }
+const spkpStages = ref<SpkpStage[]>([]);
+const spkpKanbanCols = computed(() =>
+  spkpStages.value.map(st => ({ key: st.stage_key, label: st.name, color: st.color }))
+);
+
+const fetchSpkpStages = async () => {
+  try {
+    const res = await api.get('/production/spkp-stages');
+    spkpStages.value = res.data?.data || [];
+  } catch {
+    spkpStages.value = [
+      { id: 0, stage_key: 'draft', name: 'Draft', color: '#9ca3af', sort_order: 0, is_system: 1 },
+      { id: 0, stage_key: 'released', name: 'Released', color: '#3b82f6', sort_order: 1, is_system: 1 },
+      { id: 0, stage_key: 'completed', name: 'Completed', color: '#22c55e', sort_order: 2, is_system: 1 },
+    ];
+  }
+};
+
+const showSpkpStages = ref(false);
+const stageForm = ref({ name: '', color: '#8b5cf6' });
+const stageError = ref('');
+
+const addSpkpStage = async () => {
+  stageError.value = '';
+  if (!stageForm.value.name.trim()) return;
+  try {
+    await api.post('/production/spkp-stages', { name: stageForm.value.name.trim(), color: stageForm.value.color });
+    stageForm.value = { name: '', color: '#8b5cf6' };
+    await fetchSpkpStages();
+  } catch (e: any) {
+    stageError.value = e?.response?.data?.error || 'Kolom gagal ditambahkan.';
+  }
+};
+
+const saveSpkpStage = async (st: SpkpStage) => {
+  stageError.value = '';
+  try {
+    await api.put(`/production/spkp-stages/${st.id}`, { name: st.name, color: st.color });
+    await fetchSpkpStages();
+  } catch (e: any) {
+    stageError.value = e?.response?.data?.error || 'Kolom gagal disimpan.';
+  }
+};
+
+const moveSpkpStage = async (idx: number, direction: -1 | 1) => {
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= spkpStages.value.length) return;
+  const arr = [...spkpStages.value];
+  [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+  arr.forEach((st, i) => { st.sort_order = i; });
+  spkpStages.value = arr;
+  try {
+    await api.put('/production/spkp-stages/reorder', { order: arr.map(st => ({ id: st.id, sort_order: st.sort_order })) });
+  } catch (e: any) {
+    stageError.value = e?.response?.data?.error || 'Urutan gagal disimpan.';
+    await fetchSpkpStages();
+  }
+};
+
+const deleteSpkpStage = async (st: SpkpStage) => {
+  stageError.value = '';
+  try {
+    await api.delete(`/production/spkp-stages/${st.id}`);
+    await fetchSpkpStages();
+  } catch (e: any) {
+    // the server refuses a column that still holds cards, and says how many
+    stageError.value = e?.response?.data?.error || 'Kolom gagal dihapus.';
+  }
+};
 
 // Board controls, matching the Leads pipeline: the same list/kanban switch, search, status
 // filter and sort, so moving between the two screens does not mean learning a second set of
@@ -743,9 +876,9 @@ const isSpkpLate = (s: any) =>
   s.status !== 'completed';
 
 const spkpColColor = (status: string) =>
-  spkpKanbanCols.find(c => c.key === status)?.color || '#9ca3af';
+  spkpKanbanCols.value.find((c: any) => c.key === status)?.color || '#9ca3af';
 const spkpColLabel = (status: string) =>
-  spkpKanbanCols.find(c => c.key === status)?.label || status;
+  spkpKanbanCols.value.find((c: any) => c.key === status)?.label || status;
 
 const openSpkpDetail = (s: any) => { spkpDetail.value = s; };
 const closeSpkpDetail = () => { spkpDetail.value = null; };

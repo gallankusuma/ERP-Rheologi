@@ -1660,4 +1660,334 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
   }
 });
 
+// -- SPKP (Surat Perintah Kerja Produksi) --
+
+// list SPKP for a WO
+// ===== SPKP BOARD COLUMNS =====
+//
+// The columns of the execution board belong to the user. spkp.status stores a stage_key, not
+// the label, so renaming a column moves nothing and strands nothing.
+
+/** a stable key from a label: lowercase, words joined by underscores, nothing else */
+const toStageKey = (name: string) =>
+  String(name).toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
+
+router.get(
+  '/spkp-stages',
+  authMiddleware,
+  requirePermission('production.execution', 'view'),
+  async (_req: Request, res: Response) => {
+    try {
+      const stages = await dbAll('SELECT * FROM spkp_stages ORDER BY sort_order ASC, id ASC');
+      res.json({ success: true, data: stages });
+    } catch (error) {
+      console.error('Error fetching SPKP stages:', error);
+      res.status(500).json({ error: 'Failed to fetch SPKP stages' });
+    }
+  }
+);
+
+router.post(
+  '/spkp-stages',
+  authMiddleware,
+  requirePermission('production.execution', 'configure'),
+  async (req: Request, res: Response) => {
+    try {
+      const { name, color } = req.body;
+      const label = String(name || '').trim();
+      if (!label) return res.status(422).json({ error: 'Nama kolom wajib diisi', code: 'VALIDATION_ERROR' });
+
+      const key = toStageKey(label);
+      if (!key) {
+        return res.status(422).json({
+          error: 'Nama kolom harus mengandung huruf atau angka', code: 'VALIDATION_ERROR',
+        });
+      }
+
+      const clash = await dbGet('SELECT id, name FROM spkp_stages WHERE stage_key = ?', [key]) as any;
+      if (clash) {
+        return res.status(409).json({
+          error: `Kolom "${clash.name}" sudah memakai nama yang sama`, code: 'STAGE_EXISTS',
+        });
+      }
+
+      const last = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM spkp_stages') as any;
+      const result = await dbRun(
+        'INSERT INTO spkp_stages (stage_key, name, color, sort_order, is_system) VALUES (?, ?, ?, ?, 0)',
+        [key, label, color || '#6b7280', Number(last?.max_order ?? -1) + 1]
+      );
+      const created = await dbGet('SELECT * FROM spkp_stages WHERE id = ?', [result.insertId]);
+      res.status(201).json({ success: true, data: created });
+    } catch (error) {
+      console.error('Error creating SPKP stage:', error);
+      res.status(500).json({ error: 'Failed to create SPKP stage' });
+    }
+  }
+);
+
+// Only the label and the colour. stage_key is what the cards point at and never changes, which
+// is what makes renaming safe.
+router.put(
+  '/spkp-stages/:id',
+  authMiddleware,
+  requirePermission('production.execution', 'configure'),
+  async (req: Request, res: Response) => {
+    try {
+      const { name, color } = req.body;
+      const fields: string[] = [];
+      const values: any[] = [];
+      if (name !== undefined) {
+        const label = String(name).trim();
+        if (!label) return res.status(422).json({ error: 'Nama kolom wajib diisi', code: 'VALIDATION_ERROR' });
+        fields.push('name = ?');
+        values.push(label);
+      }
+      if (color !== undefined) { fields.push('color = ?'); values.push(color); }
+      if (!fields.length) return res.status(422).json({ error: 'Tidak ada yang diubah', code: 'VALIDATION_ERROR' });
+
+      values.push(req.params.id);
+      await dbRun(`UPDATE spkp_stages SET ${fields.join(', ')} WHERE id = ?`, values);
+      const updated = await dbGet('SELECT * FROM spkp_stages WHERE id = ?', [req.params.id]);
+      if (!updated) return res.status(404).json({ error: 'Kolom tidak ditemukan' });
+      res.json({ success: true, data: updated });
+    } catch (error) {
+      console.error('Error updating SPKP stage:', error);
+      res.status(500).json({ error: 'Failed to update SPKP stage' });
+    }
+  }
+);
+
+router.put(
+  '/spkp-stages/reorder',
+  authMiddleware,
+  requirePermission('production.execution', 'configure'),
+  async (req: Request, res: Response) => {
+    try {
+      const { order } = req.body as { order: Array<{ id: number; sort_order: number }> };
+      if (!Array.isArray(order)) {
+        return res.status(422).json({ error: 'order wajib berupa array', code: 'VALIDATION_ERROR' });
+      }
+      for (const row of order) {
+        await dbRun('UPDATE spkp_stages SET sort_order = ? WHERE id = ?', [Number(row.sort_order), Number(row.id)]);
+      }
+      const stages = await dbAll('SELECT * FROM spkp_stages ORDER BY sort_order ASC, id ASC');
+      res.json({ success: true, data: stages });
+    } catch (error) {
+      console.error('Error reordering SPKP stages:', error);
+      res.status(500).json({ error: 'Failed to reorder SPKP stages' });
+    }
+  }
+);
+
+// Deleting a column the cards still point at would make them disappear from the board while
+// staying in the database, so it is refused while anything is in it. The three original
+// columns stay because existing rows were written against them.
+router.delete(
+  '/spkp-stages/:id',
+  authMiddleware,
+  requirePermission('production.execution', 'configure'),
+  async (req: Request, res: Response) => {
+    try {
+      const stage = await dbGet('SELECT * FROM spkp_stages WHERE id = ?', [req.params.id]) as any;
+      if (!stage) return res.status(404).json({ error: 'Kolom tidak ditemukan' });
+
+      if (Number(stage.is_system) === 1) {
+        return res.status(409).json({
+          error: `"${stage.name}" adalah kolom bawaan dan tidak bisa dihapus. Ganti nama atau warnanya kalau perlu.`,
+          code: 'STAGE_IS_SYSTEM',
+        });
+      }
+
+      const inUse = await dbGet(
+        'SELECT COUNT(*) AS n FROM spkp WHERE status = ?', [stage.stage_key]
+      ) as any;
+      if (Number(inUse?.n || 0) > 0) {
+        return res.status(409).json({
+          error: `Masih ada ${inUse.n} SPKP di kolom "${stage.name}". Pindahkan dulu sebelum kolomnya dihapus.`,
+          code: 'STAGE_NOT_EMPTY',
+          data: { count: Number(inUse.n) },
+        });
+      }
+
+      await dbRun('DELETE FROM spkp_stages WHERE id = ?', [req.params.id]);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting SPKP stage:', error);
+      res.status(500).json({ error: 'Failed to delete SPKP stage' });
+    }
+  }
+);
+
+router.get('/work-orders/:woId/spkp', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const rows = await dbAll(
+      `SELECT s.*, w.wo_number, w.quantity AS wo_quantity,
+              p.name AS product_name, p.sku AS product_sku,
+              lp.name AS line_process_name
+         FROM spkp s
+         JOIN work_orders w ON w.id = s.wo_id
+         LEFT JOIN products p ON p.id = w.product_id
+         LEFT JOIN line_processes lp ON lp.id = w.line_process_id
+        WHERE s.wo_id = ?
+        ORDER BY s.schedule_date`,
+      [req.params.woId]
+    );
+    res.json({ data: rows });
+  } catch (error) {
+    console.error('Error fetching SPKP:', error);
+    res.status(500).json({ error: 'Failed to fetch SPKP' });
+  }
+});
+
+// auto-generate SPKP from WO date range
+router.post('/work-orders/:woId/spkp/generate', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const woId = Number(req.params.woId);
+    const wo = await dbGet(
+      'SELECT id, wo_number, quantity, scheduled_start, scheduled_end FROM work_orders WHERE id = ?',
+      [woId]
+    ) as any;
+    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+    if (!wo.scheduled_start || !wo.scheduled_end) {
+      return res.status(400).json({ error: 'WO must have scheduled_start and scheduled_end' });
+    }
+
+    // collect working days (skip Sat=6, Sun=0)
+    const start = new Date(wo.scheduled_start);
+    const end = new Date(wo.scheduled_end);
+    const workingDays: string[] = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6) {
+        workingDays.push(d.toISOString().slice(0, 10));
+      }
+    }
+    if (workingDays.length === 0) {
+      return res.status(400).json({ error: 'No working days in WO date range' });
+    }
+
+    // distribute qty evenly
+    const totalQty = Number(wo.quantity) || 0;
+    const perDay = Math.floor((totalQty / workingDays.length) * 100) / 100;
+    const remainder = Math.round((totalQty - perDay * workingDays.length) * 100) / 100;
+
+    const userId = (req as any).user?.userId || null;
+    const existing = await dbAll('SELECT id FROM spkp WHERE wo_id = ?', [woId]) as any[];
+    if (existing.length > 0) {
+      return res.status(400).json({ error: `SPKP sudah ada (${existing.length} records). Hapus dulu jika ingin generate ulang.` });
+    }
+
+    const inserted: any[] = [];
+    for (let i = 0; i < workingDays.length; i++) {
+      const dateStr = workingDays[i];
+      const qty = i === workingDays.length - 1 ? perDay + remainder : perDay;
+      const seq = String(i + 1).padStart(3, '0');
+      const spkpNumber = `SPKP-${dateStr.replace(/-/g, '')}-${woId}-${seq}`;
+
+      await dbRun(
+        `INSERT INTO spkp (wo_id, spkp_number, schedule_date, planned_qty, status, created_by)
+         VALUES (?, ?, ?, ?, 'draft', ?)`,
+        [woId, spkpNumber, dateStr, qty, userId]
+      );
+      inserted.push({ spkp_number: spkpNumber, schedule_date: dateStr, planned_qty: qty });
+    }
+
+    res.json({ message: `${inserted.length} SPKP generated`, data: inserted });
+  } catch (error) {
+    console.error('Error generating SPKP:', error);
+    res.status(500).json({ error: 'Failed to generate SPKP' });
+  }
+});
+
+// update a single SPKP
+router.put('/spkp/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { planned_qty, actual_qty, operator_name, supervisor_name, notes, status } = req.body;
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (planned_qty !== undefined) { fields.push('planned_qty = ?'); values.push(planned_qty); }
+    if (actual_qty !== undefined) { fields.push('actual_qty = ?'); values.push(actual_qty); }
+    if (operator_name !== undefined) { fields.push('operator_name = ?'); values.push(operator_name); }
+    if (supervisor_name !== undefined) { fields.push('supervisor_name = ?'); values.push(supervisor_name); }
+    if (notes !== undefined) { fields.push('notes = ?'); values.push(notes); }
+    if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+
+    if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+    values.push(req.params.id);
+    await dbRun(`UPDATE spkp SET ${fields.join(', ')} WHERE id = ?`, values);
+
+    const updated = await dbGet('SELECT * FROM spkp WHERE id = ?', [req.params.id]);
+    res.json({ data: updated });
+  } catch (error) {
+    console.error('Error updating SPKP:', error);
+    res.status(500).json({ error: 'Failed to update SPKP' });
+  }
+});
+
+// delete single SPKP
+router.delete('/spkp/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await dbRun('DELETE FROM spkp WHERE id = ?', [req.params.id]);
+    res.json({ message: 'SPKP deleted' });
+  } catch (error) {
+    console.error('Error deleting SPKP:', error);
+    res.status(500).json({ error: 'Failed to delete SPKP' });
+  }
+});
+
+// delete all SPKP for a WO (for re-generate)
+router.delete('/work-orders/:woId/spkp', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const result = await dbRun('DELETE FROM spkp WHERE wo_id = ?', [req.params.woId]);
+    res.json({ message: 'All SPKP deleted', deleted: (result as any).changes || 0 });
+  } catch (error) {
+    console.error('Error deleting SPKP:', error);
+    res.status(500).json({ error: 'Failed to delete SPKP' });
+  }
+});
+
+// mark as printed
+router.put('/spkp/:id/print', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    await dbRun('UPDATE spkp SET printed_at = NOW() WHERE id = ?', [req.params.id]);
+    const updated = await dbGet('SELECT * FROM spkp WHERE id = ?', [req.params.id]);
+    res.json({ data: updated });
+  } catch (error) {
+    console.error('Error marking SPKP printed:', error);
+    res.status(500).json({ error: 'Failed to mark SPKP as printed' });
+  }
+});
+
+// manual create single SPKP
+router.post('/work-orders/:woId/spkp', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const woId = Number(req.params.woId);
+    const { schedule_date, planned_qty } = req.body;
+    if (!schedule_date || !planned_qty) {
+      return res.status(400).json({ error: 'schedule_date dan planned_qty wajib diisi' });
+    }
+    const userId = (req as any).user?.userId;
+    const dateStr = schedule_date.slice(0, 10);
+
+    // get next sequence
+    const existing = await dbAll('SELECT id FROM spkp WHERE wo_id = ?', [woId]) as any[];
+    const seq = String(existing.length + 1).padStart(3, '0');
+    const spkpNumber = `SPKP-${dateStr.replace(/-/g, '')}-${woId}-${seq}`;
+
+    const result = await dbRun(
+      `INSERT INTO spkp (wo_id, spkp_number, schedule_date, planned_qty, status, created_by)
+       VALUES (?, ?, ?, ?, 'draft', ?)`,
+      [woId, spkpNumber, dateStr, planned_qty, userId]
+    );
+    const insertId = (result as any).insertId;
+    const created = await dbGet('SELECT * FROM spkp WHERE id = ?', [insertId]);
+    res.json({ data: created });
+  } catch (error) {
+    console.error('Error creating SPKP:', error);
+    res.status(500).json({ error: 'Failed to create SPKP' });
+  }
+});
+
 export default router;
