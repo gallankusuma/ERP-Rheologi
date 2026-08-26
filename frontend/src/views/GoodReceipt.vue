@@ -411,9 +411,9 @@ const loadAvailablePOs = async () => {
   try {
     const response = await api.get('/procurement/purchase-orders');
     
-    // P0-1: allow partial GRN — show all approved POs that still have outstanding items
+    // only show approved POs that still have outstanding items to receive
     availablePOs.value = (response.data.data || []).filter((po: any) => {
-      return po.approval_status === 2 && po.status !== 'RECEIVED';
+      return po.approval_status === 2 && Number(po.outstanding_item_count || 0) > 0;
     });
   } catch (error) {
     console.error('Failed to load POs:', error);

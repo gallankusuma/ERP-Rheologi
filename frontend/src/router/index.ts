@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-import Dashboard from '../views/Dashboard.vue';
 import Login from '../views/Login.vue';
 import { getResourceForPath } from '../config/menuPermissions';
 
@@ -43,8 +42,8 @@ const placeholderRoutes: RouteRecordRaw[] = placeholderMeta.map((item) => ({
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'Dashboard',
-    component: Dashboard,
+    name: 'Home',
+    redirect: '/crm',
     meta: { requiresAuth: true },
   },
   {
@@ -88,7 +87,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/dashboard',
     name: 'DashboardHome',
-    component: Dashboard,
+    component: () => import('../views/Dashboard.vue'),
     meta: { requiresAuth: true },
   },
   {

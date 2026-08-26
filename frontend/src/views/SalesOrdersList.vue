@@ -797,7 +797,7 @@ const calculateOrderTotal = (order: SalesOrder) => {
   if (order.items && order.items.length > 0) {
     return order.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
   }
-  return order.total_amount || 0;
+  return Number(order.total_amount) || 0;
 };
 
 const getStatusColor = (status: string) => {

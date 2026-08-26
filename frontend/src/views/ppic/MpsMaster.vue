@@ -1245,8 +1245,6 @@ const totalDemandSum = (item: any): number => {
 
 const getBeginningInv = (item: any, weekIdx: number): number => {
   if (weekIdx === 0) {
-    // canonical FG balance from inventory_stocks only
-    // wo_actual_output is NOT added here because FG Receipt already credits inventory_stocks
     return Number(item.fg_inventory_stock) || 0;
   }
   return getEndingInv(item, weekIdx - 1);

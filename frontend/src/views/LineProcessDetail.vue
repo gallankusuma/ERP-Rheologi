@@ -86,9 +86,13 @@
               📦 Products on This Line
               <span class="text-xs text-gray-400 font-normal ml-1">— produk yang dapat diproses di mesin ini</span>
             </h2>
+            <div class="mb-2">
+              <input v-model="productSearchQ" placeholder="Cari produk..."
+                class="w-full px-3 py-2 border border-gray-200 dark:border-slate-600 dark:bg-slate-700 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            </div>
             <div class="border border-gray-200 dark:border-slate-600 rounded-lg max-h-52 overflow-y-auto bg-gray-50 dark:bg-slate-700 p-2">
-              <div v-if="bomProducts.length === 0" class="text-sm text-gray-400 text-center py-3">No BOM products found</div>
-              <label v-for="prod in bomProducts" :key="prod.id"
+              <div v-if="filteredBomProducts.length === 0" class="text-sm text-gray-400 text-center py-3">{{ productSearchQ ? 'Tidak ditemukan' : 'No BOM products found' }}</div>
+              <label v-for="prod in filteredBomProducts" :key="prod.id"
                 class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 cursor-pointer">
                 <input type="checkbox" :value="prod.id" v-model="form.product_ids"
                   class="w-4 h-4 rounded border-gray-300 accent-teal-600" />
@@ -426,6 +430,15 @@ const toastMsg = ref('');
 const activeTab = ref('general');
 const uomList = ref<any[]>([]);
 const bomProducts = ref<any[]>([]);
+const productSearchQ = ref('');
+
+const filteredBomProducts = computed(() => {
+  const q = productSearchQ.value.toLowerCase().trim();
+  if (!q) return bomProducts.value;
+  return bomProducts.value.filter(p =>
+    p.name?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q)
+  );
+});
 const documents = ref<any[]>([]);
 const steps = ref<any[]>([]);
 const editingStep = ref<any>(null);

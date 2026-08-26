@@ -65,16 +65,15 @@
         </div>
 
         <!-- ========== MAIN GRID ========== -->
-        <div v-else class="bg-white rounded-lg shadow-sm overflow-hidden">
-          <div class="overflow-x-auto">
+        <div v-else class="bg-white rounded-lg shadow-sm overflow-auto" style="max-height: calc(100vh - 160px)">
             <table class="w-full border-collapse text-sm" :style="{ minWidth: (500 + dayColumns.length * 55) + 'px' }">
               <!-- HEADER -->
-              <thead>
+              <thead class="sticky top-0 z-40">
                 <tr class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
-                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-10 sticky left-0 z-30 bg-indigo-600 text-xs">No</th>
-                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-[150px] min-w-[150px] sticky left-10 z-30 bg-indigo-600 text-xs">MACHINE</th>
-                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-[110px] min-w-[110px] sticky left-[160px] z-30 bg-indigo-600 text-xs">WORK ORDER</th>
-                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-[95px] min-w-[95px] sticky left-[270px] z-30 bg-indigo-600 text-xs">TASK</th>
+                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-10 sticky left-0 z-50 bg-indigo-600 text-xs">No</th>
+                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-[150px] min-w-[150px] sticky left-10 z-50 bg-indigo-600 text-xs">MACHINE</th>
+                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-[110px] min-w-[110px] sticky left-[160px] z-50 bg-indigo-600 text-xs">WORK ORDER</th>
+                  <th class="px-2 py-2.5 text-center border-r border-indigo-500 w-[95px] min-w-[95px] sticky left-[270px] z-50 bg-indigo-600 text-xs">TASK</th>
                   <th class="px-1 py-2.5 text-center border-r border-indigo-500 w-[55px] text-xs">REMAIN</th>
                   <th class="px-1 py-2.5 text-center border-r border-indigo-500 w-[55px] text-xs">TOTAL</th>
                   <th class="px-1 py-2.5 text-center border-r border-indigo-500 w-[35px] text-xs">UOM</th>
@@ -293,7 +292,6 @@
                 </template>
               </tbody>
             </table>
-          </div>
         </div>
       </template>
     </div>

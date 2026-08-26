@@ -477,37 +477,34 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
     let pulled = 0;
     let merged = 0;
     for (const [, group] of productMap) {
-      const soNumsStr = group.so_numbers.join(', ') || null;
       let detailId: number;
       const isExisting = existingDetailMap.has(group.product_id);
 
       if (isExisting) {
-        // merge into existing detail
         detailId = existingDetailMap.get(group.product_id)!;
-        // append so_numbers
-        if (soNumsStr) {
-          await dbRun(
-            `UPDATE mps_details SET so_numbers = CASE
-              WHEN so_numbers IS NULL OR so_numbers = '' THEN ?
-              ELSE CONCAT(so_numbers, ', ', ?)
-            END WHERE id = ?`,
-            [soNumsStr, soNumsStr, detailId]
-          );
-        }
         merged++;
       } else {
-        // create new detail
         const detailResult = await dbRun(`
           INSERT INTO mps_details (mps_header_id, product_id, bom_id, so_numbers,
             demand_qty, current_stock, batch_no, batch_qty, lead_time_weeks, status)
           VALUES (?, ?, ?, ?, ?, 0, NULL, 0, 1, 'Pending')
-        `, [id, group.product_id, group.bom_id, soNumsStr, group.total_qty]);
+        `, [id, group.product_id, group.bom_id, null, 0]);
         detailId = detailResult.insertId;
         pulled++;
       }
 
-      // insert demand source lineage records (duplicate key protection)
+      // insert demand source lineage records
+      // only qty from successfully inserted (non-duplicate) sources counts as new
+      let newQty = 0;
+      const newWeekQtyMap = new Map<string, number>();
+
       for (const src of group.sourceItems) {
+        const srcItem = allItems.find((ai: any) => ai.source_id === src.source_id && ai.source_type === (src.source_type === 'SO_ITEM' ? 'SO' : src.source_type));
+        const srcRefDate = srcItem?.ref_date ? new Date(srcItem.ref_date) : new Date(header.period_year, header.period_month - 1, 1);
+        const srcWeek = getWeekNumber(srcRefDate);
+        const srcYear = srcRefDate.getFullYear();
+        const srcWeekKey = `${srcWeek}:${srcYear}`;
+
         try {
           await dbRun(
             `INSERT INTO mps_detail_sources (mps_detail_id, source_type, so_item_id, project_id, quantity)
@@ -517,28 +514,54 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
              src.source_type === 'PROJECT' ? src.source_id : null,
              src.qty]
           );
+          // only count qty that was actually inserted (not duplicate)
+          newQty += src.qty;
+          newWeekQtyMap.set(srcWeekKey, (newWeekQtyMap.get(srcWeekKey) || 0) + src.qty);
         } catch (srcErr: any) {
-          // UNIQUE violation = demand already pulled, skip
-          if (!srcErr.message?.includes('Duplicate')) {
+          if (srcErr.message?.includes('Duplicate')) {
+            // already pulled — skip silently, don't add to newQty
+          } else {
             console.error('Error inserting demand source:', srcErr);
           }
         }
       }
 
-      // distribute SO qty to weeks
+      // skip week updates if nothing new was added
+      if (newQty <= 0) continue;
+
+      // roll past-due weeks into first week
       const firstWeekKey = `${currentWeek}:${currentYear}`;
-      for (const [wKey, wQty] of group.weekQtyMap) {
+      for (const [wKey, wQty] of newWeekQtyMap) {
         const [wStr, yStr] = wKey.split(':');
         const w = Number(wStr), y = Number(yStr);
         if (y < currentYear || (y === currentYear && w < currentWeek)) {
-          group.weekQtyMap.set(firstWeekKey, (group.weekQtyMap.get(firstWeekKey) || 0) + wQty);
-          group.weekQtyMap.delete(wKey);
+          newWeekQtyMap.set(firstWeekKey, (newWeekQtyMap.get(firstWeekKey) || 0) + wQty);
+          newWeekQtyMap.delete(wKey);
         }
       }
 
+      // update demand_qty (add only genuinely new qty)
+      await dbRun('UPDATE mps_details SET demand_qty = demand_qty + ? WHERE id = ?', [newQty, detailId]);
+
+      // rebuild so_numbers from all sources (deduplicated)
+      const allSources = await dbAll(
+        `SELECT mds.source_type, mds.so_item_id, mds.project_id,
+           CASE WHEN mds.source_type = 'SO_ITEM' THEN CONCAT('SO-', so.so_number)
+                WHEN mds.source_type = 'PROJECT' THEN CONCAT('PRJ-', cp.project_number)
+                ELSE NULL END as ref_label
+         FROM mps_detail_sources mds
+         LEFT JOIN so_items si ON si.id = mds.so_item_id
+         LEFT JOIN sales_orders so ON so.id = si.so_id
+         LEFT JOIN client_projects cp ON cp.id = mds.project_id
+         WHERE mds.mps_detail_id = ?`,
+        [detailId]
+      ) as any[];
+      const uniqueLabels = [...new Set(allSources.map((s: any) => s.ref_label).filter(Boolean))];
+      await dbRun('UPDATE mps_details SET so_numbers = ? WHERE id = ?', [uniqueLabels.join(', ') || null, detailId]);
+
       if (isExisting) {
-        // merge: update existing week data so_qty (add to existing)
-        for (const [wKey, wQty] of group.weekQtyMap) {
+        // merge: add only new qty to existing week data (not additive re-add)
+        for (const [wKey, wQty] of newWeekQtyMap) {
           if (wQty <= 0) continue;
           const [wStr, yStr] = wKey.split(':');
           const w = Number(wStr), y = Number(yStr);
@@ -566,7 +589,7 @@ router.post('/mps/:id/pull-orders', authMiddleware, requirePermission('ppic.mps'
           if (wk > 52) { wk -= 52; yr++; }
 
           const weekKey = `${wk}:${yr}`;
-          const weekQty = group.weekQtyMap.get(weekKey) || 0;
+          const weekQty = newWeekQtyMap.get(weekKey) || 0;
           await dbRun(`
             INSERT INTO mps_week_data (mps_detail_id, week_number, year, forecast_qty, so_qty, start_process_qty, fg_qty, production_qty)
             VALUES (?, ?, ?, 0, ?, 0, 0, 0)
@@ -1220,6 +1243,7 @@ router.delete('/mps/:id', authMiddleware, requirePermission('ppic.mps', 'delete'
     // Delete week data first (cascade should handle, but be safe)
     const detailIds = await dbAll('SELECT id FROM mps_details WHERE mps_header_id = ?', [id]) as any[];
     for (const d of detailIds) {
+      await dbRun('DELETE FROM mps_detail_sources WHERE mps_detail_id = ?', [d.id]);
       await dbRun('DELETE FROM mps_week_data WHERE mps_detail_id = ?', [d.id]);
     }
     await dbRun('DELETE FROM mps_details WHERE mps_header_id = ?', [id]);
@@ -1235,6 +1259,7 @@ router.delete('/mps/:id/details/:detailId', authMiddleware, requirePermission('p
     const { id, detailId } = req.params;
     const header = await dbGet('SELECT status FROM mps_headers WHERE id = ?', [id]) as any;
     if (!header || header.status !== 'Draft') return res.status(400).json({ error: 'Cannot remove' });
+    await dbRun('DELETE FROM mps_detail_sources WHERE mps_detail_id = ?', [detailId]);
     await dbRun('DELETE FROM mps_week_data WHERE mps_detail_id = ?', [detailId]);
     await dbRun('DELETE FROM mps_details WHERE id = ? AND mps_header_id = ?', [detailId, id]);
     await ppicLog(req, 'DELETE_ITEM', 'MPS_DETAIL', detailId, null, { mps_id: id });

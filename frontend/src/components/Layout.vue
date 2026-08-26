@@ -327,7 +327,7 @@ const breadcrumbs = computed(() => {
   // Auto-generate from route path
   const segments = route.path.split('/').filter(Boolean);
   if (segments.length <= 1) return [];
-  const crumbs: Array<{ label: string; route?: string }> = [{ label: 'Home', route: '/dashboard' }];
+  const crumbs: Array<{ label: string; route?: string }> = [{ label: 'Home', route: '/crm' }];
   let path = '';
   for (const seg of segments) {
     path += '/' + seg;
@@ -475,10 +475,11 @@ interface MenuItem {
   id: string;
   label: string;
   icon: string;
+  hidden?: boolean;
   submenus: Submenu[];
 }
 
-const selectedMainMenu = ref('dashboard');
+const selectedMainMenu = ref('projects');
 const selectedSubmenu = ref('');
 
 // Computed properties that always reflect current route
@@ -528,6 +529,7 @@ const mainMenus: MenuItem[] = [
     id: 'dashboard',
     label: 'Dashboard',
     icon: '📊',
+    hidden: true,
     submenus: [
       { id: 'dashboard-overview', label: 'Overview', route: '/dashboard' },
       { id: 'dashboard-production', label: 'Production KPI', route: '/dashboard/production' },
@@ -587,6 +589,7 @@ const mainMenus: MenuItem[] = [
       { id: 'stock-opname', label: 'Stock Opname', route: '/inventory/opname', name: 'InventoryOpnameReal' },
       { id: 'batch-tracking', label: 'Batch / Lot Tracking', route: '/inventory/batch-tracking', name: 'InventoryBatchTrackingReal' },
       { id: 'expiry-monitoring', label: 'Expiry Monitoring', route: '/inventory/expiry', name: 'InventoryExpiryReal' },
+      { id: 'delivery-orders', label: 'Delivery Orders', route: '/inventory/delivery-orders' },
       { id: 'warehouses', label: 'Warehouses', route: '/warehouses', name: 'Warehouses' },
       { id: 'warehouse-locations', label: 'Warehouse Locations', route: '/warehouse-locations', name: 'WarehouseLocations' },
     ]
@@ -634,6 +637,8 @@ const mainMenus: MenuItem[] = [
       { id: 'margin-analysis', label: 'Margin Analysis', route: '/finance/margin' },
       { id: 'financial-summary', label: 'Financial Summary', route: '/finance/summary' },
       { id: 'fund-requests', label: 'Fund Requests', route: '/finance/fund-requests' },
+      { id: 'finance-invoices', label: 'Sales Invoices', route: '/finance/invoices' },
+      { id: 'finance-payments', label: 'Customer Payments', route: '/finance/payments' },
     ]
   },
   {
@@ -727,6 +732,7 @@ const canViewSubmenu = (sub: Submenu): boolean => {
 
 const filterMenuList = (list: MenuItem[]): MenuItem[] =>
   list
+    .filter(menu => !menu.hidden)
     .map(menu => ({ ...menu, submenus: menu.submenus.filter(canViewSubmenu) }))
     .filter(menu => menu.submenus.length > 0);
 
