@@ -1663,6 +1663,140 @@ router.get('/mrp/dashboard', authMiddleware, requirePermission('production.mrp',
 // -- SPKP (Surat Perintah Kerja Produksi) --
 
 // list SPKP for a WO
+// ===== SPKP FLOOR BOARD =====
+//
+// One column per production line, every SPKP on it regardless of which work order it belongs
+// to. That is why the card carries the work order number: the board is no longer scoped to one
+// order, it is a picture of what is on each tank right now.
+
+router.get(
+  '/spkp-board',
+  authMiddleware,
+  requirePermission('production.execution', 'view'),
+  async (req: Request, res: Response) => {
+    try {
+      const { wo_id, date_from, date_to } = req.query;
+
+      const lines = await dbAll(
+        `SELECT lp.id, lp.code, lp.name,
+                (SELECT COUNT(*) FROM line_process_steps st WHERE st.line_process_id = lp.id) AS step_count
+           FROM line_processes lp
+          ORDER BY lp.code ASC, lp.id ASC`
+      );
+
+      const steps = await dbAll(
+        `SELECT id, line_process_id, step_order, process_name, standard_duration_minutes, is_qc_checkpoint
+           FROM line_process_steps
+          ORDER BY line_process_id ASC, step_order ASC, id ASC`
+      );
+
+      const params: any[] = [];
+      let where = '1=1';
+      if (wo_id) { where += ' AND s.wo_id = ?'; params.push(Number(wo_id)); }
+      if (date_from) { where += ' AND s.schedule_date >= ?'; params.push(date_from); }
+      if (date_to) { where += ' AND s.schedule_date <= ?'; params.push(date_to); }
+
+      const cards = await dbAll(
+        `SELECT s.id, s.spkp_number, s.wo_id, s.schedule_date, s.planned_qty, s.actual_qty,
+                s.operator_name, s.supervisor_name, s.notes, s.status, s.printed_at,
+                s.line_process_id, s.current_step_id, s.step_started_at,
+                w.wo_number, w.line_process_id AS wo_line_process_id,
+                p.name AS product_name, p.sku,
+                st.process_name AS current_step_name, st.step_order AS current_step_order,
+                st.standard_duration_minutes AS current_step_minutes,
+                st.is_qc_checkpoint AS current_step_is_qc,
+                lp.code AS line_code, lp.name AS line_name
+           FROM spkp s
+           LEFT JOIN work_orders w ON w.id = s.wo_id
+           LEFT JOIN products p ON p.id = w.product_id
+           LEFT JOIN line_process_steps st ON st.id = s.current_step_id
+           LEFT JOIN line_processes lp ON lp.id = s.line_process_id
+          WHERE ${where}
+          ORDER BY s.schedule_date ASC, s.id ASC`,
+        params
+      );
+
+      res.json({ success: true, data: { lines, steps, cards } });
+    } catch (error) {
+      console.error('Error fetching SPKP board:', error);
+      res.status(500).json({ error: 'Failed to fetch SPKP board' });
+    }
+  }
+);
+
+// Move an SPKP onto a line, or along the steps of the one it is on.
+//
+// A step belongs to exactly one line, so a step from a different line describes something that
+// cannot happen on the floor and is refused rather than stored. Moving to a different line
+// clears the step for the same reason: the old step does not exist on the new line.
+router.put(
+  '/spkp/:id/placement',
+  authMiddleware,
+  requirePermission('production.execution', 'update'),
+  async (req: Request, res: Response) => {
+    try {
+      const { line_process_id, current_step_id } = req.body;
+      const spkpRow = await dbGet('SELECT * FROM spkp WHERE id = ?', [req.params.id]) as any;
+      if (!spkpRow) return res.status(404).json({ error: 'SPKP tidak ditemukan' });
+
+      const nextLine =
+        line_process_id === undefined ? spkpRow.line_process_id
+        : line_process_id === null ? null
+        : Number(line_process_id);
+
+      if (nextLine !== null && nextLine !== undefined) {
+        const line = await dbGet('SELECT id FROM line_processes WHERE id = ?', [nextLine]);
+        if (!line) return res.status(404).json({ error: 'Line process tidak ditemukan', code: 'LINE_NOT_FOUND' });
+      }
+
+      // a line change invalidates whatever step it was on
+      const lineChanged = String(nextLine ?? '') !== String(spkpRow.line_process_id ?? '');
+      let nextStep = lineChanged ? null : spkpRow.current_step_id;
+
+      if (current_step_id !== undefined) {
+        if (current_step_id === null) {
+          nextStep = null;
+        } else {
+          const step = await dbGet(
+            'SELECT id, line_process_id FROM line_process_steps WHERE id = ?', [Number(current_step_id)]
+          ) as any;
+          if (!step) return res.status(404).json({ error: 'Step tidak ditemukan', code: 'STEP_NOT_FOUND' });
+          if (nextLine === null || Number(step.line_process_id) !== Number(nextLine)) {
+            return res.status(409).json({
+              error: 'Step itu milik line lain, tidak bisa dipasang di sini.',
+              code: 'STEP_LINE_MISMATCH',
+            });
+          }
+          nextStep = step.id;
+        }
+      }
+
+      // the clock restarts only when the step actually changes, so re-saving other fields does
+      // not make a long-running step look like it just began
+      const stepChanged = String(nextStep ?? '') !== String(spkpRow.current_step_id ?? '');
+      await dbRun(
+        `UPDATE spkp SET line_process_id = ?, current_step_id = ?,
+                         step_started_at = ${stepChanged ? (nextStep === null ? 'NULL' : 'NOW()') : 'step_started_at'}
+          WHERE id = ?`,
+        [nextLine ?? null, nextStep ?? null, req.params.id]
+      );
+
+      const updated = await dbGet(
+        `SELECT s.*, st.process_name AS current_step_name, lp.name AS line_name
+           FROM spkp s
+           LEFT JOIN line_process_steps st ON st.id = s.current_step_id
+           LEFT JOIN line_processes lp ON lp.id = s.line_process_id
+          WHERE s.id = ?`,
+        [req.params.id]
+      );
+      res.json({ success: true, data: updated });
+    } catch (error) {
+      console.error('Error updating SPKP placement:', error);
+      res.status(500).json({ error: 'Failed to update SPKP placement' });
+    }
+  }
+);
+
 // ===== SPKP BOARD COLUMNS =====
 //
 // The columns of the execution board belong to the user. spkp.status stores a stage_key, not

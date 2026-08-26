@@ -274,101 +274,95 @@
         </table>
       </div>
 
-      <!-- kanban board full page (same style as Leads) -->
+      <!-- Floor board: one column per line, cards from every work order -->
       <div v-else class="flex overflow-x-auto gap-4 pb-4">
-        <div v-for="col in spkpKanbanCols" :key="col.key"
-          class="flex-shrink-0 w-80 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col max-h-[calc(100vh-200px)] transition-all"
-          :class="{ 'ring-2 ring-blue-400 bg-blue-50/30': spkpDragOverCol === col.key }"
-          @dragover.prevent="spkpDragOverCol = col.key"
+        <div v-for="col in boardColumns" :key="col.id"
+          class="flex-shrink-0 w-80 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col max-h-[calc(100vh-260px)] transition-all"
+          :class="{ 'ring-2 ring-teal-400 bg-teal-50/30': spkpDragOverCol === String(col.id) }"
+          @dragover.prevent="spkpDragOverCol = String(col.id)"
           @dragleave="spkpDragOverCol = null"
-          @drop="onSpkpDrop(col.key)">
-          <!-- Stage Header (same as Leads) -->
-          <div class="p-4 border-b rounded-t-xl" :style="{ borderBottomColor: col.color, background: col.color + '10' }">
+          @drop="onBoardDrop(col.id)">
+
+          <div class="p-4 border-b rounded-t-xl"
+            :class="col.id === -1 ? 'bg-gray-50' : 'bg-teal-50/40'">
             <div class="flex justify-between items-center">
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full" :style="{ background: col.color }"></span>
-                <h3 class="font-semibold text-gray-800">{{ col.label }}</h3>
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                  :class="col.id === -1 ? 'bg-gray-400' : 'bg-teal-500'"></span>
+                <h3 class="font-semibold text-gray-800 truncate" :title="col.name">{{ col.name }}</h3>
               </div>
-              <span class="text-xs font-bold bg-white px-2.5 py-1 rounded-full text-gray-600 shadow-sm">
-                {{ getSpkpByStatus(col.key).length }}
+              <span class="text-xs font-bold bg-white px-2.5 py-1 rounded-full text-gray-600 shadow-sm flex-shrink-0">
+                {{ cardsOfColumn(col.id).length }}
               </span>
             </div>
             <p class="text-xs text-gray-500 mt-1">
-              Total: <b>{{ getColTotal(col.key).toLocaleString() }}</b>
+              <span v-if="col.code" class="font-mono">{{ col.code }}</span>
+              <span v-if="col.code"> · </span>
+              Plan: <b>{{ colPlannedTotal(col.id).toLocaleString() }}</b>
+              <span v-if="col.step_count"> · {{ col.step_count }} step</span>
             </p>
           </div>
 
-          <!-- SPKP Cards (same card style as Leads) -->
           <div class="flex-1 overflow-y-auto p-3 space-y-3 min-h-[80px]">
-            <div v-for="s in getSpkpByStatus(col.key)" :key="s.id"
+            <div v-for="c in cardsOfColumn(col.id)" :key="c.id"
               draggable="true"
-              @dragstart="onSpkpDragStart($event, s)"
+              @dragstart="onSpkpDragStart($event, c)"
               @dragend="onSpkpDragEnd"
-              @click="openSpkpDetail(s)"
+              @click="openSpkpDetail(c)"
               class="bg-white p-3 rounded-lg border-l-4 border border-gray-200 hover:shadow-lg transition-all cursor-pointer group relative"
-              :class="{ 'opacity-40 scale-95': draggingSpkp?.id === s.id }"
-              :style="{ borderLeftColor: col.color }">
+              :class="{ 'opacity-40 scale-95': draggingSpkp?.id === c.id }"
+              :style="{ borderLeftColor: spkpColColor(c.status) }">
 
-              <!-- Top Row: SPKP Number + Actions -->
-              <div class="flex justify-between items-start mb-1.5">
-                <p class="font-semibold text-gray-800 text-sm flex-1 leading-tight">{{ s.spkp_number }}</p>
-                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button @click.stop="deleteSpkpItem(s)" class="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none">×</button>
-                </div>
-              </div>
-
-              <!-- Date, flagged when the scheduled day has passed and nothing was produced -->
-              <div class="flex items-center gap-1.5 mb-2">
-                <span class="text-[10px] px-2 py-0.5 rounded font-semibold"
-                  :class="isSpkpLate(s) ? 'bg-red-100 text-red-700' : 'bg-gray-50 text-gray-600'">
-                  {{ formatSpkpDay(s.schedule_date) }} · {{ formatDate(s.schedule_date) }}
-                </span>
-                <span v-if="s.printed_at" class="text-[10px] text-gray-400" title="Sudah dicetak">Printed</span>
-              </div>
-
-              <!-- Qty (same layout as Value & Probability in Leads) -->
-              <div class="flex justify-between items-center mb-2.5 pb-2 border-b border-gray-100">
-                <p class="text-sm font-bold text-gray-900">Plan: {{ Number(s.planned_qty).toLocaleString() }}</p>
-                <span v-if="Number(s.actual_qty) > 0"
-                  class="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">
-                  Act: {{ Number(s.actual_qty).toLocaleString() }}
-                </span>
-                <span v-else class="text-xs font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-500">
-                  Belum produksi
+              <!-- the work order this card belongs to, which the board is no longer scoped by -->
+              <div class="flex justify-between items-start mb-1">
+                <p class="font-semibold text-gray-800 text-sm leading-tight">{{ c.spkp_number }}</p>
+                <span class="text-[10px] px-2 py-0.5 rounded font-semibold flex-shrink-0"
+                  :style="{ background: spkpColColor(c.status) + '20', color: spkpColColor(c.status) }">
+                  {{ spkpColLabel(c.status) }}
                 </span>
               </div>
+              <p class="text-xs text-gray-600 font-medium">{{ c.wo_number || '—' }}</p>
+              <p v-if="c.product_name" class="text-[11px] text-gray-400 mb-2 truncate" :title="c.product_name">
+                {{ c.product_name }}
+              </p>
 
-              <!-- Progress bar if actual > 0 -->
-              <div v-if="Number(s.actual_qty) > 0" class="flex items-center gap-2 mb-2">
+              <!-- what it is doing right now -->
+              <div v-if="c.current_step_name"
+                class="flex items-center gap-1.5 mb-2 px-2 py-1 rounded bg-teal-50 border border-teal-100">
+                <span class="text-[10px] font-bold text-teal-700 flex-shrink-0">{{ c.current_step_order }}.</span>
+                <span class="text-[11px] text-teal-800 font-medium truncate">{{ c.current_step_name }}</span>
+                <span v-if="c.current_step_is_qc" class="text-[9px] text-amber-600 flex-shrink-0" title="QC checkpoint">QC</span>
+              </div>
+              <div v-else-if="col.id !== -1" class="text-[11px] text-gray-400 italic mb-2">Belum mulai step</div>
+
+              <div class="flex justify-between items-center text-xs">
+                <span :class="isSpkpLate(c) ? 'text-red-600 font-semibold' : 'text-gray-500'">
+                  {{ formatDate(c.schedule_date) }}
+                </span>
+                <span class="font-bold text-gray-900">{{ Number(c.planned_qty || 0).toLocaleString() }}</span>
+              </div>
+
+              <div v-if="Number(c.actual_qty) > 0" class="flex items-center gap-2 mt-2">
                 <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div class="h-full bg-emerald-500 rounded-full transition-all"
-                    :style="{ width: Math.min(100, (Number(s.actual_qty) / Number(s.planned_qty || 1)) * 100) + '%' }"></div>
+                  <div class="h-full bg-emerald-500 rounded-full"
+                    :style="{ width: Math.min(100, (Number(c.actual_qty) / Number(c.planned_qty || 1)) * 100) + '%' }"></div>
                 </div>
-                <span class="text-[10px] text-gray-500 font-medium">{{ Math.round((Number(s.actual_qty) / Number(s.planned_qty || 1)) * 100) }}%</span>
+                <span class="text-[10px] text-gray-500 font-medium">
+                  {{ Math.round((Number(c.actual_qty) / Number(c.planned_qty || 1)) * 100) }}%
+                </span>
               </div>
 
-              <!-- Bottom: Operator + Supervisor -->
-              <div class="flex justify-between items-center">
-                <span v-if="s.operator_name" class="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold">Op: {{ s.operator_name }}</span>
-                <span v-else></span>
-                <div class="flex items-center gap-2 text-[10px] text-gray-400">
-                  <span v-if="s.supervisor_name" class="w-5 h-5 rounded-full bg-purple-100 text-purple-700 text-[8px] font-bold flex items-center justify-center" :title="s.supervisor_name">{{ getInitials(s.supervisor_name) }}</span>
-                  <span v-if="s.notes" title="Has notes">📝</span>
-                </div>
-              </div>
-
+              <div v-if="c.operator_name" class="mt-2 text-[10px] text-gray-400">Op: {{ c.operator_name }}</div>
             </div>
 
-            <!-- Drop Placeholder (same as Leads) -->
-            <div v-if="getSpkpByStatus(col.key).length === 0"
+            <div v-if="cardsOfColumn(col.id).length === 0"
               class="text-center py-8 text-gray-400 text-xs italic border-2 border-dashed border-gray-200 rounded-lg">
-              {{ draggingSpkp ? 'Drop here' : 'No SPKP' }}
+              {{ draggingSpkp ? 'Taruh di sini' : 'Kosong' }}
             </div>
           </div>
         </div>
       </div>
     </div>
-
     <!-- SPKP detail panel — the counterpart of the Leads detail panel. Editing lives here rather
          than on the card, so there is one place a card is changed and the board stays readable. -->
     <div v-if="spkpDetail" class="fixed inset-0 z-[70] flex justify-end bg-black/30" @click.self="closeSpkpDetail">
@@ -395,6 +389,49 @@
                 {{ col.label }}
               </button>
             </div>
+          </div>
+
+          <!-- where it is on the floor, and what it is doing there -->
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 mb-1.5">Line</label>
+            <select :value="spkpDetail.line_process_id ?? ''"
+              @change="placeSpkp(spkpDetail, ($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))"
+              class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-teal-300 focus:outline-none">
+              <option value="">Belum di-line</option>
+              <option v-for="ln in boardLines" :key="ln.id" :value="ln.id">{{ ln.code }} — {{ ln.name }}</option>
+            </select>
+          </div>
+
+          <div v-if="spkpDetail.line_process_id">
+            <label class="block text-xs font-semibold text-gray-500 mb-1.5">Sedang di step</label>
+            <div class="space-y-1">
+              <button v-for="st in stepsOfLine(Number(spkpDetail.line_process_id))" :key="st.id"
+                @click="placeSpkp(spkpDetail, Number(spkpDetail.line_process_id), st.id)"
+                class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm border transition-colors"
+                :class="Number(spkpDetail.current_step_id) === st.id
+                  ? 'bg-teal-600 text-white border-teal-600'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'">
+                <span class="text-xs font-bold w-5 flex-shrink-0">{{ st.step_order }}.</span>
+                <span class="flex-1 truncate">{{ st.process_name }}</span>
+                <span v-if="st.is_qc_checkpoint" class="text-[10px] flex-shrink-0"
+                  :class="Number(spkpDetail.current_step_id) === st.id ? 'text-teal-100' : 'text-amber-600'">QC</span>
+                <span v-if="st.standard_duration_minutes" class="text-[10px] flex-shrink-0 opacity-70">
+                  {{ st.standard_duration_minutes }}m
+                </span>
+              </button>
+              <button v-if="spkpDetail.current_step_id"
+                @click="placeSpkp(spkpDetail, Number(spkpDetail.line_process_id), null)"
+                class="w-full px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
+                Kosongkan step
+              </button>
+            </div>
+            <!-- read the time on the step against the standard for it -->
+            <p v-if="stepElapsed(spkpDetail)" class="text-[11px] mt-1.5"
+              :class="stepElapsed(spkpDetail)?.over ? 'text-red-600 font-medium' : 'text-gray-500'">
+              Sudah {{ stepElapsed(spkpDetail)?.mins }} menit
+              <span v-if="stepElapsed(spkpDetail)?.std">dari standar {{ stepElapsed(spkpDetail)?.std }} menit</span>
+              <span v-if="stepElapsed(spkpDetail)?.over"> — lewat standar</span>
+            </p>
           </div>
 
           <div>
@@ -648,7 +685,7 @@ const qcCheckpoints = ref<any[]>([]);
 const qcForm = ref({ checkpoint_name: '', is_mandatory: true });
 const processLogs = ref<any[]>([]);
 
-onMounted(() => { store.fetchExecution(); fetchSpkpStages(); });
+onMounted(() => { store.fetchExecution(); fetchSpkpStages(); loadBoard(); });
 
 const isStartable = (s: string) => ['released', 'RELEASED', 'Released'].includes(s);
 
@@ -866,8 +903,7 @@ const spkpVisible = computed(() => {
   return out;
 });
 
-const getSpkpByStatus = (status: string) => spkpVisible.value.filter((s: any) => s.status === status);
-const getColTotal = (status: string) => getSpkpByStatus(status).reduce((sum: number, s: any) => sum + Number(s.planned_qty || 0), 0);
+
 
 /** a scheduled day that has passed while the card is still waiting to be produced */
 const isSpkpLate = (s: any) =>
@@ -879,6 +915,108 @@ const spkpColColor = (status: string) =>
   spkpKanbanCols.value.find((c: any) => c.key === status)?.color || '#9ca3af';
 const spkpColLabel = (status: string) =>
   spkpKanbanCols.value.find((c: any) => c.key === status)?.label || status;
+
+// ---------------------------------------------------------------------------
+// Floor board: one column per production line, every SPKP on it whatever work order it
+// belongs to. That is why the card carries the WO number — the board is no longer scoped to
+// one order, it shows what is on each tank right now.
+// ---------------------------------------------------------------------------
+
+interface BoardLine { id: number; code: string; name: string; step_count: number }
+interface BoardStep {
+  id: number; line_process_id: number; step_order: number; process_name: string;
+  standard_duration_minutes: number | null; is_qc_checkpoint: number;
+}
+
+const boardLines = ref<BoardLine[]>([]);
+const boardSteps = ref<BoardStep[]>([]);
+const boardCards = ref<any[]>([]);
+const boardLoading = ref(false);
+
+// An SPKP with no line still has to be somewhere, or it would vanish from the board while
+// staying in the database. It gets a column of its own, ahead of the real lines.
+const UNASSIGNED = -1;
+const boardColumns = computed(() => [
+  { id: UNASSIGNED, code: '', name: 'Belum di-line', step_count: 0 },
+  ...boardLines.value,
+]);
+
+const stepsOfLine = (lineId: number) =>
+  boardSteps.value.filter(st => st.line_process_id === lineId);
+
+const loadBoard = async () => {
+  boardLoading.value = true;
+  try {
+    const res = await api.get('/production/spkp-board');
+    boardLines.value = res.data?.data?.lines || [];
+    boardSteps.value = res.data?.data?.steps || [];
+    boardCards.value = res.data?.data?.cards || [];
+  } catch {
+    boardLines.value = [];
+    boardSteps.value = [];
+    boardCards.value = [];
+  } finally {
+    boardLoading.value = false;
+  }
+};
+
+// search, status filter and sort apply to the floor board too, so the same habits carry over
+const boardVisible = computed(() => {
+  const q = spkpSearch.value.trim().toLowerCase();
+  let out = boardCards.value.filter((c: any) => {
+    if (spkpFilterStatus.value && c.status !== spkpFilterStatus.value) return false;
+    if (!q) return true;
+    return [c.spkp_number, c.wo_number, c.product_name, c.operator_name, c.notes, c.current_step_name]
+      .some((f: any) => String(f || '').toLowerCase().includes(q));
+  });
+  out = [...out].sort((a: any, b: any) => {
+    if (spkpSort.value === 'planned') return Number(b.planned_qty || 0) - Number(a.planned_qty || 0);
+    if (spkpSort.value === 'number') return String(a.spkp_number || '').localeCompare(String(b.spkp_number || ''));
+    return String(a.schedule_date || '').localeCompare(String(b.schedule_date || ''));
+  });
+  return out;
+});
+
+const cardsOfColumn = (lineId: number) =>
+  boardVisible.value.filter((c: any) =>
+    lineId === UNASSIGNED ? !c.line_process_id : Number(c.line_process_id) === lineId
+  );
+
+const colPlannedTotal = (lineId: number) =>
+  cardsOfColumn(lineId).reduce((sum: number, c: any) => sum + Number(c.planned_qty || 0), 0);
+
+/** move a card onto a line, or along the steps of the line it is already on */
+const placeSpkp = async (card: any, lineId: number | null, stepId?: number | null) => {
+  const payload: any = { line_process_id: lineId === UNASSIGNED ? null : lineId };
+  if (stepId !== undefined) payload.current_step_id = stepId;
+  try {
+    await api.put(`/production/spkp/${card.id}/placement`, payload);
+    await loadBoard();
+    if (spkpDetail.value?.id === card.id) {
+      spkpDetail.value = boardCards.value.find((c: any) => c.id === card.id) || null;
+    }
+  } catch (e: any) {
+    stageError.value = e?.response?.data?.error || 'Kartu gagal dipindahkan.';
+  }
+};
+
+const onBoardDrop = async (lineId: number) => {
+  const card = draggingSpkp.value;
+  spkpDragOverCol.value = null;
+  draggingSpkp.value = null;
+  if (!card) return;
+  const current = card.line_process_id ?? UNASSIGNED;
+  if (Number(current) === Number(lineId)) return;
+  await placeSpkp(card, lineId);
+};
+
+/** how long the card has been on its current step, against the standard for that step */
+const stepElapsed = (card: any) => {
+  if (!card.step_started_at) return null;
+  const mins = Math.floor((Date.now() - new Date(card.step_started_at).getTime()) / 60000);
+  const std = Number(card.current_step_minutes || 0);
+  return { mins, std, over: std > 0 && mins > std };
+};
 
 const openSpkpDetail = (s: any) => { spkpDetail.value = s; };
 const closeSpkpDetail = () => { spkpDetail.value = null; };
@@ -924,23 +1062,6 @@ const onSpkpDragEnd = () => {
   spkpDragOverCol.value = null;
 };
 
-const onSpkpDrop = async (newStatus: string) => {
-  spkpDragOverCol.value = null;
-  if (!draggingSpkp.value || draggingSpkp.value.status === newStatus) {
-    draggingSpkp.value = null;
-    return;
-  }
-  const spkp = draggingSpkp.value;
-  const oldStatus = spkp.status;
-  spkp.status = newStatus;
-  draggingSpkp.value = null;
-  try {
-    await api.put(`/production/spkp/${spkp.id}`, { status: newStatus });
-  } catch {
-    spkp.status = oldStatus;
-    alert('Gagal update status');
-  }
-};
 
 const addSpkpManual = async () => {
   if (!selectedWoIdForKanban.value || !spkpAddForm.value.schedule_date || !spkpAddForm.value.planned_qty) return;
@@ -1009,10 +1130,5 @@ const formatSpkpDay = (d: string) => {
   if (!d) return '';
   const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
   return days[new Date(d).getDay()];
-};
-
-const getInitials = (name: string) => {
-  if (!name) return '?';
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 };
 </script>
