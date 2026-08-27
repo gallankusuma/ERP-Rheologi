@@ -284,7 +284,9 @@ export async function issueWoMaterial(opts: {
       message: 'Material issued successfully',
     };
     await storeIdempotency(
-      conn, 'WO_MATERIAL_ISSUE', idempotencyKey, payloadHash, 201, outcome, issueId, glResult.journal_id
+      // the issue id belongs to wo_material_issues, not accounting_events, so it does not go in
+      // the column constrained to that table; the journal is the link that matters here
+      conn, 'WO_MATERIAL_ISSUE', idempotencyKey, payloadHash, 201, outcome, null, glResult.journal_id
     );
     return outcome;
   });
@@ -536,7 +538,7 @@ export async function returnWoMaterial(opts: {
       message: 'Material returned to warehouse successfully',
     };
     await storeIdempotency(
-      conn, 'WO_MATERIAL_RETURN', returnKey, returnPayloadHash, 201, outcome, issue.id, journalId
+      conn, 'WO_MATERIAL_RETURN', returnKey, returnPayloadHash, 201, outcome, null, journalId
     );
     return outcome;
   });
@@ -831,7 +833,7 @@ export async function postFinishedGoods(opts: {
       batch_number: batchNumber || null,
       message: 'FG received into warehouse',
     };
-    await storeIdempotency(conn, 'FG_RECEIPT', idempotencyKey, payloadHash, 201, outcome, receiptEventId ?? null, null);
+    await storeIdempotency(conn, 'FG_RECEIPT', idempotencyKey, payloadHash, 201, outcome, null, null);
     return outcome;
   });
 }

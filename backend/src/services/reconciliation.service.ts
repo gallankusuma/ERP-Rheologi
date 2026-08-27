@@ -11,15 +11,22 @@ import { money, moneyRound, toDbString } from '../lib/decimal';
 // Each is written by a different code path, so they drift silently unless something compares
 // them. This is what turns "the postings looked right" into a number that can be checked.
 
-// balances held against these roles are inventory the ledger believes we own
-const INVENTORY_ROLES = [
+// Inventory sitting on a shelf, which is what the cost layers describe.
+const SHELF_ROLES = [
   'INVENTORY_RM_AVAILABLE',
   'INVENTORY_RM_QC_HOLD',
   'INVENTORY_FG_AVAILABLE',
   'INVENTORY_FG_QC_HOLD',
   'INVENTORY_PKG',
-  'INVENTORY_WIP',
 ];
+
+// Work in progress is inventory the ledger owns but no cost layer represents: material issued
+// to a work order has left its layer and not yet come back as finished goods. Counting it in
+// the same total made the reconciliation report a difference for every work order in
+// production — which in a working plant is most of the time. It is a reconciling item, so it
+// is measured separately and added to what the layers say before the two are compared.
+const WIP_ROLE = 'INVENTORY_WIP';
+const INVENTORY_ROLES = [...SHELF_ROLES, WIP_ROLE];
 
 /** stock statuses that represent goods we still hold */
 const HELD_STATUSES = ['available', 'qc_hold'];
@@ -47,6 +54,8 @@ export interface InventoryReconciliation {
   costLayerValue: string;
   /** balance of the inventory control accounts, from posted journals only */
   ledgerValue: string;
+  /** material issued to work orders: owned, but on no shelf and in no cost layer */
+  wipValue: string;
   difference: string;
   balanced: boolean;
   /** layers where received ≠ remaining + allocated */
@@ -79,6 +88,20 @@ export async function reconcileInventory(conn: any, asOfDate?: string): Promise<
     [asOf, ...INVENTORY_ROLES]
   );
   const ledgerValue = moneyRound(money(String(ledgerRows[0].value)));
+
+  // what of that the shop floor is holding rather than the shelves
+  const [wipRows]: any = await conn.query(
+    `SELECT COALESCE(SUM(CASE WHEN coa.normal_balance = 'credit'
+                              THEN COALESCE(jl.credit, 0) - COALESCE(jl.debit, 0)
+                              ELSE COALESCE(jl.debit, 0) - COALESCE(jl.credit, 0) END), 0) AS value
+       FROM journal_lines jl
+       JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
+       JOIN chart_of_accounts coa ON coa.id = jl.account_id
+      WHERE je.posting_date <= ?
+        AND coa.id IN (SELECT account_id FROM account_roles WHERE role_code = ?)`,
+    [asOf, WIP_ROLE]
+  );
+  const wipValue = moneyRound(money(String(wipRows[0].value)));
 
   // a layer must account for everything it received
   const [breachRows]: any = await conn.query(
@@ -127,12 +150,15 @@ export async function reconcileInventory(conn: any, asOfDate?: string): Promise<
     difference: toDbString(moneyRound(money(String(r.physical)).minus(money(String(r.valued))))),
   }));
 
-  const difference = moneyRound(costLayerValue.minus(ledgerValue));
+  // layers describe the shelves, WIP describes the floor; together they are what the ledger
+  // says we own
+  const difference = moneyRound(costLayerValue.plus(wipValue).minus(ledgerValue));
 
   return {
     asOf,
     costLayerValue: toDbString(costLayerValue),
     ledgerValue: toDbString(ledgerValue),
+    wipValue: toDbString(wipValue),
     difference: toDbString(difference),
     balanced: difference.isZero() && layerBreaches.length === 0 && lotBreaches.length === 0,
     layerBreaches,
