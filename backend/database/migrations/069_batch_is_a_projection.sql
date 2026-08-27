@@ -25,9 +25,14 @@ ALTER TABLE inventory_lots
 
 -- Match the lots that already exist to their batch by the text they were matched by until now,
 -- and by product, so a text collision cannot attach a lot to the wrong product's batch.
+-- The two batch_number columns do not share a collation in the live database — batches is
+-- utf8mb4_unicode_ci and inventory_lots is utf8mb4_0900_ai_ci — so comparing them directly is
+-- an illegal mix and the statement fails on MySQL 8 while passing on MariaDB. Both sides are
+-- forced to utf8mb4_bin, which exists on either engine and is the right comparison anyway:
+-- a batch number is a code, and codes match exactly or not at all.
 UPDATE inventory_lots l
   JOIN batches b
-    ON b.batch_number = l.batch_number
+    ON b.batch_number COLLATE utf8mb4_bin = l.batch_number COLLATE utf8mb4_bin
    AND b.product_id = l.product_id
    SET l.batch_id = b.id
  WHERE l.batch_id IS NULL AND l.batch_number IS NOT NULL;

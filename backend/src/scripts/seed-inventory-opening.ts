@@ -44,6 +44,9 @@ const APPLY = args.includes('--apply');
 const FILE = argOf('file');
 const AS_OF = argOf('date') || new Date().toISOString().slice(0, 10);
 const EQUITY_ROLE = argOf('equity-role') || 'RETAINED_EARNINGS';
+// Anyone reading the ledger later should be able to tell a rehearsal from the real opening
+// position without having to ask, so the note travels with the journal itself.
+const NOTE = argOf('note') || '';
 
 function readValuation(file: string): Row[] {
   const text = fs.readFileSync(file, 'utf8');
@@ -183,8 +186,10 @@ async function main() {
         total_debit, total_credit, created_by, posted_at)
        VALUES (?, ?, ?, ?, ?, 'OPENING', 'posted', ?, ?, 1, NOW())`,
       [
-        `OPEN-INV-${AS_OF}`, AS_OF, AS_OF, period.id,
-        'Opening inventory valuation', toDbString(moneyRound(total)), toDbString(moneyRound(total)),
+        `OPEN-INV-${AS_OF}${NOTE ? '-' + NOTE.toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 12) : ''}`,
+        AS_OF, AS_OF, period.id,
+        'Opening inventory valuation' + (NOTE ? ` (${NOTE})` : ''),
+        toDbString(moneyRound(total)), toDbString(moneyRound(total)),
       ]
     );
     const journalId = je.insertId;
@@ -194,7 +199,8 @@ async function main() {
       await conn.query(
         `INSERT INTO journal_lines (journal_entry_id, line_number, account_id, description, debit, credit)
          VALUES (?, ?, ?, ?, ?, 0)`,
-        [journalId, ++lineNo, await accountFor(role), `Opening inventory — ${role}`, toDbString(moneyRound(amount))]
+        [journalId, ++lineNo, await accountFor(role),
+         `Opening inventory — ${role}` + (NOTE ? ` (${NOTE})` : ''), toDbString(moneyRound(amount))]
       );
     }
     await conn.query(
