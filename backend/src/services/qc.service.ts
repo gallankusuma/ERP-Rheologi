@@ -595,7 +595,10 @@ export async function finalizeQcApproval(opts: {
         const [siblingRows] = await conn.execute(
           `SELECT COUNT(*) AS pending_count FROM qc_analysis_requests
            WHERE batch_no = ? AND id != ? AND type = 'FG'
-             AND (status NOT IN ('Approved', 'Cancelled') OR result NOT IN ('Passed'))`,
+             -- Resolved means exactly Approved and Passed. Written as NOT IN, a NULL status or
+             -- result made the comparison UNKNOWN, so an inspection nobody had touched yet did
+             -- not count as pending and the batch was released with it still open.
+             AND NOT (COALESCE(status, '') = 'Approved' AND COALESCE(result, '') = 'Passed')`,
           [lockedFpa.batch_no, fpaId]
         );
         const pendingSiblings = Number((siblingRows as any[])[0]?.pending_count) || 0;
@@ -603,8 +606,9 @@ export async function finalizeQcApproval(opts: {
         if (pendingSiblings === 0) {
           // all sibling FPAs passed — safe to release batch
           await conn.execute(
-            "UPDATE batches SET status = 'released', qc_status = 'passed' WHERE batch_number = ? AND status = 'pending_qc'",
-            [lockedFpa.batch_no]
+            `UPDATE batches SET status = 'released', qc_status = 'passed'
+              WHERE batch_number = ? AND product_id = ? AND status = 'pending_qc'`,
+            [lockedFpa.batch_no, lockedFpa.product_id]
           );
         }
         // otherwise leave batch in pending_qc until all siblings are resolved
@@ -627,12 +631,16 @@ export async function finalizeQcApproval(opts: {
       const [unresolvedRows] = await conn.execute(
         `SELECT COUNT(*) AS cnt FROM qc_analysis_requests
          WHERE batch_no = ? AND type = 'FG'
-           AND status NOT IN ('Approved', 'Cancelled')`,
+           -- same reason: an untouched FPA carries a NULL status and must count as unresolved
+           AND COALESCE(status, '') NOT IN ('Approved', 'Cancelled')`,
         [lockedFpa.batch_no]
       );
       const unresolvedCount = Number((unresolvedRows as any[])[0]?.cnt) || 0;
       if (unresolvedCount === 0) {
-        await conn.execute('UPDATE batches SET qc_status = ? WHERE batch_number = ?', ['passed', lockedFpa.batch_no]);
+        await conn.execute(
+          'UPDATE batches SET qc_status = ? WHERE batch_number = ? AND product_id = ?',
+          ['passed', lockedFpa.batch_no, lockedFpa.product_id]
+        );
       }
     }
 

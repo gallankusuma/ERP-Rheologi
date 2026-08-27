@@ -258,6 +258,95 @@ async function main() {
     );
     await conn.query(`UPDATE work_orders SET status = 'released' WHERE id = 1`);
 
+    // ---- the batch header is a projection of its lots, not a second quantity ----
+    const { postFinishedGoods } = await import('../services/production.service');
+
+    // a work order that can receive: in progress, yield recorded, one checkpoint passed
+    await conn.query(`UPDATE work_orders SET status = 'in_progress' WHERE id = 1`);
+    await conn.query(`INSERT INTO wo_results (wo_id, output_quantity) VALUES (1, 250)`);
+    await conn.query(
+      `INSERT INTO wo_qc_checkpoints (id, wo_id, process_stage, is_mandatory, status)
+       VALUES (1, 1, 'Final', 1, 'passed')`
+    );
+    await conn.query(`INSERT IGNORE INTO warehouses (id, code, name) VALUES (2, 'WH-FG', 'Finished Goods')`);
+
+    const BATCH = 'BATCH-AGG-1';
+    await postFinishedGoods({
+      woId: 1, warehouseId: 2, quantity: 100, batchNumber: BATCH,
+      idempotencyKey: 'fg-1', userId: 1,
+    });
+    const afterFirst = Number(await scalar(conn, 'SELECT quantity FROM batches WHERE batch_number = ?', [BATCH]));
+    record(
+      'the first receipt into a batch sets its quantity',
+      afterFirst === 100,
+      `batch quantity ${afterFirst}`
+    );
+
+    // the case the old code dropped on the floor
+    await postFinishedGoods({
+      woId: 1, warehouseId: 2, quantity: 150, batchNumber: BATCH,
+      idempotencyKey: 'fg-2', userId: 1,
+    });
+    const afterSecond = Number(await scalar(conn, 'SELECT quantity FROM batches WHERE batch_number = ?', [BATCH]));
+    record(
+      'a second receipt into the same batch raises it instead of being lost',
+      afterSecond === 250,
+      `batch quantity ${afterFirst} -> ${afterSecond}`
+    );
+
+    const batchId = await scalar(conn, 'SELECT id FROM batches WHERE batch_number = ?', [BATCH]);
+    const childLots = Number(await scalar(conn, 'SELECT COUNT(*) FROM inventory_lots WHERE batch_id = ?', [batchId]));
+    record(
+      'the batch knows which lots compose it',
+      childLots === 2,
+      `${childLots} child lot(s)`
+    );
+    record(
+      'and its quantity is exactly what those lots received',
+      Number(await scalar(conn,
+        `SELECT COALESCE(SUM(cl.quantity_received), 0) FROM inventory_lots l
+           JOIN inventory_cost_layers cl ON cl.lot_id = l.id WHERE l.batch_id = ?`, [batchId])) === afterSecond,
+      `lots total ${afterSecond}`
+    );
+
+    // two products may number their batches the same way
+    await conn.query(`INSERT IGNORE INTO products (id, sku, name, unit_of_measure_id) VALUES (3, 'FG-2', 'Cairan B', 1)`);
+    await conn.query(
+      `INSERT INTO batches (batch_number, product_id, quantity, manufacture_date, status, warehouse_id)
+       VALUES (?, 3, 10, CURDATE(), 'pending_qc', 2)`, [BATCH]
+    );
+    record(
+      'the same batch number can belong to a different product',
+      Number(await scalar(conn, 'SELECT COUNT(*) FROM batches WHERE batch_number = ?', [BATCH])) === 2,
+      `2 batches share the number, one per product`
+    );
+
+    // ---- an inspection nobody has touched must block the batch ----
+    await conn.query(
+      `INSERT INTO qc_analysis_requests (id, batch_no, type, product_id, status, result)
+       VALUES (900, ?, 'FG', 2, NULL, NULL)`, [BATCH]
+    );
+    const stillPending = Number(await scalar(conn,
+      `SELECT COUNT(*) FROM qc_analysis_requests
+        WHERE batch_no = ? AND type = 'FG'
+          AND NOT (COALESCE(status, '') = 'Approved' AND COALESCE(result, '') = 'Passed')`, [BATCH]));
+    record(
+      'an FPA with no status counts as unresolved rather than slipping through',
+      stillPending === 1,
+      `${stillPending} unresolved`
+    );
+
+    // the shape the old query used, kept here to show what it missed
+    const oldShape = Number(await scalar(conn,
+      `SELECT COUNT(*) FROM qc_analysis_requests
+        WHERE batch_no = ? AND type = 'FG'
+          AND (status NOT IN ('Approved','Cancelled') OR result NOT IN ('Passed'))`, [BATCH]));
+    record(
+      'the old NULL-blind check would have seen nothing pending',
+      oldShape === 0,
+      `old query counted ${oldShape}, new counts ${stillPending}`
+    );
+
     // the key is scoped to the command, so the same text under FG_RECEIPT is a different claim
     const scopes = await scalar(conn, 'SELECT COUNT(DISTINCT command_scope) FROM idempotency_outcomes');
     record(

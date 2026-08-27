@@ -763,16 +763,43 @@ export async function postFinishedGoods(opts: {
       [quantity, woId]
     );
 
-    // 8. create batch if batch_number provided
+    // 8. attach this receipt's lot to its batch, and let the batch total itself up
+    //
+    // This used to look the batch number up and do nothing if a row already existed, so a
+    // second partial receipt into the same batch left the header saying whatever the first
+    // receipt happened to be. The header is now a projection of the lots attached to it: the
+    // lot is linked, then the quantity is recomputed from what those lots actually received.
     if (batchNumber) {
-      const [batchRows] = await conn.execute('SELECT id FROM batches WHERE batch_number = ?', [batchNumber]);
-      if ((batchRows as any[]).length === 0) {
-        await conn.execute(
+      const [batchRows] = await conn.execute(
+        // scoped by product: a batch number identifies a batch of a product, not one in the
+        // universe, and two product lines may number theirs the same way
+        'SELECT id FROM batches WHERE batch_number = ? AND product_id = ? FOR UPDATE',
+        [batchNumber, wo.product_id]
+      );
+      let batchId = (batchRows as any[])[0]?.id;
+      if (!batchId) {
+        const [created] = await conn.execute(
           `INSERT INTO batches (batch_number, product_id, quantity, manufacture_date, status, warehouse_id)
-           VALUES (?, ?, ?, CURDATE(), ?, ?)`,
-          [batchNumber, wo.product_id, quantity, qcPolicy === 'NOT_REQUIRED' ? 'released' : 'pending_qc', warehouseId]
+           VALUES (?, ?, 0, CURDATE(), ?, ?)`,
+          [batchNumber, wo.product_id, qcPolicy === 'NOT_REQUIRED' ? 'released' : 'pending_qc', warehouseId]
         );
+        batchId = created.insertId;
       }
+
+      await conn.execute('UPDATE inventory_lots SET batch_id = ? WHERE id = ?', [batchId, lotId]);
+
+      // the header is the sum of its lots, so a second receipt raises it instead of being lost
+      await conn.execute(
+        `UPDATE batches b
+            SET b.quantity = COALESCE((
+                  SELECT SUM(cl.quantity_received)
+                    FROM inventory_lots l
+                    JOIN inventory_cost_layers cl ON cl.lot_id = l.id
+                   WHERE l.batch_id = b.id
+                ), 0)
+          WHERE b.id = ?`,
+        [batchId]
+      );
     }
 
     // 9. auto-create FG QC FPA if REQUIRED and specs exist
