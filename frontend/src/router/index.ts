@@ -497,16 +497,34 @@ const routes: RouteRecordRaw[] = [
   },
   // HR Module
   {
+    path: '/hr',
+    name: 'HRCommandCenter',
+    component: () => import('../views/hr/HRCommandCenter.vue'),
+    meta: { requiresAuth: true, title: 'HR - Command Center' },
+  },
+  {
     path: '/hr/employees',
     name: 'HREmployees',
     component: () => import('../views/hr/Employees.vue'),
     meta: { requiresAuth: true, title: 'HR - Employees' },
   },
   {
+    path: '/hr/shift-roster',
+    name: 'HRShiftRoster',
+    component: () => import('../views/hr/ShiftRoster.vue'),
+    meta: { requiresAuth: true, title: 'HR - Shift & Roster' },
+  },
+  {
     path: '/hr/attendance',
     name: 'HRAttendance',
     component: () => import('../views/hr/AttendanceTracking.vue'),
     meta: { requiresAuth: true, title: 'HR - Attendance' },
+  },
+  {
+    path: '/hr/requests',
+    name: 'HRRequestCenter',
+    component: () => import('../views/hr/RequestCenter.vue'),
+    meta: { requiresAuth: true, title: 'HR - Request Center' },
   },
   {
     path: '/hr/payroll',
@@ -1087,4 +1105,3 @@ router.beforeEach(async (to, _from, next) => {
 });
 
 export default router;
-

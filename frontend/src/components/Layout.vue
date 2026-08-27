@@ -646,12 +646,15 @@ const mainMenus: MenuItem[] = [
     label: 'HR',
     icon: '👥',
     submenus: [
-      { id: 'hr-employees', label: 'Employees', route: '/hr/employees' },
-      { id: 'hr-attendance', label: 'Attendance', route: '/hr/attendance' },
-      { id: 'hr-payroll', label: 'Payroll', route: '/hr/payroll' },
+      { id: 'hr-command-center', label: 'Command Center', route: '/hr' },
+      { id: 'hr-employees', label: 'Employee 360', route: '/hr/employees' },
+      { id: 'hr-shift-roster', label: 'Shift & Roster', route: '/hr/shift-roster' },
+      { id: 'hr-attendance', label: 'Attendance Monitor', route: '/hr/attendance' },
+      { id: 'hr-requests', label: 'Request Center', route: '/hr/requests' },
+      { id: 'hr-payroll', label: 'Payroll Workspace', route: '/hr/payroll' },
       { id: 'hr-position-rates', label: 'Position Rates', route: '/hr/position-rates' },
       { id: 'hr-salary-advances', label: 'Salary Advances', route: '/hr/salary-advances' },
-      { id: 'hr-mobile-portal', label: 'Mobile Portal', route: '/hr/mobile-portal' },
+      { id: 'hr-mobile-portal', label: 'ESS / Mobile Portal', route: '/hr/mobile-portal' },
     ]
   },
   {

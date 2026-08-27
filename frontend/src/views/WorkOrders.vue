@@ -304,6 +304,65 @@
               </div>
             </div>
           </div>
+
+          <!-- SPKP Management (edit mode only) -->
+          <div v-if="editingWo" class="border-t border-gray-200 pt-4">
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-xs font-semibold text-gray-600">SPKP (Surat Perintah Kerja Produksi)</label>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-400">{{ woSpkpList.length }} SPKP</span>
+                <button v-if="woSpkpList.length === 0 && editingWo.scheduled_start && editingWo.scheduled_end"
+                  @click.prevent="generateSpkp" :disabled="spkpGenerating"
+                  class="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50">
+                  {{ spkpGenerating ? 'Generating...' : 'Generate SPKP' }}
+                </button>
+                <button v-if="woSpkpList.length > 0"
+                  @click.prevent="regenSpkpConfirm = true"
+                  class="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-600 text-xs font-semibold rounded-lg border border-orange-200 transition-colors">
+                  Regenerate
+                </button>
+              </div>
+            </div>
+            <div v-if="!editingWo.scheduled_start || !editingWo.scheduled_end" class="text-xs text-orange-500 italic mb-2">
+              Set tanggal mulai dan selesai dulu untuk generate SPKP
+            </div>
+            <div v-if="woSpkpList.length > 0" class="space-y-2 max-h-[240px] overflow-y-auto">
+              <div v-for="s in woSpkpList" :key="s.id"
+                class="flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all"
+                :class="s.status === 'completed' ? 'bg-green-50 border-green-200' : s.status === 'released' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-sm font-bold text-gray-800">{{ s.spkp_number }}</span>
+                    <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-full"
+                      :class="s.status === 'completed' ? 'bg-green-100 text-green-700' : s.status === 'released' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'">
+                      {{ s.status }}
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                    <span>{{ fmtDate(s.schedule_date) }}</span>
+                    <span>Plan: <b>{{ formatN(s.planned_qty) }}</b></span>
+                    <span v-if="Number(s.actual_qty) > 0" class="text-emerald-600">Act: <b>{{ formatN(s.actual_qty) }}</b></span>
+                    <span v-if="s.current_step_name" class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium">
+                      {{ s.current_step_order }}. {{ s.current_step_name }}
+                    </span>
+                  </div>
+                </div>
+                <button v-if="s.status === 'draft' && !Number(s.actual_qty)"
+                  @click.prevent="deleteOneSpkp(s)" title="Hapus SPKP ini"
+                  class="text-red-400 hover:text-red-600 text-sm transition-colors">✕</button>
+              </div>
+            </div>
+            <!-- Regen confirm -->
+            <div v-if="regenSpkpConfirm" class="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+              <p class="text-sm text-orange-700 font-medium">Yakin regenerate SPKP? Semua SPKP draft yang belum ada actual akan dihapus.</p>
+              <div class="flex gap-2 mt-2">
+                <button @click.prevent="doRegenSpkp" :disabled="spkpGenerating"
+                  class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50">Ya, Regenerate</button>
+                <button @click.prevent="regenSpkpConfirm = false"
+                  class="px-3 py-1.5 border border-gray-300 text-gray-600 text-xs rounded-lg hover:bg-gray-100">Batal</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="px-5 py-4 border-t border-gray-100 flex justify-end gap-2">
           <button @click="showModal = false"
@@ -616,6 +675,8 @@ const openEdit = async (wo: any) => {
     const res = await api.get(`/workorders/${wo.id}/reschedule-log`);
     rescheduleLog.value = res.data.data || [];
   } catch { rescheduleLog.value = []; }
+  // load SPKP list for this WO
+  await loadWoSpkp(wo.id);
 };
 
 const openDetail = (wo: any) => openEdit(wo);
@@ -687,6 +748,57 @@ const doDelete = async () => {
     showToast(e?.response?.data?.error || 'Gagal hapus WO', 'error');
   }
   saving.value = false;
+};
+
+// ─── SPKP Management ───────────────────────────────────────
+const woSpkpList = ref<any[]>([]);
+const spkpGenerating = ref(false);
+const regenSpkpConfirm = ref(false);
+
+const loadWoSpkp = async (woId: number) => {
+  try {
+    const res = await api.get(`/production/work-orders/${woId}/spkp`);
+    woSpkpList.value = res.data?.data || [];
+  } catch { woSpkpList.value = []; }
+};
+
+const generateSpkp = async () => {
+  if (!editingWo.value) return;
+  spkpGenerating.value = true;
+  try {
+    await api.post(`/production/work-orders/${editingWo.value.id}/spkp/generate`);
+    showToast('SPKP berhasil di-generate', 'ok');
+    await loadWoSpkp(editingWo.value.id);
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || 'Gagal generate SPKP', 'error');
+  }
+  spkpGenerating.value = false;
+};
+
+const doRegenSpkp = async () => {
+  if (!editingWo.value) return;
+  spkpGenerating.value = true;
+  try {
+    await api.delete(`/production/work-orders/${editingWo.value.id}/spkp`);
+    await api.post(`/production/work-orders/${editingWo.value.id}/spkp/generate`);
+    showToast('SPKP berhasil di-regenerate', 'ok');
+    await loadWoSpkp(editingWo.value.id);
+    regenSpkpConfirm.value = false;
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || 'Gagal regenerate SPKP', 'error');
+  }
+  spkpGenerating.value = false;
+};
+
+const deleteOneSpkp = async (spkp: any) => {
+  if (!editingWo.value) return;
+  try {
+    await api.delete(`/production/spkp/${spkp.id}`);
+    showToast('SPKP dihapus', 'ok');
+    await loadWoSpkp(editingWo.value.id);
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || 'Gagal hapus SPKP', 'error');
+  }
 };
 
 // ─── Helpers ───────────────────────────────────────────────

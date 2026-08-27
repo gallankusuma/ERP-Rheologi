@@ -3,8 +3,8 @@
     <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
       <div>
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Payroll & Payslip Calculator</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Generate payslips based on attendance, rates, and deductions. Submit payroll requests.</p>
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Payroll Workspace</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Trace payroll from attendance, approved requests, overtime, salary advances, and saved payslips.</p>
       </div>
     </div>
 
@@ -21,7 +21,7 @@
       </div>
       <div class="flex gap-3">
         <button @click="calculatePayroll" class="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-md transition-all cursor-pointer">
-          🧮 Calculate Payroll
+          🧮 Calculate from Attendance
         </button>
         <button v-if="payslips.length > 0" @click="saveAllPayslips" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-md transition-all cursor-pointer">
           💾 Save All Payslips
@@ -79,13 +79,14 @@
               <tr class="bg-gray-50 dark:bg-gray-750 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
                 <th class="px-5 py-4">Employee</th>
                 <th class="px-5 py-4">Type</th>
-                <th class="px-5 py-4 text-center">Days / TS</th>
-                <th class="px-5 py-4 text-center">OT Hrs</th>
+                <th class="px-5 py-4 text-center">Payable Days</th>
+                <th class="px-5 py-4 text-center">Trace</th>
+                <th class="px-5 py-4 text-center">OT</th>
                 <th class="px-5 py-4 text-right">Basic Pay</th>
                 <th class="px-5 py-4 text-right">Allowance</th>
                 <th class="px-5 py-4 text-right">OT Pay</th>
                 <th class="px-5 py-4 text-right">Gross</th>
-                <th class="px-5 py-4 text-right">Kasbon</th>
+                <th class="px-5 py-4 text-right">Deduction</th>
                 <th class="px-5 py-4 text-right font-bold">Net Pay</th>
               </tr>
             </thead>
@@ -101,12 +102,18 @@
                   </span>
                 </td>
                 <td class="px-5 py-4 text-center font-bold">{{ ps.working_days }}</td>
+                <td class="px-5 py-4 text-center">
+                  <div class="flex flex-wrap justify-center gap-1 text-[11px] font-bold">
+                    <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">Covered {{ ps.covered_days || ps.trace?.covered_days || 0 }}</span>
+                    <span class="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">Absent {{ ps.absent_days || ps.trace?.absent_days || 0 }}</span>
+                  </div>
+                </td>
                 <td class="px-5 py-4 text-center">{{ ps.total_overtime > 0 ? ps.total_overtime : '-' }}</td>
                 <td class="px-5 py-4 text-right">{{ fmtRp(ps.basic_pay) }}</td>
                 <td class="px-5 py-4 text-right text-gray-500">{{ fmtRp(ps.allowance_pay) }}</td>
                 <td class="px-5 py-4 text-right text-amber-600 dark:text-amber-400">{{ fmtRp(ps.overtime_pay) }}</td>
                 <td class="px-5 py-4 text-right font-bold text-emerald-600 dark:text-emerald-400">{{ fmtRp(ps.gross_salary) }}</td>
-                <td class="px-5 py-4 text-right text-rose-600 dark:text-rose-400">{{ ps.kasbon_deduction > 0 ? fmtRp(ps.kasbon_deduction) : '-' }}</td>
+                <td class="px-5 py-4 text-right text-rose-600 dark:text-rose-400">{{ ps.Deduction_deduction > 0 ? fmtRp(ps.Deduction_deduction) : '-' }}</td>
                 <td class="px-5 py-4 text-right font-bold text-lg text-blue-700 dark:text-blue-400">{{ fmtRp(ps.net_salary) }}</td>
               </tr>
             </tbody>
@@ -199,7 +206,7 @@ const payrollRequests = ref<any[]>([]);
 const loading = ref(false);
 
 const totalGross = computed(() => payslips.value.reduce((s, p) => s + (p.gross_salary || 0), 0));
-const totalDeductions = computed(() => payslips.value.reduce((s, p) => s + (p.kasbon_deduction || 0), 0));
+const totalDeductions = computed(() => payslips.value.reduce((s, p) => s + (p.Deduction_deduction || 0), 0));
 const totalNet = computed(() => payslips.value.reduce((s, p) => s + (p.net_salary || 0), 0));
 
 const fmtRp = (v: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v || 0);

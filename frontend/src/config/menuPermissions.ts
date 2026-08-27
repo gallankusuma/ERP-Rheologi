@@ -95,6 +95,17 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   '/finance/summary': 'finance.financial-summary',
   '/finance/fund-requests': 'finance.fund-requests',
 
+  // HR
+  '/hr': 'hr.command-center',
+  '/hr/employees': 'hr.employees',
+  '/hr/shift-roster': 'hr.shift-roster',
+  '/hr/attendance': 'hr.attendance',
+  '/hr/requests': 'hr.requests',
+  '/hr/payroll': 'hr.payroll',
+  '/hr/position-rates': 'hr.position-rates',
+  '/hr/salary-advances': 'hr.salary-advances',
+  '/hr/mobile-portal': 'hr.mobile-portal',
+
   // Approval
   '/approval/inbox': 'approval.inbox',
   '/approval/history': 'approval.history',

@@ -234,6 +234,25 @@ router.delete('/sales-orders/:id', authMiddleware, requirePermission('crm.sales'
     if (so.status !== 'draft') {
       return res.status(400).json({ error: `Cannot delete SO with status '${so.status}'. Only draft orders can be deleted.` });
     }
+    // A delivery can be posted against an order that is still draft — postShipment does not
+    // look at the order's status — and a posted delivery has a journal and cost allocations
+    // pointing at its lines. Removing them would leave cost of sales in the ledger with the
+    // shipment that explains it gone, so the order stops being deletable at that point.
+    const postedDelivery = await dbGet(
+      `SELECT d.id, d.do_number FROM deliveries d
+        WHERE d.so_id = ? AND (d.posted_at IS NOT NULL OR d.journal_entry_id IS NOT NULL)
+        LIMIT 1`,
+      [so.id]
+    ) as any;
+    if (postedDelivery) {
+      return res.status(409).json({
+        error: `Cannot delete: delivery ${postedDelivery.do_number || postedDelivery.id} has already been posted against this order. Reverse the shipment first.`,
+        code: 'DELIVERY_ALREADY_POSTED',
+      });
+    }
+
+    await dbRun('DELETE FROM delivery_items WHERE delivery_id IN (SELECT id FROM deliveries WHERE so_id = ?)', [so.id]);
+    await dbRun('DELETE FROM deliveries WHERE so_id = ?', [so.id]);
     await dbRun('DELETE FROM so_items WHERE so_id = ?', [so.id]);
     await dbRun('DELETE FROM sales_orders WHERE id = ?', [so.id]);
     res.json({ message: `Sales order ${so.so_number} deleted` });
