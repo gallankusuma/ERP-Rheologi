@@ -29,7 +29,8 @@
     "test:three-way-match": "tsx src/scripts/three-way-match-check.ts",
     "test:returns": "tsx src/scripts/returns-check.ts",
     "test:reversal": "tsx src/scripts/reversal-check.ts",
-    "test:fund-request": "tsx src/scripts/fund-request-check.ts"
+    "test:fund-request": "tsx src/scripts/fund-request-check.ts",
+    "seed:inventory-opening": "tsx src/scripts/seed-inventory-opening.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

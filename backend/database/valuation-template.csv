@@ -1,0 +1,23 @@
+# Nilai persediaan awal — isi kolom kedua dengan biaya per unit
+# Produk yang TIDAK ada di daftar ini tidak akan disentuh sama sekali.
+# Gaji, pajak, jasa konsultan dan mesin sengaja tidak dimasukkan: itu bukan persediaan.
+sku,unit_cost
+CONS-001,73000.00   # MASKER MEDIS | qty 3.00 | saran dari rata-rata harga PO
+CONS-002,32500.00   # HEAD CAP | qty 3.00 | saran dari rata-rata harga PO
+CONS26010,11500.00   # Materai 10000 | qty 12.00 | saran dari rata-rata harga PO
+IFG1021069,0.00   # C2509 @200 ltr (Formulation) | qty 2650.00 | TIDAK ADA HARGA PO - isi manual
+IFG1021076,0.00   # Stillo @200 ltr (Formulation) | qty 425.00 | TIDAK ADA HARGA PO - isi manual
+IRM1020001,24500.00   # Pellicle | qty 2500.62 | saran dari rata-rata harga PO
+IRM1022002,0.00   # Carboxymethyl cellulose | qty 39.15 | TIDAK ADA HARGA PO - isi manual
+IRM1022004,0.00   # Raw Water | qty 35165.30 | harga PO nol - periksa
+IRM1022005,0.00   # Bronopol | qty 39.15 | TIDAK ADA HARGA PO - isi manual
+IRM1022006,0.00   # Kaporit | qty 9.33 | TIDAK ADA HARGA PO - isi manual
+IRM1022007,29250.00   # Emulan | qty 8250.00 | saran dari rata-rata harga PO
+IRM1022009,0.00   # Sodium bisulfite | qty 73.07 | TIDAK ADA HARGA PO - isi manual
+PM-003,2500.00   # Label Stiker Jerrycan Cylobind | qty 10.00 | saran dari rata-rata harga PO
+PM-004,2500.00   # Label Stiker Jerrycan Cylobind | qty 10.00 | saran dari rata-rata harga PO
+PM-005,7500.00   # Label Stiker Karton Box Cylobi | qty 10.00 | saran dari rata-rata harga PO
+PM-007,14582.00   # Isolasi Bening | qty 10.00 | saran dari rata-rata harga PO
+Spare Parts - 003,5000.00   # Oring ID Id = 84 mm Tebel = 3  | qty 20.00 | saran dari rata-rata harga PO
+Spare Parts-001,6000.00   # Oring ID Id = 145 mm Tebel = 3 | qty 20.00 | saran dari rata-rata harga PO
+Spare Parts-002,5000.00   # Seal Silicon | qty 20.00 | saran dari rata-rata harga PO
