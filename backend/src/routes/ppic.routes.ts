@@ -1147,7 +1147,7 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
 
       // lock DRAFT WOs and check for downstream activity
       const [draftWORows] = await conn.execute(
-        "SELECT id, wo_number, week_number FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT' FOR UPDATE", [detailId]
+        "SELECT id, wo_number, week_number, year FROM work_orders WHERE mps_detail_id = ? AND status = 'DRAFT' FOR UPDATE", [detailId]
       );
       const draftWOs = draftWORows as any[];
 
@@ -1155,23 +1155,65 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
         const woIds = draftWOs.map((w: any) => w.id);
         const woPlaceholders = woIds.map(() => '?').join(',');
 
-        // check material issues under lock
-        const [issueRows] = await conn.execute(
-          `SELECT COUNT(*) as cnt FROM wo_materials WHERE wo_id IN (${woPlaceholders}) AND quantity_issued > 0`,
-          woIds
+        // A reset cancels these work orders and generates replacements. Anything already
+        // hanging off them would be left pointing at a cancelled plan, so the guard covers
+        // every trace of work having started, not only material issues: an inspection was
+        // raised, output was recorded, the floor was scheduled. Each is reported by name so
+        // the answer says what to deal with rather than only that something is in the way.
+        const activity: string[] = [];
+        const countOf = async (sql: string) =>
+          Number(((await conn.execute(sql, woIds))[0] as any[])[0]?.cnt || 0);
+
+        const issued = await countOf(
+          `SELECT COUNT(*) as cnt FROM wo_materials WHERE wo_id IN (${woPlaceholders}) AND quantity_issued > 0`
         );
-        if (Number((issueRows as any[])[0]?.cnt || 0) > 0) {
-          throw Object.assign(new Error('Cannot reset: some DRAFT WOs already have material issues. Cancel those issues first.'), { statusCode: 409 });
+        if (issued > 0) activity.push(`${issued} material issue(s)`);
+
+        const checkpoints = await countOf(
+          `SELECT COUNT(*) as cnt FROM wo_qc_checkpoints WHERE wo_id IN (${woPlaceholders})`
+        );
+        if (checkpoints > 0) activity.push(`${checkpoints} QC checkpoint(s)`);
+
+        const results = await countOf(
+          `SELECT COUNT(*) as cnt FROM wo_results WHERE wo_id IN (${woPlaceholders})`
+        );
+        if (results > 0) activity.push(`${results} recorded yield/scrap row(s)`);
+
+        const spkps = await countOf(
+          `SELECT COUNT(*) as cnt FROM spkp WHERE wo_id IN (${woPlaceholders})`
+        );
+        if (spkps > 0) activity.push(`${spkps} SPKP schedule(s)`);
+
+        if (activity.length > 0) {
+          throw Object.assign(
+            new Error(
+              `Cannot reset: these draft work orders already carry ${activity.join(', ')}. ` +
+              'Deal with those first — a reset would leave them attached to a cancelled plan.'
+            ),
+            { statusCode: 409, code: 'WO_HAS_ACTIVITY', data: { activity } }
+          );
         }
       }
 
-      // collect what will be deleted
+      // collect what will be cancelled, keyed by the week it covered, so each replacement can
+      // point at the work order it stands in for
       const deleted = draftWOs.map((wo: any) => ({ wo_number: wo.wo_number, week: wo.week_number }));
+      const supersededByWeek = new Map<string, number>();
+      for (const wo of draftWOs) {
+        supersededByWeek.set(`${wo.year}-${wo.week_number}`, wo.id);
+      }
 
-      // cancel DRAFT WOs instead of deleting (preserve history)
+      // Cancelled, not deleted — and recorded well enough to be read later. Without the
+      // reason and the actor, the plan simply shows a cancelled work order beside a new one
+      // and nothing connects them.
+      const resetReason = String(req.body?.reason || '').trim()
+        || 'Plan reset from MPS: weekly production quantities changed';
       await conn.execute(
-        "UPDATE work_orders SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE mps_detail_id = ? AND status = 'DRAFT'",
-        [detailId]
+        `UPDATE work_orders
+            SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, cancelled_by = ?,
+                cancellation_reason = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE mps_detail_id = ? AND status = 'DRAFT'`,
+        [userId, resetReason, detailId]
       );
 
       // regenerate from current production_qty > 0 weeks
@@ -1203,11 +1245,17 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
         await conn.execute(`
-          INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, year, line_process_id, created_by, notes, source_type)
-          VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, 'MPS')
-        `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, w.year, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`]);
+          INSERT INTO work_orders (wo_number, product_id, bom_id, quantity, status, scheduled_start, scheduled_end, mps_detail_id, week_number, year, line_process_id, created_by, notes, source_type, supersedes_wo_id)
+          VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, 'MPS', ?)
+        `, [woNumber, detail.product_id, detail.bom_id, qty, fmt(monday), fmt(sunday), detail.id, w.week_number, w.year, lineProcessId, userId, `MPS ${header.mps_number} W${w.week_number} (reset)`,
+            // the one this replaces for the same week, so the two are readable as a sequence
+            // rather than as two work orders that happen to sit side by side
+            supersededByWeek.get(`${w.year}-${w.week_number}`) ?? null]);
 
-        created.push({ wo_number: woNumber, week_number: w.week_number, quantity: qty });
+        created.push({
+          wo_number: woNumber, week_number: w.week_number, quantity: qty,
+          supersedes: supersededByWeek.get(`${w.year}-${w.week_number}`) ?? null,
+        });
       }
 
       // update detail status
@@ -1223,7 +1271,9 @@ router.post('/mps/:id/details/:detailId/reset-wo', authMiddleware, requirePermis
 
     await ppicLog(req, 'RESET_WO', 'WORK_ORDER', detailId, null, { deleted: deleted.length, created: created.length });
     res.json({
-      message: `${deleted.length} DRAFT WO(s) deleted, ${created.length} new WO(s) created`,
+      // they are cancelled and kept, not deleted; the message said otherwise long after the
+      // behaviour changed, which is the kind of wording someone plans around
+      message: `${deleted.length} draft WO(s) cancelled, ${created.length} replacement(s) created`,
       data: { deleted, created }
     });
   } catch (error: any) {

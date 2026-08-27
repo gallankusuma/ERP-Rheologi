@@ -460,6 +460,78 @@ async function main() {
       `HTTP ${noBom.status}`
     );
 
+    // ---- a reset must not orphan work that has already started ----
+    //
+    // Resetting a plan cancels its draft work orders and generates replacements. Anything
+    // already hanging off them would be left pointing at a cancelled plan, so the guard has to
+    // cover every trace of work having begun — not only material issues, which is all it used
+    // to check.
+    await conn.query(`INSERT IGNORE INTO line_processes (id, code, name, active) VALUES (1, 'LN-1', 'Line 1', 1)`);
+    await conn.query(`INSERT IGNORE INTO line_process_products (line_process_id, product_id) VALUES (1, 2)`);
+    await conn.query(
+      `INSERT INTO mps_headers (id, mps_number, period_year, period_month, status)
+       VALUES (1, 'MPS-ACC-1', 2026, 8, 'draft')`
+    );
+    await conn.query(
+      `INSERT INTO mps_details (id, mps_header_id, product_id, bom_id) VALUES (1, 1, 2, 1)`
+    );
+    await conn.query(
+      `INSERT INTO mps_week_data (mps_detail_id, year, week_number, production_qty) VALUES (1, 2026, 35, 40)`
+    );
+    await conn.query(
+      `INSERT INTO work_orders (id, wo_number, product_id, bom_id, quantity, status, mps_detail_id, week_number, year, line_process_id)
+       VALUES (10, 'WO-RESET-1', 2, 1, 40, 'DRAFT', 1, 35, 2026, 1)`
+    );
+
+    // an inspection has been raised against it
+    await conn.query(
+      `INSERT INTO wo_qc_checkpoints (wo_id, process_stage, is_mandatory, status) VALUES (10, 'Inline', 1, NULL)`
+    );
+
+    const blocked = await call('POST', '/ppic/mps/1/details/1/reset-wo', { token: boss });
+    record(
+      'a reset is refused while a draft work order already carries QC checkpoints',
+      blocked.status === 409,
+      `HTTP ${blocked.status}`
+    );
+    record(
+      'and the work order is left alone by the refusal',
+      String(await scalar(conn, 'SELECT status FROM work_orders WHERE id = 10')).toUpperCase() === 'DRAFT',
+      `still ${await scalar(conn, 'SELECT status FROM work_orders WHERE id = 10')}`
+    );
+
+    // clear the activity and the reset may proceed
+    await conn.query(`DELETE FROM wo_qc_checkpoints WHERE wo_id = 10`);
+    const reset = await call('POST', '/ppic/mps/1/details/1/reset-wo', {
+      token: boss,
+      body: { reason: 'Weekly quantity revised by planning' },
+    });
+    record(
+      'once nothing hangs off it, the reset goes through',
+      reset.status === 200 && (reset.body?.data?.created?.length ?? 0) === 1,
+      `HTTP ${reset.status}, ${reset.body?.data?.created?.length ?? 0} replacement(s)`
+    );
+
+    const cancelled = await conn.query(
+      `SELECT status, cancellation_reason, cancelled_by FROM work_orders WHERE id = 10`
+    ).then((r: any) => r[0][0]);
+    record(
+      'the old work order is cancelled rather than removed, and says why',
+      String(cancelled?.status).toUpperCase() === 'CANCELLED' &&
+        String(cancelled?.cancellation_reason).includes('Weekly quantity revised') &&
+        Number(cancelled?.cancelled_by) === 10,
+      `status ${cancelled?.status}, by ${cancelled?.cancelled_by}`
+    );
+
+    const successor = await conn.query(
+      `SELECT id, supersedes_wo_id FROM work_orders WHERE mps_detail_id = 1 AND status = 'DRAFT' LIMIT 1`
+    ).then((r: any) => r[0][0]);
+    record(
+      'and the replacement points back at the one it stands in for',
+      Number(successor?.supersedes_wo_id) === 10,
+      `WO ${successor?.id} supersedes ${successor?.supersedes_wo_id}`
+    );
+
     const dReturnable = await call('GET', '/sales/deliveries/1/returnable', { token: boss });
     const dline = dReturnable.body?.data?.lines?.[0];
     record(
