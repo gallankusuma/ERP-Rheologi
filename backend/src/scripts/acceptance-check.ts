@@ -67,6 +67,11 @@ async function call(
   return { status: res.status, body };
 }
 
+async function scalar(conn: any, sql: string, params: any[] = []): Promise<any> {
+  const [rows]: any = await conn.query(sql, params);
+  return rows[0] ? Object.values(rows[0])[0] : null;
+}
+
 async function waitForServer(proc: ChildProcess, timeoutMs = 90000): Promise<boolean> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -380,6 +385,79 @@ async function main() {
       'the same schedule is not requested twice',
       genAgain.status === 409 && (genAgain.body?.skipped || []).some((s: string) => s.includes('sudah ada')),
       `HTTP ${genAgain.status}, skipped: ${(genAgain.body?.skipped || [])[0] || 'none'}`
+    );
+
+    // ---- the plan stops moving under the work ----
+    //
+    // A work order is planned, costed and issued against a recipe. If editing that recipe
+    // afterwards changes what the order needs, the numbers people already acted on were wrong
+    // and nothing says so. These checks freeze an explosion, change the BOM underneath it, and
+    // look at what the work order still requires.
+    await conn.query(
+      `INSERT IGNORE INTO products (id, sku, name, unit_of_measure_id)
+       VALUES (2, 'FG-ACC', 'Cairan jadi', 1), (4, 'RM-2', 'Additif', 1)`
+    );
+    await conn.query(
+      `INSERT INTO bom_headers (id, product_name, product_id, qty, unit, status, approval_status)
+       VALUES (1, 'Cairan jadi', 2, 1, 'ltr', 'ACTIVE', 2)`
+    );
+    await conn.query(`INSERT INTO bom_details (bom_header_id, raw_material_id, quantity) VALUES (1, 1, 2)`);
+    await conn.query(
+      `INSERT INTO work_orders (id, wo_number, product_id, quantity, status, bom_id)
+       VALUES (2, 'WO-SNAP-1', 2, 50, 'draft', 1)`
+    );
+
+    const freeze = await call('POST', '/production/issue-material/generate/2', { token: boss });
+    record(
+      'the explosion is frozen against the BOM as it stands',
+      freeze.status === 200 && freeze.body?.frozen === false && freeze.body?.line_count === 1,
+      `HTTP ${freeze.status}, ${freeze.body?.line_count} line(s), snapshot ${freeze.body?.snapshot_id}`
+    );
+    const requiredAtFreeze = Number(await scalar(conn,
+      'SELECT quantity_required FROM wo_materials WHERE wo_id = 2 AND product_id = 1'));
+    record(
+      'and the requirement is what that recipe called for',
+      requiredAtFreeze === 100,
+      `50 units x 2 per unit = ${requiredAtFreeze}`
+    );
+
+    // somebody edits the recipe afterwards
+    await conn.query(`UPDATE bom_details SET quantity = 5 WHERE bom_header_id = 1 AND raw_material_id = 1`);
+    await conn.query(`INSERT INTO bom_details (bom_header_id, raw_material_id, quantity) VALUES (1, 4, 3)`);
+
+    const after = await call('POST', '/production/issue-material/generate/2', { token: boss });
+    record(
+      'asking again returns the frozen plan rather than re-deriving it',
+      after.status === 200 && after.body?.frozen === true,
+      `HTTP ${after.status}, frozen=${after.body?.frozen}`
+    );
+    record(
+      'the requirement did not move when the BOM did',
+      Number(await scalar(conn,
+        'SELECT quantity_required FROM wo_materials WHERE wo_id = 2 AND product_id = 1')) === 100,
+      `still ${requiredAtFreeze}`
+    );
+    record(
+      'and the material added to the BOM afterwards did not appear on it',
+      Number(await scalar(conn, 'SELECT COUNT(*) FROM wo_materials WHERE wo_id = 2')) === 1,
+      `1 line, the new BOM material is not on this work order`
+    );
+    record(
+      'but the drift is reported, not hidden',
+      after.body?.bom_changed_since === true,
+      `bom_changed_since=${after.body?.bom_changed_since}`
+    );
+
+    // a work order with no recipe pinned cannot be planned at all
+    await conn.query(
+      `INSERT INTO work_orders (id, wo_number, product_id, quantity, status)
+       VALUES (3, 'WO-SNAP-2', 2, 10, 'draft')`
+    );
+    const noBom = await call('POST', '/production/issue-material/generate/3', { token: boss });
+    record(
+      'a work order with no BOM is refused as 422, not a generic failure',
+      noBom.status === 422,
+      `HTTP ${noBom.status}`
     );
 
     const dReturnable = await call('GET', '/sales/deliveries/1/returnable', { token: boss });

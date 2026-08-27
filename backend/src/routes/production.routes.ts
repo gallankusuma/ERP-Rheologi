@@ -4,9 +4,10 @@ import { requirePermission } from '../middleware/permission';
 import { dbAll, dbGet, dbRun, dbTransaction } from '../config/database';
 import { validateTransition, EXECUTION_STATUSES, ISSUABLE_STATUSES, MRP_OPEN_STATUSES } from '../utils/wo-transitions';
 import { autoCreateFpa } from '../services/qc.service';
-import { issueWoMaterial, returnWoMaterial, postFinishedGoods } from '../services/production.service';
+import { issueWoMaterial, returnWoMaterial, postFinishedGoods, ProductionError } from '../services/production.service';
 import { explodeBom } from '../services/bom.service';
 import { respondWithDomainError } from '../errors/domain.error';
+import crypto from 'crypto';
 
 // Bound once so /mrp and /mrp/shortage cannot drift apart the way they drifted
 // from /mrp/dashboard.
@@ -631,6 +632,24 @@ router.post('/issue-material', authMiddleware, requirePermission('production.wor
   }
 });
 
+
+// A stable fingerprint of a BOM's lines. Comparing it later answers "has the recipe changed
+// since we froze this" without re-exploding anything or trusting an updated_at column.
+async function hashBomLines(conn: any, bomId: number): Promise<string> {
+  const [rows] = await conn.execute(
+    `SELECT bd.raw_material_id, bd.quantity
+       FROM bom_details bd WHERE bd.bom_header_id = ?
+      ORDER BY bd.raw_material_id ASC`,
+    [bomId]
+  );
+  const [header] = await conn.execute('SELECT qty, unit FROM bom_headers WHERE id = ?', [bomId]);
+  const shape = {
+    header: (header as any[])[0] || null,
+    lines: (rows as any[]).map((r: any) => [Number(r.raw_material_id), String(r.quantity)]),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(shape)).digest('hex');
+}
+
 // Return unused material from production to warehouse
 router.post('/issue-material/return', authMiddleware, requirePermission('production.workorders', 'issue_material'), async (req: Request, res: Response) => {
   try {
@@ -666,42 +685,104 @@ router.post('/issue-material/return', authMiddleware, requirePermission('product
 // Auto-generate WO material list from BOM
 router.post('/issue-material/generate/:woId', authMiddleware, requirePermission('production.workorders', 'issue_material'), async (req: Request, res: Response) => {
   try {
-    const wo = await dbGet('SELECT * FROM work_orders WHERE id = ?', [req.params.woId]);
-    if (!wo) return res.status(404).json({ error: 'Work order not found' });
+    const woId = Number(req.params.woId);
+    const userId = (req as any).user?.userId || null;
 
-    // strict: use only the pinned bom_id (auto-set at WO creation or by PPIC)
-    const bomId = wo.bom_id;
-    if (!bomId) {
-      return res.status(400).json({ error: 'Work Order has no BOM assigned. Assign a BOM before generating materials.' });
-    }
+    const result = await dbTransaction(async (conn) => {
+      const [woRows] = await conn.execute('SELECT * FROM work_orders WHERE id = ? FOR UPDATE', [woId]);
+      const wo = (woRows as any[])[0];
+      if (!wo) throw new ProductionError('WO_NOT_FOUND', 'Work order not found');
 
-    // revalidate the pinned BOM is still valid
-    const bomCheck = await dbGet(
-      'SELECT id, status, approval_status FROM bom_headers WHERE id = ?',
-      [bomId]
-    ) as any;
-    if (!bomCheck) {
-      return res.status(400).json({ error: 'Pinned BOM no longer exists. Re-assign a valid BOM.' });
-    }
-    if (bomCheck.status !== 'ACTIVE' || Number(bomCheck.approval_status) !== 2) {
-      return res.status(400).json({ error: `Pinned BOM is not valid for production (status=${bomCheck.status}, approval=${bomCheck.approval_status}). Requires ACTIVE + fully approved.` });
-    }
+      // An explosion already frozen is the plan. Re-running it must return what was frozen,
+      // not re-derive it: the BOM may have changed since, and this work order was planned,
+      // costed and possibly already issued against the older recipe.
+      const [existing] = await conn.execute(
+        'SELECT * FROM wo_bom_snapshots WHERE wo_id = ? FOR UPDATE', [woId]
+      );
+      const snapshot = (existing as any[])[0];
+      if (snapshot) {
+        const [lines] = await conn.execute(
+          `SELECT wm.product_id, wm.quantity_required, wm.qty_per_unit, p.sku, p.name
+             FROM wo_materials wm LEFT JOIN products p ON p.id = wm.product_id
+            WHERE wm.wo_id = ? ORDER BY wm.id`, [woId]
+        );
+        // whether the live recipe has moved on since; reported, never applied
+        const liveHash = await hashBomLines(conn, snapshot.bom_id);
+        return {
+          success: true,
+          frozen: true,
+          snapshot_id: snapshot.id,
+          bom_id: snapshot.bom_id,
+          production_qty: snapshot.production_qty,
+          frozen_at: snapshot.frozen_at,
+          bom_changed_since: liveHash !== snapshot.bom_hash,
+          materials: lines,
+          message: liveHash !== snapshot.bom_hash
+            ? 'Materials were frozen from the BOM as it stood when this work order was planned. The BOM has changed since; this work order still uses what it was planned with.'
+            : 'Materials were already frozen for this work order.',
+        };
+      }
 
-    // P1-1: use canonical BOM explosion with batch qty support
-    const materials = await explodeBom({ bomId, productionQty: Number(wo.quantity) });
+      const bomId = wo.bom_id;
+      if (!bomId) {
+        throw new ProductionError('INVALID_INPUT', 'Work Order has no BOM assigned. Assign a BOM before generating materials.');
+      }
 
-    for (const mat of materials) {
-      const exists = await dbGet('SELECT id FROM wo_materials WHERE wo_id = ? AND product_id = ?', [wo.id, mat.rawMaterialId]);
-      if (!exists) {
-        await dbRun(
-          `INSERT INTO wo_materials (wo_id, product_id, quantity_required, quantity_issued) VALUES (?, ?, ?, 0)`,
-          [wo.id, mat.rawMaterialId, mat.quantity]
+      const [bomRows] = await conn.execute(
+        'SELECT id, status, approval_status FROM bom_headers WHERE id = ?', [bomId]
+      );
+      const bomCheck = (bomRows as any[])[0];
+      if (!bomCheck) {
+        throw new ProductionError('INVALID_INPUT', 'Pinned BOM no longer exists. Re-assign a valid BOM.');
+      }
+      if (bomCheck.status !== 'ACTIVE' || Number(bomCheck.approval_status) !== 2) {
+        throw new ProductionError(
+          'INVALID_INPUT',
+          `Pinned BOM is not valid for production (status=${bomCheck.status}, approval=${bomCheck.approval_status}). Requires ACTIVE + fully approved.`
         );
       }
-    }
 
-    res.json({ success: true, message: 'WO materials generated from BOM' });
+      const productionQty = Number(wo.quantity);
+      const materials = await explodeBom({ bomId, productionQty });
+      if (!materials.length) {
+        throw new ProductionError('INVALID_INPUT', `BOM ${bomId} explodes to no materials; nothing to freeze.`);
+      }
+
+      const bomHash = await hashBomLines(conn, bomId);
+
+      const [snap] = await conn.execute(
+        `INSERT INTO wo_bom_snapshots (wo_id, bom_id, production_qty, bom_hash, line_count, frozen_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [woId, bomId, productionQty, bomHash, materials.length, userId]
+      );
+      const snapshotId = snap.insertId;
+
+      for (const mat of materials) {
+        const perUnit = productionQty > 0 ? Number(mat.quantity) / productionQty : 0;
+        await conn.execute(
+          `INSERT INTO wo_materials (wo_id, product_id, quantity_required, quantity_issued, snapshot_id, qty_per_unit)
+           VALUES (?, ?, ?, 0, ?, ?)
+           ON DUPLICATE KEY UPDATE quantity_required = VALUES(quantity_required),
+                                   snapshot_id = VALUES(snapshot_id),
+                                   qty_per_unit = VALUES(qty_per_unit)`,
+          [woId, mat.rawMaterialId, mat.quantity, snapshotId, perUnit]
+        );
+      }
+
+      return {
+        success: true,
+        frozen: false,
+        snapshot_id: snapshotId,
+        bom_id: bomId,
+        production_qty: productionQty,
+        line_count: materials.length,
+        message: 'WO materials frozen from the BOM',
+      };
+    });
+
+    res.json(result);
   } catch (error) {
+    if (respondWithDomainError(error, res)) return;
     console.error('Error generating WO materials:', error);
     res.status(500).json({ error: 'Failed to generate WO materials' });
   }
