@@ -1469,9 +1469,10 @@ router.post('/fg-receipt', authMiddleware, requirePermission('production.fg-rece
     // domain errors carry their own status and code
     if (respondWithDomainError(error, res)) return;
     console.error('Error receiving FG:', error);
-    const msg = error.message || 'Failed to receive FG';
-    const status = msg.includes('Cannot receive') || msg.includes('exceed') || msg.includes('Duplicate') || msg.includes('required') ? 400 : 500;
-    res.status(status).json({ error: msg });
+    // was: guess the status by matching words in the message, so renaming an error string
+    // silently changed an HTTP code. The error carries its own status now.
+    if (respondWithDomainError(error, res)) return;
+    res.status(500).json({ error: error.message || 'Failed to receive FG' });
   }
 });
 
@@ -1749,9 +1750,16 @@ router.put(
         if (!line) return res.status(404).json({ error: 'Line process tidak ditemukan', code: 'LINE_NOT_FOUND' });
       }
 
-      // a line change invalidates whatever step it was on
+      // when the line changes, auto-pick the first step of the new line
       const lineChanged = String(nextLine ?? '') !== String(spkpRow.line_process_id ?? '');
       let nextStep = lineChanged ? null : spkpRow.current_step_id;
+      if (lineChanged && nextLine && current_step_id === undefined) {
+        const firstStep = await dbGet(
+          'SELECT id FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC LIMIT 1',
+          [nextLine]
+        ) as any;
+        if (firstStep) nextStep = firstStep.id;
+      }
 
       if (current_step_id !== undefined) {
         if (current_step_id === null) {
@@ -1957,11 +1965,13 @@ router.get('/work-orders/:woId/spkp', authMiddleware, async (req: Request, res: 
     const rows = await dbAll(
       `SELECT s.*, w.wo_number, w.quantity AS wo_quantity,
               p.name AS product_name, p.sku AS product_sku,
-              lp.name AS line_process_name
+              lp.name AS line_process_name,
+              st.process_name AS current_step_name, st.step_order AS current_step_order
          FROM spkp s
          JOIN work_orders w ON w.id = s.wo_id
          LEFT JOIN products p ON p.id = w.product_id
          LEFT JOIN line_processes lp ON lp.id = w.line_process_id
+         LEFT JOIN line_process_steps st ON st.id = s.current_step_id
         WHERE s.wo_id = ?
         ORDER BY s.schedule_date`,
       [req.params.woId]
@@ -2011,6 +2021,17 @@ router.post('/work-orders/:woId/spkp/generate', authMiddleware, async (req: Requ
       return res.status(400).json({ error: `SPKP sudah ada (${existing.length} records). Hapus dulu jika ingin generate ulang.` });
     }
 
+    // auto-set line and first step from WO
+    const woLineId = wo.line_process_id || null;
+    let firstStepId: number | null = null;
+    if (woLineId) {
+      const firstStep = await dbGet(
+        'SELECT id FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC LIMIT 1',
+        [woLineId]
+      ) as any;
+      if (firstStep) firstStepId = firstStep.id;
+    }
+
     const inserted: any[] = [];
     for (let i = 0; i < workingDays.length; i++) {
       const dateStr = workingDays[i];
@@ -2019,9 +2040,9 @@ router.post('/work-orders/:woId/spkp/generate', authMiddleware, async (req: Requ
       const spkpNumber = `SPKP-${dateStr.replace(/-/g, '')}-${woId}-${seq}`;
 
       await dbRun(
-        `INSERT INTO spkp (wo_id, spkp_number, schedule_date, planned_qty, status, created_by)
-         VALUES (?, ?, ?, ?, 'draft', ?)`,
-        [woId, spkpNumber, dateStr, qty, userId]
+        `INSERT INTO spkp (wo_id, spkp_number, schedule_date, planned_qty, status, created_by, line_process_id, current_step_id, step_started_at)
+         VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ${firstStepId ? 'NOW()' : 'NULL'})`,
+        [woId, spkpNumber, dateStr, qty, userId, woLineId, firstStepId]
       );
       inserted.push({ spkp_number: spkpNumber, schedule_date: dateStr, planned_qty: qty });
     }
@@ -2110,10 +2131,22 @@ router.post('/work-orders/:woId/spkp', authMiddleware, async (req: Request, res:
     const seq = String(existing.length + 1).padStart(3, '0');
     const spkpNumber = `SPKP-${dateStr.replace(/-/g, '')}-${woId}-${seq}`;
 
+    // auto-set line and first step from WO
+    const wo = await dbGet('SELECT line_process_id FROM work_orders WHERE id = ?', [woId]) as any;
+    const woLineId = wo?.line_process_id || null;
+    let firstStepId: number | null = null;
+    if (woLineId) {
+      const firstStep = await dbGet(
+        'SELECT id FROM line_process_steps WHERE line_process_id = ? ORDER BY step_order ASC LIMIT 1',
+        [woLineId]
+      ) as any;
+      if (firstStep) firstStepId = firstStep.id;
+    }
+
     const result = await dbRun(
-      `INSERT INTO spkp (wo_id, spkp_number, schedule_date, planned_qty, status, created_by)
-       VALUES (?, ?, ?, ?, 'draft', ?)`,
-      [woId, spkpNumber, dateStr, planned_qty, userId]
+      `INSERT INTO spkp (wo_id, spkp_number, schedule_date, planned_qty, status, created_by, line_process_id, current_step_id, step_started_at)
+       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ${firstStepId ? 'NOW()' : 'NULL'})`,
+      [woId, spkpNumber, dateStr, planned_qty, userId, woLineId, firstStepId]
     );
     const insertId = (result as any).insertId;
     const created = await dbGet('SELECT * FROM spkp WHERE id = ?', [insertId]);

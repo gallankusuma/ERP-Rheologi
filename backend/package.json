@@ -30,7 +30,8 @@
     "test:returns": "tsx src/scripts/returns-check.ts",
     "test:reversal": "tsx src/scripts/reversal-check.ts",
     "test:fund-request": "tsx src/scripts/fund-request-check.ts",
-    "seed:inventory-opening": "tsx src/scripts/seed-inventory-opening.ts"
+    "seed:inventory-opening": "tsx src/scripts/seed-inventory-opening.ts",
+    "test:production-idempotency": "tsx src/scripts/production-idempotency-check.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

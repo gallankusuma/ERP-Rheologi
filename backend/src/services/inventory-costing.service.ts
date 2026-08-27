@@ -255,10 +255,14 @@ export async function addMaterialCostToBatch(conn: any, opts: {
   } else {
     // create new sheet
     await conn.execute(
+      // batchKey, not the raw value: the lookup above treats a missing batch as '', and the
+      // column is NOT NULL. Writing null here meant issuing material from stock with no batch
+      // number failed on the insert with a raw SQL error rather than a refusal anyone could
+      // read — and in this database 33 of 34 stock rows carry no batch number.
       `INSERT INTO batch_cost_sheets
        (wo_id, batch_number, fg_product_id, material_cost, total_cost, cost_status)
        VALUES (?, ?, ?, ?, ?, 'OPEN')`,
-      [opts.woId, opts.batchNumber || null, opts.fgProductId, toDbString(addCost), toDbString(addCost)]
+      [opts.woId, batchKey, opts.fgProductId, toDbString(addCost), toDbString(addCost)]
     );
   }
 }

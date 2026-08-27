@@ -73,7 +73,7 @@ function computeContentHash(description: string, lines: JournalLineInput[]): str
 }
 
 // compute payload hash for idempotency
-function computePayloadHash(payload: any): string {
+export function computePayloadHash(payload: any): string {
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
@@ -185,7 +185,7 @@ async function validateAccounts(conn: any, lines: JournalLineInput[], allowContr
 }
 
 // check idempotency: return stored outcome or detect mismatch
-async function checkIdempotency(
+export async function checkIdempotency(
   conn: any, scope: string, key: string, payloadHash: string, companyId: number = 1
 ): Promise<{ replay: boolean; outcome?: any }> {
   const [rows] = await conn.execute(
@@ -216,7 +216,7 @@ async function checkIdempotency(
 }
 
 // store idempotency outcome
-async function storeIdempotency(
+export async function storeIdempotency(
   conn: any, scope: string, key: string, payloadHash: string,
   httpStatus: number, responseBody: any,
   eventId: number | null, journalId: number | null,

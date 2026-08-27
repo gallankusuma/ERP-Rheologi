@@ -10,6 +10,57 @@ import {
   createCostLayer, linkCostLayerToJournal, updateBatchSheetForFgReceipt,
 } from './inventory-costing.service';
 import { toDbString, money, moneyRound } from '../lib/decimal';
+import { computePayloadHash, checkIdempotency, storeIdempotency } from './accounting-posting.service';
+
+// Production commands used to throw bare Errors, so the routes had to guess a status by
+// matching words in the message — a rename of an error string silently changed an HTTP code.
+// These carry their own status and a stable code, like every other domain in this system.
+export type ProductionErrorCode =
+  | 'WO_NOT_FOUND'
+  | 'WO_MATERIAL_NOT_FOUND'
+  | 'INVALID_WO_STATUS'
+  | 'INVALID_INPUT'
+  | 'LOT_REQUIRED'
+  | 'LOT_NOT_AVAILABLE'
+  | 'INSUFFICIENT_STOCK'
+  | 'OVER_ISSUE'
+  | 'OVER_RETURN'
+  | 'ISSUE_NOT_FOUND'
+  | 'ISSUE_AMBIGUOUS'
+  | 'QC_NOT_PASSED'
+  | 'NO_QC_CHECKPOINTS'
+  | 'YIELD_EXCEEDED';
+
+const PRODUCTION_STATUS: Record<ProductionErrorCode, number> = {
+  WO_NOT_FOUND: 404,
+  WO_MATERIAL_NOT_FOUND: 404,
+  INVALID_WO_STATUS: 409,
+  INVALID_INPUT: 422,
+  LOT_REQUIRED: 422,
+  LOT_NOT_AVAILABLE: 409,
+  INSUFFICIENT_STOCK: 409,
+  OVER_ISSUE: 409,
+  OVER_RETURN: 409,
+  ISSUE_NOT_FOUND: 404,
+  ISSUE_AMBIGUOUS: 422,
+  QC_NOT_PASSED: 409,
+  NO_QC_CHECKPOINTS: 409,
+  YIELD_EXCEEDED: 409,
+};
+
+export class ProductionError extends Error {
+  public readonly code: ProductionErrorCode;
+  public readonly httpStatus: number;
+  public readonly data?: Record<string, unknown>;
+
+  constructor(code: ProductionErrorCode, message: string, data?: Record<string, unknown>) {
+    super(message);
+    this.name = 'ProductionError';
+    this.code = code;
+    this.httpStatus = PRODUCTION_STATUS[code];
+    this.data = data;
+  }
+}
 
 // WO statuses that allow material issue
 const ISSUABLE_STATUSES = ['released', 'in_progress', 'on_hold'];
@@ -17,11 +68,17 @@ const ISSUABLE_STATUSES = ['released', 'in_progress', 'on_hold'];
 interface IssueMaterialResult {
   success: boolean;
   message: string;
+  issue_id?: number;
+  journal_id?: number;
+  replay?: boolean;
+  [key: string]: any;
 }
 
 interface FgReceiptResult {
   success: boolean;
   message: string;
+  replay?: boolean;
+  [key: string]: any;
 }
 
 /**
@@ -40,39 +97,39 @@ export async function issueWoMaterial(opts: {
   const { woMaterialId, quantity, warehouseId, lotId, userId, idempotencyKey } = opts;
 
   if (!woMaterialId || !Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error('wo_material_id and a positive quantity are required');
+    throw new ProductionError('INVALID_INPUT', 'wo_material_id and a positive quantity are required');
   }
   if (!warehouseId) {
-    throw new Error('warehouse_id is required for material issue');
+    throw new ProductionError('INVALID_INPUT', 'warehouse_id is required for material issue');
   }
   if (!lotId) {
-    throw new Error('lot_id is required for material issue');
+    throw new ProductionError('LOT_REQUIRED', 'lot_id is required for material issue');
   }
   if (!idempotencyKey) {
-    throw new Error('idempotency_key is required for material issue');
+    throw new ProductionError('INVALID_INPUT', 'idempotency_key is required for material issue');
   }
 
-  await dbTransaction(async (conn) => {
+  // The key alone used to be the whole contract: a second call with the same key returned
+  // "Material issued successfully" without doing anything and without saying it had not. Reused
+  // with a different quantity or lot, it still said success. The stored outcome carries a hash
+  // of what was asked, so a repeat of the same request replays the original answer and a
+  // different one under the same key is refused as IDEMPOTENCY_MISMATCH.
+  const payloadHash = computePayloadHash({ woMaterialId, quantity, warehouseId, lotId });
 
-    // idempotency check: replay if already processed
-    const [dupRows] = await conn.execute(
-      "SELECT id FROM wo_material_issues WHERE idempotency_key = ?",
-      [idempotencyKey]
-    );
-    if ((dupRows as any[]).length > 0) {
-      return; // idempotent replay
-    }
+  return dbTransaction(async (conn) => {
+    const idem = await checkIdempotency(conn, 'WO_MATERIAL_ISSUE', idempotencyKey, payloadHash);
+    if (idem.replay) return { ...idem.outcome!.body, replay: true };
 
     // lock order: WO -> WO material -> inventory lot/balance
     // 1. lock WO first
     const [matPeek] = await conn.execute('SELECT wo_id FROM wo_materials WHERE id = ?', [woMaterialId]);
     const woId = (matPeek as any[])[0]?.wo_id;
-    if (!woId) throw new Error('WO material not found');
+    if (!woId) throw new ProductionError('WO_MATERIAL_NOT_FOUND', 'WO material not found');
 
     const [woRows] = await conn.execute('SELECT status FROM work_orders WHERE id = ? FOR UPDATE', [woId]);
     const woStatus = (woRows as any[])[0]?.status?.toLowerCase();
     if (!ISSUABLE_STATUSES.includes(woStatus)) {
-      throw new Error(`Cannot issue material for WO with status '${(woRows as any[])[0]?.status}'. WO must be RELEASED, IN_PROGRESS, or ON_HOLD.`);
+      throw new ProductionError('INVALID_WO_STATUS', `Cannot issue material for WO with status '${(woRows as any[])[0]?.status}'. WO must be RELEASED, IN_PROGRESS, or ON_HOLD.`);
     }
 
     // 2. lock WO material
@@ -80,13 +137,13 @@ export async function issueWoMaterial(opts: {
       'SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [woMaterialId]
     );
     const mat = (matRows as any[])[0];
-    if (!mat) throw new Error('WO material not found');
+    if (!mat) throw new ProductionError('WO_MATERIAL_NOT_FOUND', 'WO material not found');
 
     const alreadyIssued = Number(mat.quantity_issued) || 0;
     const requiredQty = Number(mat.quantity_required) || 0;
     const newIssued = alreadyIssued + Number(quantity);
     if (newIssued > requiredQty) {
-      throw new Error(`Issue quantity (${quantity}) would exceed required quantity (${requiredQty}). Already issued: ${alreadyIssued}`);
+      throw new ProductionError('OVER_ISSUE', `Issue quantity (${quantity}) would exceed required quantity (${requiredQty}). Already issued: ${alreadyIssued}`);
     }
 
     // 3. lock exact lot in inventory
@@ -96,12 +153,12 @@ export async function issueWoMaterial(opts: {
     );
     const stock = (lotRows as any[])[0];
     if (!stock) {
-      throw new Error(`Lot ${lotId} not found as available stock for product ${mat.product_id} in warehouse ${warehouseId}`);
+      throw new ProductionError('LOT_NOT_AVAILABLE', `Lot ${lotId} not found as available stock for product ${mat.product_id} in warehouse ${warehouseId}`);
     }
     const currentQty = Number(stock.quantity) || 0;
 
     if (currentQty < quantity) {
-      throw new Error(`Insufficient stock. Available: ${currentQty}, Requested: ${quantity}`);
+      throw new ProductionError('INSUFFICIENT_STOCK', `Insufficient stock. Available: ${currentQty}, Requested: ${quantity}`);
     }
 
     // 4. update WO material issued quantity
@@ -151,7 +208,7 @@ export async function issueWoMaterial(opts: {
     // keying it by the raw material's batch made the RM lot the identity of the FG sheet.
     const [woProductRow] = await conn.execute('SELECT product_id FROM work_orders WHERE id = ?', [woId]);
     const fgProductId = (woProductRow as any[])[0]?.product_id;
-    if (!fgProductId) throw new Error(`WO ${woId} has no product; cannot cost the batch`);
+    if (!fgProductId) throw new ProductionError('WO_NOT_FOUND', `WO ${woId} has no product; cannot cost the batch`);
 
     await addMaterialCostToBatch(conn, {
       woId,
@@ -207,9 +264,22 @@ export async function issueWoMaterial(opts: {
       'UPDATE wo_material_issues SET journal_entry_id = ? WHERE id = ?',
       [glResult.journal_id, issueId]
     );
-  });
 
-  return { success: true, message: 'Material issued successfully' };
+    const outcome = {
+      success: true,
+      issue_id: issueId,
+      journal_id: glResult.journal_id,
+      lot_id: lotId,
+      quantity: String(quantity),
+      unit_cost: costAlloc.unitCost,
+      total_cost: costAlloc.totalCost,
+      message: 'Material issued successfully',
+    };
+    await storeIdempotency(
+      conn, 'WO_MATERIAL_ISSUE', idempotencyKey, payloadHash, 201, outcome, issueId, glResult.journal_id
+    );
+    return outcome;
+  });
 }
 
 interface ReturnMaterialResult {
@@ -234,21 +304,21 @@ export async function returnWoMaterial(opts: {
   const { woMaterialId, quantity, warehouseId, originalIssueId, notes, reason, userId, idempotencyKey } = opts;
 
   if (!woMaterialId || !Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error('wo_material_id and a positive quantity are required');
+    throw new ProductionError('INVALID_INPUT', 'wo_material_id and a positive quantity are required');
   }
   if (!warehouseId) {
-    throw new Error('warehouse_id is required for material return');
+    throw new ProductionError('INVALID_INPUT', 'warehouse_id is required for material return');
   }
 
   await dbTransaction(async (conn) => {
     // lock order: WO -> WO material -> original issue -> lot balance -> cost layer
     const [matPeek] = await conn.execute('SELECT wo_id FROM wo_materials WHERE id = ?', [woMaterialId]);
     const woId = (matPeek as any[])[0]?.wo_id;
-    if (!woId) throw new Error('WO material not found');
+    if (!woId) throw new ProductionError('WO_MATERIAL_NOT_FOUND', 'WO material not found');
 
     const [woRows] = await conn.execute('SELECT wo_number, status FROM work_orders WHERE id = ? FOR UPDATE', [woId]);
     const wo = (woRows as any[])[0];
-    if (!wo) throw new Error('Work order not found');
+    if (!wo) throw new ProductionError('WO_NOT_FOUND', 'Work order not found');
     const woStatus = String(wo.status || '').toLowerCase();
     if (['completed', 'closed', 'cancelled'].includes(woStatus)) {
       throw Object.assign(
@@ -259,7 +329,7 @@ export async function returnWoMaterial(opts: {
 
     const [matRows] = await conn.execute('SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [woMaterialId]);
     const mat = (matRows as any[])[0];
-    if (!mat) throw new Error('WO material not found');
+    if (!mat) throw new ProductionError('WO_MATERIAL_NOT_FOUND', 'WO material not found');
 
     // a return compensates one specific issue: that is what carries the lot and the cost
     let issue: any;
@@ -485,34 +555,33 @@ export async function postFinishedGoods(opts: {
   const { woId, warehouseId, quantity, batchNumber, idempotencyKey, userId } = opts;
 
   if (!woId || !warehouseId || !Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error('wo_id, warehouse_id, and a positive quantity are required');
+    throw new ProductionError('INVALID_INPUT', 'wo_id, warehouse_id, and a positive quantity are required');
   }
 
-  await dbTransaction(async (conn) => {
+  if (!idempotencyKey) {
+    throw new ProductionError('INVALID_INPUT', 'idempotency_key is required for FG receipt');
+  }
+  // The old check searched stock_movements for the key with no scope at all, so a key used by
+  // a material issue could collide with an FG receipt, and a repeat under the same key with a
+  // different quantity returned success having done nothing.
+  const payloadHash = computePayloadHash({ woId, warehouseId, quantity, batchNumber: batchNumber || null });
+
+  return dbTransaction(async (conn) => {
+    const idem = await checkIdempotency(conn, 'FG_RECEIPT', idempotencyKey, payloadHash);
+    if (idem.replay) return { ...idem.outcome!.body, replay: true };
+
     // 1. lock and validate Work Order
     const [woRows] = await conn.execute(
       `SELECT w.*, p.name AS product_name FROM work_orders w JOIN products p ON p.id = w.product_id WHERE w.id = ? FOR UPDATE`, [woId]
     );
     const wo = (woRows as any[])[0];
-    if (!wo) throw new Error('Work order not found');
+    if (!wo) throw new ProductionError('WO_NOT_FOUND', 'Work order not found');
 
     const allowedStatuses = ['in_progress', 'completed', 'IN_PROGRESS', 'COMPLETED'];
     if (!allowedStatuses.includes(wo.status)) {
-      throw new Error(`Cannot receive FG for WO with status '${wo.status}'. WO must be in_progress or completed.`);
+      throw new ProductionError('INVALID_WO_STATUS', `Cannot receive FG for WO with status '${wo.status}'. WO must be in_progress or completed.`);
     }
 
-    // 2. idempotency check — key is mandatory
-    if (!idempotencyKey) {
-      throw new Error('idempotency_key is required for FG receipt');
-    }
-    const [dupRows] = await conn.execute(
-      `SELECT id FROM stock_movements WHERE idempotency_key = ?`,
-      [idempotencyKey]
-    );
-    if ((dupRows as any[]).length > 0) {
-      // idempotent replay: return success without creating new effects
-      return;
-    }
 
     // 3. QC gate — mandatory checkpoints must all have status exactly 'passed'
     // NULL or any non-'passed' value blocks FG receipt
@@ -525,10 +594,10 @@ export async function postFinishedGoods(opts: {
     const qcTotal = Number((qcRows as any[])[0]?.total || 0);
     const qcPendingMandatory = Number((qcRows as any[])[0]?.pending_mandatory || 0);
     if (qcTotal === 0) {
-      throw new Error('Cannot receive FG: this WO has no QC checkpoints. Generate QC checkpoints and complete inspection first.');
+      throw new ProductionError('NO_QC_CHECKPOINTS', 'Cannot receive FG: this WO has no QC checkpoints. Generate QC checkpoints and complete inspection first.');
     }
     if (qcPendingMandatory > 0) {
-      throw new Error(`Cannot receive FG: ${qcPendingMandatory} mandatory QC checkpoint(s) not passed. Complete QC inspection first.`);
+      throw new ProductionError('QC_NOT_PASSED', `Cannot receive FG: ${qcPendingMandatory} mandatory QC checkpoint(s) not passed. Complete QC inspection first.`);
     }
 
     // 4. yield ceiling — FG receipt cannot exceed actual accepted output
@@ -538,7 +607,7 @@ export async function postFinishedGoods(opts: {
     );
     const maxReceivable = Number((yieldRows as any[])[0]?.total_output || 0);
     if (maxReceivable === 0) {
-      throw new Error('Cannot receive FG: no yield recorded for this WO. Record actual output first.');
+      throw new ProductionError('YIELD_EXCEEDED', 'Cannot receive FG: no yield recorded for this WO. Record actual output first.');
     }
 
     const [existingReceipts] = await conn.execute(
@@ -548,7 +617,7 @@ export async function postFinishedGoods(opts: {
     );
     const alreadyReceived = Number((existingReceipts as any[])[0]?.total_received || 0);
     if (alreadyReceived + quantity > maxReceivable) {
-      throw new Error(`Total receipt (${alreadyReceived + quantity}) exceeds actual accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
+      throw new ProductionError('YIELD_EXCEEDED', `Total receipt (${alreadyReceived + quantity}) exceeds actual accepted output (${maxReceivable}). Already received: ${alreadyReceived}`);
     }
 
     // 5. create FG receipt event and canonical lot
@@ -719,10 +788,19 @@ export async function postFinishedGoods(opts: {
       });
 
       if (!fpaResult) {
-        throw new Error(`QC_SPEC_REQUIRED: product ${wo.product_id} has QC policy REQUIRED but no FG specifications. FG receipt rolled back.`);
+        throw new ProductionError('QC_NOT_PASSED', `QC_SPEC_REQUIRED: product ${wo.product_id} has QC policy REQUIRED but no FG specifications. FG receipt rolled back.`);
       }
     }
-  });
 
-  return { success: true, message: 'FG received into warehouse' };
+    const outcome = {
+      success: true,
+      wo_id: woId,
+      lot_id: lotId,
+      quantity: String(quantity),
+      batch_number: batchNumber || null,
+      message: 'FG received into warehouse',
+    };
+    await storeIdempotency(conn, 'FG_RECEIPT', idempotencyKey, payloadHash, 201, outcome, receiptEventId ?? null, null);
+    return outcome;
+  });
 }
