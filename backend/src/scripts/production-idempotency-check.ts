@@ -192,6 +192,72 @@ async function main() {
     );
     await conn.query(`UPDATE work_orders SET status = 'released' WHERE id = 1`);
 
+    // ---- material return: the same contract, on the way back ----
+    const { returnWoMaterial } = await import('../services/production.service');
+
+    const RKEY = 'return-key-1';
+    const back = await returnWoMaterial({
+      woMaterialId: 1, quantity: 4, warehouseId: 1, originalIssueId: first.issue_id,
+      userId: 1, idempotencyKey: RKEY,
+    });
+    record(
+      'returning material reports the issue it compensates and what it was worth',
+      back.success === true && back.original_issue_id === first.issue_id && Number(back.total_cost) === 40000,
+      `issue ${back.original_issue_id}, cost ${back.total_cost}`
+    );
+    record(
+      'the stock comes back and the cost layer is made whole',
+      Number(await scalar(conn, 'SELECT quantity FROM inventory_stocks WHERE lot_id = 1')) === 54 &&
+        Number(await scalar(conn, 'SELECT quantity_remaining FROM inventory_cost_layers WHERE lot_id = 1')) === 54,
+      `stock 54, layer remaining 54`
+    );
+
+    const replayBack = await returnWoMaterial({
+      woMaterialId: 1, quantity: 4, warehouseId: 1, originalIssueId: first.issue_id,
+      userId: 1, idempotencyKey: RKEY,
+    });
+    record(
+      'a repeated return says it is a replay rather than returning again',
+      replayBack.replay === true && Number(await scalar(conn, 'SELECT quantity FROM inventory_stocks WHERE lot_id = 1')) === 54,
+      `replay=${replayBack.replay}, stock still 54`
+    );
+
+    await expectRefused(
+      'the same return key with a different quantity is refused',
+      'IDEMPOTENCY_MISMATCH',
+      () => returnWoMaterial({
+        woMaterialId: 1, quantity: 2, warehouseId: 1, originalIssueId: first.issue_id,
+        userId: 1, idempotencyKey: RKEY,
+      })
+    );
+    await expectRefused(
+      'returning more than was issued is a 409',
+      'OVER_RETURN',
+      () => returnWoMaterial({
+        woMaterialId: 1, quantity: 99, warehouseId: 1, originalIssueId: first.issue_id,
+        userId: 1, idempotencyKey: 'r-over',
+      })
+    );
+    await expectRefused(
+      'a return naming an issue from another material is refused',
+      'INVALID_ISSUE_LINEAGE',
+      () => returnWoMaterial({
+        woMaterialId: 1, quantity: 1, warehouseId: 1, originalIssueId: 9999,
+        userId: 1, idempotencyKey: 'r-ghost',
+      })
+    );
+
+    await conn.query(`UPDATE work_orders SET status = 'completed' WHERE id = 1`);
+    await expectRefused(
+      'material cannot be returned to a completed work order',
+      'WO_TERMINAL',
+      () => returnWoMaterial({
+        woMaterialId: 1, quantity: 1, warehouseId: 1, originalIssueId: first.issue_id,
+        userId: 1, idempotencyKey: 'r-terminal',
+      })
+    );
+    await conn.query(`UPDATE work_orders SET status = 'released' WHERE id = 1`);
+
     // the key is scoped to the command, so the same text under FG_RECEIPT is a different claim
     const scopes = await scalar(conn, 'SELECT COUNT(DISTINCT command_scope) FROM idempotency_outcomes');
     record(

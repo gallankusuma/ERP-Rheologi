@@ -29,7 +29,11 @@ export type ProductionErrorCode =
   | 'ISSUE_AMBIGUOUS'
   | 'QC_NOT_PASSED'
   | 'NO_QC_CHECKPOINTS'
-  | 'YIELD_EXCEEDED';
+  | 'YIELD_EXCEEDED'
+  | 'WO_TERMINAL'
+  | 'INVALID_ISSUE_LINEAGE'
+  | 'NOTHING_TO_RETURN'
+  | 'MISSING_LOT_LINEAGE';
 
 const PRODUCTION_STATUS: Record<ProductionErrorCode, number> = {
   WO_NOT_FOUND: 404,
@@ -46,6 +50,10 @@ const PRODUCTION_STATUS: Record<ProductionErrorCode, number> = {
   QC_NOT_PASSED: 409,
   NO_QC_CHECKPOINTS: 409,
   YIELD_EXCEEDED: 409,
+  WO_TERMINAL: 409,
+  INVALID_ISSUE_LINEAGE: 422,
+  NOTHING_TO_RETURN: 422,
+  MISSING_LOT_LINEAGE: 422,
 };
 
 export class ProductionError extends Error {
@@ -285,6 +293,8 @@ export async function issueWoMaterial(opts: {
 interface ReturnMaterialResult {
   success: boolean;
   message: string;
+  replay?: boolean;
+  [key: string]: any;
 }
 
 /**
@@ -310,7 +320,7 @@ export async function returnWoMaterial(opts: {
     throw new ProductionError('INVALID_INPUT', 'warehouse_id is required for material return');
   }
 
-  await dbTransaction(async (conn) => {
+  return dbTransaction(async (conn) => {
     // lock order: WO -> WO material -> original issue -> lot balance -> cost layer
     const [matPeek] = await conn.execute('SELECT wo_id FROM wo_materials WHERE id = ?', [woMaterialId]);
     const woId = (matPeek as any[])[0]?.wo_id;
@@ -321,10 +331,7 @@ export async function returnWoMaterial(opts: {
     if (!wo) throw new ProductionError('WO_NOT_FOUND', 'Work order not found');
     const woStatus = String(wo.status || '').toLowerCase();
     if (['completed', 'closed', 'cancelled'].includes(woStatus)) {
-      throw Object.assign(
-        new Error(`WO ${wo.wo_number} is ${woStatus}; material can no longer be returned`),
-        { statusCode: 409, code: 'WO_TERMINAL' }
-      );
+      throw new ProductionError('WO_TERMINAL', `WO ${wo.wo_number} is ${woStatus}; material can no longer be returned`);
     }
 
     const [matRows] = await conn.execute('SELECT * FROM wo_materials WHERE id = ? FOR UPDATE', [woMaterialId]);
@@ -340,10 +347,7 @@ export async function returnWoMaterial(opts: {
       );
       issue = (rows as any[])[0];
       if (!issue) {
-        throw Object.assign(
-          new Error(`Issue ${originalIssueId} does not belong to WO material ${woMaterialId}`),
-          { statusCode: 422, code: 'INVALID_ISSUE_LINEAGE' }
-        );
+        throw new ProductionError('INVALID_ISSUE_LINEAGE', `Issue ${originalIssueId} does not belong to WO material ${woMaterialId}`);
       }
     } else {
       // no explicit issue: proceed only when exactly one issue still has returnable quantity,
@@ -356,18 +360,10 @@ export async function returnWoMaterial(opts: {
       );
       const candidates = rows as any[];
       if (candidates.length === 0) {
-        throw Object.assign(
-          new Error('No issued quantity remains to return for this WO material'),
-          { statusCode: 422, code: 'NOTHING_TO_RETURN' }
-        );
+        throw new ProductionError('NOTHING_TO_RETURN', 'No issued quantity remains to return for this WO material');
       }
       if (candidates.length > 1) {
-        throw Object.assign(
-          new Error(
-            `WO material ${woMaterialId} has ${candidates.length} issues with returnable quantity; original_issue_id is required to identify the lot and cost being compensated`
-          ),
-          { statusCode: 422, code: 'ISSUE_AMBIGUOUS', data: { candidateIssueIds: candidates.map((c: any) => c.id) } }
-        );
+        throw new ProductionError('ISSUE_AMBIGUOUS', `WO material ${woMaterialId} has ${candidates.length} issues with returnable quantity; original_issue_id is required to identify the lot and cost being compensated`, { candidateIssueIds: candidates.map((c: any) => c.id) });
       }
       issue = candidates[0];
     }
@@ -378,29 +374,24 @@ export async function returnWoMaterial(opts: {
     const returnable = issuedQty.minus(priorReturns);
 
     if (returnQty.greaterThan(returnable)) {
-      throw Object.assign(
-        new Error(
-          `Return of ${toDbString(returnQty)} exceeds the ${toDbString(returnable)} still returnable on issue ${issue.id}`
-        ),
-        { statusCode: 409, code: 'OVER_RETURN' }
-      );
+      throw new ProductionError('OVER_RETURN', `Return of ${toDbString(returnQty)} exceeds the ${toDbString(returnable)} still returnable on issue ${issue.id}`);
     }
 
     const returnKey = idempotencyKey || `mat-return-${issue.id}-${toDbString(returnQty)}`;
 
-    // stored replay: the same key against the same issue must not move stock twice
-    const [existingReturn] = await conn.execute(
-      'SELECT id FROM wo_material_returns WHERE original_issue_id = ? AND idempotency_key = ?',
-      [issue.id, returnKey]
-    );
-    if ((existingReturn as any[]).length > 0) return;
+    // The key alone was the whole check, so a caller who reused an explicit key with a
+    // different quantity was told the return had succeeded while nothing moved. The hash covers
+    // what was asked, so the same request replays its original answer and a different one under
+    // the same key is refused rather than waved through.
+    const returnPayloadHash = computePayloadHash({
+      woMaterialId, quantity, warehouseId, originalIssueId: issue.id,
+    });
+    const returnIdem = await checkIdempotency(conn, 'WO_MATERIAL_RETURN', returnKey, returnPayloadHash);
+    if (returnIdem.replay) return { ...returnIdem.outcome!.body, replay: true };
 
     const lotId = issue.lot_id;
     if (!lotId) {
-      throw Object.assign(
-        new Error(`Issue ${issue.id} has no lot; the exact lot to return to cannot be determined`),
-        { statusCode: 422, code: 'MISSING_LOT_LINEAGE' }
-      );
+      throw new ProductionError('MISSING_LOT_LINEAGE', `Issue ${issue.id} has no lot; the exact lot to return to cannot be determined`);
     }
 
     // return to the exact lot the material left, not to any available row for the product
@@ -533,9 +524,22 @@ export async function returnWoMaterial(opts: {
         returnMovement.insertId, journalId, reason || notes || null, returnKey, userId,
       ]
     );
-  });
 
-  return { success: true, message: 'Material returned to warehouse successfully' };
+    const outcome = {
+      success: true,
+      original_issue_id: issue.id,
+      lot_id: lotId,
+      quantity: toDbString(returnQty),
+      unit_cost: restored.unitCost,
+      total_cost: restored.totalCost,
+      journal_id: journalId,
+      message: 'Material returned to warehouse successfully',
+    };
+    await storeIdempotency(
+      conn, 'WO_MATERIAL_RETURN', returnKey, returnPayloadHash, 201, outcome, issue.id, journalId
+    );
+    return outcome;
+  });
 }
 
 /**
